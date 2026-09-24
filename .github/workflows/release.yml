@@ -1,0 +1,100 @@
+name: Release
+
+# Builds prebuilt binaries for every supported platform and attaches them to the
+# GitHub Release for the pushed tag. Pushing a tag such as `v0.1.0` is all that is
+# required; the tag must match the version in Cargo.toml.
+on:
+  push:
+    tags:
+      - "v[0-9]+.*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: comic-book
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Fail fast rather than publishing binaries whose `--version` disagrees
+      # with the tag (the version comes from Cargo.toml at compile time).
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version. Bump the version, commit, then re-tag."
+            exit 1
+          fi
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          # Tags like `v0.2.0-rc.1` are published as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-upload:
+    name: Build ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux (glibc) — x86_64 is built natively, aarch64 via `cross`.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+
+          # Linux (musl) — statically linked, runs on any distribution.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+
+          # macOS — `macos-latest` is arm64, so x86_64 is cross-compiled.
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Builds the binary, packages it as `comic-book-<target>.tar.gz` (Unix) or
+      # `.zip` (Windows), writes a matching `.sha256`, and uploads both to the
+      # release created above. Cross-compilation falls back to `cross`
+      # automatically, which is installed on demand.
+      - name: Build and upload
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: ${{ env.BIN_NAME }}
+          target: ${{ matrix.target }}
+          archive: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          # Unix targets ship a .tar.gz, Windows a .zip (the action defaults).
+          tar: unix
+          zip: windows
+          include: LICENSE,README.md
+          checksum: sha256
+          locked: true
+          token: ${{ secrets.GITHUB_TOKEN }}

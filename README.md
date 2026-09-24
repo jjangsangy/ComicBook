@@ -1,6 +1,7 @@
 # comic-book
 
 [![CI](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml)
+[![Release](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -38,11 +39,65 @@ A high-performance command-line tool written in Rust for converting comic book a
 
 ## Installation
 
-### Prerequisites
+### Install a Prebuilt Release
 
-- [Rust](https://www.rust-lang.org/tools/install) (version 1.87 or newer)
+Prebuilt binaries are attached to every tagged release:
+
+| Platform | Architecture | Archive |
+|:---|:---|:---|
+| macOS | Apple Silicon (arm64) | `comic-book-aarch64-apple-darwin.tar.gz` |
+| macOS | Intel (x86_64) | `comic-book-x86_64-apple-darwin.tar.gz` |
+| Linux | x86_64 | `comic-book-x86_64-unknown-linux-musl.tar.gz` (static) |
+| Linux | aarch64 / arm64 | `comic-book-aarch64-unknown-linux-musl.tar.gz` (static) |
+| Windows | x86_64 | `comic-book-x86_64-pc-windows-msvc.zip` |
+
+#### macOS & Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh
+```
+
+The script detects your OS and architecture, downloads the matching binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin` (or `/usr/local/bin` when run as root). It prints a `PATH` hint if the install directory is not already on your `PATH`.
+
+Pass options to the piped script with `sh -s --`:
+
+```bash
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --version v0.1.0
+
+# Choose where the binary is installed
+curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --install-dir "$HOME/bin"
+```
+
+Or clone the repository and run it directly (see `./scripts/install.sh --help` for every option):
+
+```bash
+./scripts/install.sh
+```
+
+#### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.ps1 | iex
+```
+
+This installs `comic-book.exe` to `%LOCALAPPDATA%\Programs\comic-book\bin` and adds that directory to your user `PATH` (restart your terminal afterwards).
+
+To pass options, download the script and run it:
+
+```powershell
+.\scripts\install.ps1 -Version v0.1.0 -InstallDir "$env:USERPROFILE\bin"
+```
+
+#### Verify the Install
+
+```bash
+comic-book --version
+```
 
 ### Build from Source
+
+Requires [Rust](https://www.rust-lang.org/tools/install) (version 1.87 or newer).
 
 ```bash
 git clone https://github.com/jjangsangy/comic-book.git

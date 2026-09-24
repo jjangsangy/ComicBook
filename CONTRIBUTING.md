@@ -78,3 +78,31 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
 - **Language**: Rust (2021 edition)
 - **Minimum Supported Rust Version (MSRV)**: 1.87+
 - **External Dependencies**: None (all formats, including RAR reading and writing, use native Rust libraries)
+
+---
+
+## Releasing
+
+Releases are automated. To publish a new version:
+
+1. **Bump the version** in `Cargo.toml` and commit the result:
+   ```bash
+   # Cargo.toml: version = "0.2.0"
+   git add Cargo.toml Cargo.lock
+   git commit -m "chore(release): v0.2.0"
+   ```
+
+2. **Tag and push**:
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+Pushing a `v*` tag triggers the [`Release` workflow](.github/workflows/release.yml), which:
+
+- Creates a GitHub Release with auto-generated notes. Tags containing a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
+- Builds and attaches binaries for macOS (arm64, x86_64), Linux (x86_64, aarch64; both static musl and glibc) and Windows (x86_64), each with a `.sha256` checksum.
+
+The tag must match the `version` in `Cargo.toml`; the workflow fails immediately if they disagree, since the binary's `--version` output is compiled in from `Cargo.toml`.
+
+The scripts in `scripts/` resolve the latest release automatically, so nothing else needs updating.
