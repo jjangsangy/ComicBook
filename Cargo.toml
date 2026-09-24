@@ -1,6 +1,6 @@
 [package]
 name = "comic-book"
-version = "v0.1.0"
+version = "0.1.0"
 edition = "2021"
 description = "Fast comic book archive conversion and image clamping CLI tool"
 license = "MIT"
