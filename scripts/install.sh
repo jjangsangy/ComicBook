@@ -93,8 +93,7 @@ os="$(uname -s)"
 arch="$(uname -m)"
 
 case "$os" in
-Darwin) os="apple-darwin" ;;
-Linux) os="unknown-linux" ;;
+Darwin | Linux) ;;
 *)
 	die "unsupported operating system: $os (on Windows, run scripts/install.ps1 instead)"
 	;;
@@ -111,10 +110,10 @@ esac
 # glibc version, and falls back to the glibc build if musl is unavailable.
 if [ -n "$target" ]; then
 	candidates="$target"
-elif [ "$os" = "apple-darwin" ]; then
-	candidates="$cpu-$os"
+elif [ "$os" = "Darwin" ]; then
+	candidates="$cpu-apple-darwin"
 else
-	candidates="$cpu-$os-musl $cpu-$os-gnu"
+	candidates="$cpu-unknown-linux-musl $cpu-unknown-linux-gnu"
 fi
 
 # --- Resolve download location ------------------------------------------------
@@ -186,25 +185,81 @@ if ! tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/$BIN.XXXXXX")"; then
 fi
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM HUP
 
+# Print the newest release tag, preferring the newest stable release and falling
+# back to the newest pre-release. Needed because `/releases/latest` only ever
+# resolves to a stable release, so a repository that has published nothing but
+# pre-releases (for example v0.1.0-rc.1) has no latest download.
+latest_release_tag() {
+	json="$tmp_dir/releases.json"
+	download "https://api.github.com/repos/$REPO/releases?per_page=100" "$json" 2>/dev/null || return 1
+
+	tags="$tmp_dir/release-tags"
+	flags="$tmp_dir/release-flags"
+	grep -F '"tag_name"' "$json" | sed -E 's/.*"tag_name": *"([^"]*)".*/\1/' >"$tags"
+	grep -F '"prerelease"' "$json" | sed -E 's/.*"prerelease": *([A-Za-z]+).*/\1/' >"$flags"
+	[ -s "$tags" ] || return 1
+
+	# Releases are returned newest first, so the first stable one is "latest".
+	pairs="$(paste -d' ' "$tags" "$flags")"
+	stable="$(printf '%s\n' "$pairs" | awk '$2 == "false" { print $1; exit }')"
+	if [ -n "$stable" ]; then
+		printf '%s\n' "$stable"
+	else
+		printf '%s\n' "$pairs" | awk 'NR == 1 { print $1 }'
+	fi
+}
+
+# Download the first available build for $candidates from a release base URL,
+# setting $archive and $selected. Passing "probe" as the second argument keeps
+# quiet about a target that is missing from the release (used when a 404 is the
+# expected outcome, such as the `/releases/latest` probe).
+download_archive() {
+	base="$1"
+	mode="${2:-}"
+	# shellcheck disable=SC2086 # word splitting is intentional: candidates is a list
+	for candidate in $candidates; do
+		printf 'Downloading %s (%s, %s)...\n' "$BIN" "$version" "$candidate"
+		url="$base/$BIN-$candidate.tar.gz"
+		target_file="$tmp_dir/$BIN-$candidate.tar.gz"
+		if [ "$mode" = "probe" ]; then
+			download "$url" "$target_file" 2>/dev/null || continue
+		elif ! download "$url" "$target_file"; then
+			printf '  %s is not available for this release, trying the next target\n' "$candidate"
+			continue
+		fi
+		archive="$target_file"
+		selected="$candidate"
+		return 0
+	done
+	return 1
+}
+
 archive=""
 selected=""
-# shellcheck disable=SC2086 # word splitting is intentional: candidates is a list
-for candidate in $candidates; do
-	printf 'Downloading %s (%s, %s)...\n' "$BIN" "$version" "$candidate"
-	url="$base_url/$BIN-$candidate.tar.gz"
-	if download "$url" "$tmp_dir/$BIN-$candidate.tar.gz"; then
-		archive="$tmp_dir/$BIN-$candidate.tar.gz"
-		selected="$candidate"
-		break
+if [ "$version" = "latest" ]; then
+	# `/releases/latest` only ever resolves to a stable release, so probe quietly
+	# (a 404 here is expected) before falling back to the newest release of any
+	# kind, which covers repositories that have only published pre-releases.
+	if ! download_archive "$base_url" probe; then
+		newest="$(latest_release_tag)" || newest=""
+		if [ -n "$newest" ]; then
+			printf 'No stable release found; using the newest release (%s)\n' "$newest"
+			version="$newest"
+			base_url="https://github.com/$REPO/releases/download/$newest"
+			download_archive "$base_url" || true
+		fi
 	fi
-	printf '  %s is not available for this release, trying the next target\n' "$candidate"
-done
+else
+	download_archive "$base_url" || true
+fi
 
 if [ -z "$archive" ]; then
 	die "no prebuilt binary for $os/$cpu (tried: $candidates). See https://github.com/$REPO/releases"
 fi
 
-verify_checksum "$archive" "$base_url/$BIN-$selected.tar.gz.sha256"
+# The published checksum is named after the archive stem, without its extension
+# (comic-book-<target>.tar.gz -> comic-book-<target>.sha256).
+verify_checksum "$archive" "$base_url/$BIN-$selected.sha256"
 
 mkdir -p "$tmp_dir/unpack"
 if ! tar -xzf "$archive" -C "$tmp_dir/unpack"; then

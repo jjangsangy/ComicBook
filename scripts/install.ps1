@@ -43,6 +43,23 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 $Repo = 'jjangsangy/ComicBook'
 $Bin = 'comic-book'
 
+# Newest release tag, preferring the newest stable release and falling back to
+# the newest pre-release. Returns $null when the lookup fails (for example when
+# offline) or when no releases are published.
+function Get-LatestReleaseTag {
+    try {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing -UserAgent 'comic-book-installer'
+    }
+    catch {
+        return $null
+    }
+    $list = @($releases)
+    $stable = $list | Where-Object { -not $_.prerelease } | Select-Object -First 1
+    if ($stable) { return $stable.tag_name }
+    if ($list.Count -gt 0) { return $list[0].tag_name }
+    return $null
+}
+
 # --- Resolve the install location ---------------------------------------------
 
 if (-not $InstallDir) {
@@ -75,7 +92,9 @@ else {
 }
 
 $assetName = "$Bin-$target.zip"
-$assetUrl = "$baseUrl/$assetName"
+# The published checksum is named after the archive stem, without its extension
+# (comic-book-<target>.zip -> comic-book-<target>.sha256).
+$assetStem = [System.IO.Path]::GetFileNameWithoutExtension($assetName)
 
 # Windows PowerShell 5.1 still defaults to TLS 1.0 on some systems.
 if ($PSVersionTable.PSVersion.Major -lt 6) {
@@ -89,18 +108,36 @@ New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
 try {
     $zipPath = Join-Path $tmpDir $assetName
+    $assetUrl = "$baseUrl/$assetName"
 
     Write-Host "Downloading $assetUrl"
     try {
         Invoke-WebRequest -Uri $assetUrl -OutFile $zipPath -UseBasicParsing
     }
     catch {
-        throw ('Failed to download {0} ({1}). Check that the release exists: https://github.com/{2}/releases' -f $assetUrl, $_.Exception.Message, $Repo)
+        # "latest" only resolves to a stable release; fall back to the newest
+        # release of any kind when the repository has only pre-releases.
+        $newest = if ($Version -eq 'latest') { Get-LatestReleaseTag } else { $null }
+        if ($newest) {
+            Write-Host "No stable release found; using the newest release ($newest)"
+            $Version = $newest
+            $baseUrl = "https://github.com/$Repo/releases/download/$newest"
+            $assetUrl = "$baseUrl/$assetName"
+            try {
+                Invoke-WebRequest -Uri $assetUrl -OutFile $zipPath -UseBasicParsing
+            }
+            catch {
+                throw ('Failed to download {0} ({1}). Check that the release exists: https://github.com/{2}/releases' -f $assetUrl, $_.Exception.Message, $Repo)
+            }
+        }
+        else {
+            throw ('Failed to download {0} ({1}). Check that the release exists: https://github.com/{2}/releases' -f $assetUrl, $_.Exception.Message, $Repo)
+        }
     }
 
     $shaPath = Join-Path $tmpDir "$assetName.sha256"
     try {
-        Invoke-WebRequest -Uri "$assetUrl.sha256" -OutFile $shaPath -UseBasicParsing
+        Invoke-WebRequest -Uri "$baseUrl/$assetStem.sha256" -OutFile $shaPath -UseBasicParsing
         $expected = ((Get-Content -Raw -Path $shaPath) -split '\s+')[0].Trim().ToLowerInvariant()
     }
     catch {
