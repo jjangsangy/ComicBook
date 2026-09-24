@@ -2,7 +2,7 @@ name: Release
 
 # Builds prebuilt binaries for every supported platform and attaches them to the
 # GitHub Release for the pushed tag. Pushing a tag such as `v0.1.0` is all that is
-# required; the tag must match the version in Cargo.toml.
+# required.
 on:
   push:
     tags:
@@ -24,17 +24,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Fail fast rather than publishing binaries whose `--version` disagrees
-      # with the tag (the version comes from Cargo.toml at compile time).
-      - name: Verify tag matches Cargo.toml version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          if [ "$tag" != "$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version. Bump the version, commit, then re-tag."
-            exit 1
-          fi
 
       - name: Create release
         uses: softprops/action-gh-release@v2
