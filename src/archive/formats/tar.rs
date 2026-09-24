@@ -21,7 +21,20 @@ impl TarReader {
         })
     }
 
-    fn open_archive(&self) -> Result<tar::Archive<File>> {
+    /// Open the archive for sequential reading, buffered so tar's small header reads
+    /// don't each become a syscall.
+    fn open_archive(&self) -> Result<tar::Archive<io::BufReader<File>>> {
+        let file = File::open(&self.path)
+            .with_context(|| format!("Failed to open {}", self.path.display()))?;
+        Ok(tar::Archive::new(io::BufReader::with_capacity(
+            128 * 1024,
+            file,
+        )))
+    }
+
+    /// Open the archive for name-only enumeration. A seekable archive lets the iterator
+    /// skip entry bodies with `lseek` instead of reading through every byte of the tar.
+    fn open_archive_seekable(&self) -> Result<tar::Archive<File>> {
         let file = File::open(&self.path)
             .with_context(|| format!("Failed to open {}", self.path.display()))?;
         Ok(tar::Archive::new(file))
@@ -33,9 +46,10 @@ impl ArchiveReader for TarReader {
         let mut archive = self.open_archive()?;
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path_str = entry.path()?.to_string_lossy().to_string();
             let is_dir_header = entry.header().entry_type().is_dir();
-            if let Some((clean_name, is_dir)) = parse_entry_info(&path_str, is_dir_header) {
+            // Borrow the path rather than allocating an owned `String` per entry.
+            let parsed = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header);
+            if let Some((clean_name, is_dir)) = parsed {
                 if is_dir {
                     on_entry(&clean_name, true, &[])?;
                 } else {
@@ -50,13 +64,13 @@ impl ArchiveReader for TarReader {
     }
 
     fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
-        let mut archive = self.open_archive()?;
+        let mut archive = self.open_archive_seekable()?;
         let mut entries = Vec::new();
-        for entry in archive.entries()? {
+        for entry in archive.entries_with_seek()? {
             let entry = entry?;
-            let path_str = entry.path()?.to_string_lossy().to_string();
             let is_dir_header = entry.header().entry_type().is_dir();
-            if let Some((clean_name, is_dir)) = parse_entry_info(&path_str, is_dir_header) {
+            let parsed = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header);
+            if let Some((clean_name, is_dir)) = parsed {
                 entries.push((clean_name, is_dir));
             }
         }

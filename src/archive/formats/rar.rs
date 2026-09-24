@@ -1,6 +1,6 @@
 use crate::archive::path::parse_entry_info;
 use crate::archive::reader::{ArchiveReader, EntryCallback};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use rars::rar15_40::{write_streaming_archive_to, StreamingEntry, WriterOptions};
 use rars::{ArchiveVersion, EntrySource, FeatureSet, MemberCoding, WriterResources};
 use std::fs::File;
@@ -18,9 +18,9 @@ pub struct RarReader {
 
 impl RarReader {
     pub fn open(path: &Path) -> Result<Self> {
-        let _ = unrar::Archive::new(path)
-            .open_for_processing()
-            .map_err(|e| anyhow!("Failed to open RAR archive {}: {:?}", path.display(), e))?;
+        // Cheap readability check; the RAR headers are parsed lazily by the first real
+        // operation. Parsing here would duplicate the parse that read/list already do.
+        let _ = File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
         Ok(Self {
             path: path.to_path_buf(),
         })

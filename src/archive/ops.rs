@@ -100,9 +100,15 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
     let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("");
     let src_stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
+    // Open the source once. The single reader is used both to enumerate entry names
+    // (for root detection) and to stream the entries themselves, so extraction no longer
+    // opens/parses the source archive twice.
+    let mut reader = open_reader(src_kind, src)?;
+
     let root_to_strip: Option<String> =
         if target_kind == ArchiveKind::Directory && src_kind != ArchiveKind::Directory {
-            list_archive_entry_names(src_kind, src)
+            reader
+                .list_entries()
                 .ok()
                 .and_then(|entries| find_single_root_dir(&entries))
                 .filter(|root| strip_common_root || is_matching_root(root, dest_name, src_stem))
@@ -114,7 +120,7 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
 
     let mut writer = ArchiveWriter::new(target_kind, dest)?;
     let result = (|| -> Result<()> {
-        read_entries_with_scratch(src_kind, src, scratch, &mut |name, is_dir, data| {
+        reader.read_entries(scratch, &mut |name, is_dir, data| {
             if let Some(ref root) = root_to_strip {
                 if name == root {
                     return Ok(());
@@ -124,11 +130,13 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
                         if stripped.is_empty() {
                             return Ok(());
                         }
-                        return writer.add_entry(stripped, is_dir, data);
+                        // `name` was normalized by the reader, so `stripped` is too.
+                        return writer.add_entry_normalized(stripped, is_dir, data);
                     }
                 }
             }
-            writer.add_entry(name, is_dir, data)
+            // Reader names are already normalized; avoid normalizing a second time.
+            writer.add_entry_normalized(name, is_dir, data)
         })?;
         writer.finish()?;
         Ok(())

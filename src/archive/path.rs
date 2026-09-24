@@ -102,16 +102,18 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
             continue;
         }
 
-        let parts: Vec<&str> = name.split('/').collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        let first = parts[0];
+        // Normalized names never carry leading/trailing separators, so stepping the
+        // split iterator is enough to get the first segment and detect whether any
+        // more follow. This avoids allocating a `Vec` of segments for every entry.
+        let mut segments = name.split('/');
+        let first = match segments.next() {
+            Some(seg) if !seg.is_empty() => seg,
+            _ => continue,
+        };
 
         // If this entry is a file at the root level (no '/' in path),
         // then the archive has files at root, so there is no single root folder!
-        if parts.len() == 1 && !*is_dir {
+        if !*is_dir && segments.next().is_none() {
             return None;
         }
 
@@ -122,7 +124,7 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
         }
     }
 
-    candidate_root.map(|s| s.to_string())
+    candidate_root.map(str::to_string)
 }
 
 /// Check whether an archive's root folder matches the destination folder or source file stem.

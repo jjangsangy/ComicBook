@@ -30,8 +30,10 @@ impl ArchiveReader for ZipReader {
     fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         for i in 0..self.archive.len() {
             let mut file_entry = self.archive.by_index(i)?;
-            let raw_name = file_entry.name().to_string();
-            if let Some((clean_name, is_dir)) = parse_entry_info(&raw_name, file_entry.is_dir()) {
+            // Parse straight from the borrowed name; the previous `.to_string()` was a
+            // throwaway allocation per entry.
+            let parsed = parse_entry_info(file_entry.name(), file_entry.is_dir());
+            if let Some((clean_name, is_dir)) = parsed {
                 if is_dir {
                     on_entry(&clean_name, true, &[])?;
                 } else {
@@ -87,20 +89,13 @@ impl ZipArchiveWriter {
                     .add_directory(dir_name, SimpleFileOptions::default())?;
             }
         } else {
-            // Ensure intermediate parent directories are registered in the zip
-            let mut prefix = String::new();
-            let segments: Vec<&str> = normalized_name.split('/').collect();
-            if segments.len() > 1 {
-                for seg in &segments[..segments.len() - 1] {
-                    if !prefix.is_empty() {
-                        prefix.push('/');
-                    }
-                    prefix.push_str(seg);
-                    let dir_entry = format!("{}/", prefix);
-                    if self.seen_dirs.insert(dir_entry.clone()) {
-                        self.zip
-                            .add_directory(dir_entry, SimpleFileOptions::default())?;
-                    }
+            // Ensure intermediate parent directories are registered in the zip.
+            // Walk the separators in place instead of collecting a `Vec<&str>` per entry.
+            for (idx, _) in normalized_name.match_indices('/') {
+                let dir_entry = format!("{}/", &normalized_name[..idx]);
+                if self.seen_dirs.insert(dir_entry.clone()) {
+                    self.zip
+                        .add_directory(dir_entry, SimpleFileOptions::default())?;
                 }
             }
 

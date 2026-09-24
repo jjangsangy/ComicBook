@@ -10,27 +10,25 @@ use std::path::{Path, PathBuf};
 
 pub struct SevenZipReader {
     path: PathBuf,
+    // Keep the opened archive so enumeration and streaming share one header parse
+    // instead of reopening (and re-parsing) the container for each operation.
+    reader: sevenz_rust2::ArchiveReader<File>,
 }
 
 impl SevenZipReader {
     pub fn open(path: &Path) -> Result<Self> {
-        let _ = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::empty())
+        let reader = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::empty())
             .map_err(|e| anyhow!("Failed to open 7z archive {}: {:?}", path.display(), e))?;
         Ok(Self {
             path: path.to_path_buf(),
+            reader,
         })
     }
 }
 
 impl ArchiveReader for SevenZipReader {
     fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
-        let mut reader =
-            sevenz_rust2::ArchiveReader::open(&self.path, sevenz_rust2::Password::empty())
-                .map_err(|e| {
-                    anyhow!("Failed to open 7z archive {}: {:?}", self.path.display(), e)
-                })?;
-
-        reader
+        self.reader
             .for_each_entries(|entry, r| {
                 let is_dir_flag = entry.is_directory()
                     || (entry.has_windows_attributes && (entry.windows_attributes & 0x10) != 0);
@@ -54,10 +52,8 @@ impl ArchiveReader for SevenZipReader {
     }
 
     fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
-        let reader = sevenz_rust2::ArchiveReader::open(&self.path, sevenz_rust2::Password::empty())
-            .map_err(|e| anyhow!("Failed to open 7z archive {}: {:?}", self.path.display(), e))?;
         let mut entries = Vec::new();
-        for entry in reader.archive().files.iter() {
+        for entry in self.reader.archive().files.iter() {
             let is_dir_flag = entry.is_directory()
                 || (entry.has_windows_attributes && (entry.windows_attributes & 0x10) != 0);
             if let Some((clean_name, is_dir)) = parse_entry_info(entry.name(), is_dir_flag) {

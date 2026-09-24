@@ -145,13 +145,10 @@ fn print_skip_already_target(path: &Path, target: TargetFormat) {
 
 fn collect_archive_file_task(
     path: &Path,
+    kind: ArchiveKind,
     target: TargetFormat,
     tasks: &mut Vec<ConvertTask>,
 ) -> Result<()> {
-    let Some(kind) = detect_archive_kind(path) else {
-        return Ok(());
-    };
-
     if is_already_target_format(kind, target.kind) {
         print_skip_already_target(path, target);
         return Ok(());
@@ -179,8 +176,8 @@ fn collect_tasks_for_dir_target(
     for entry_path in sorted_dir_entries(dir) {
         if entry_path.is_dir() {
             print_skip_already_target(&entry_path, target);
-        } else {
-            collect_archive_file_task(&entry_path, target, tasks)?;
+        } else if let Some(kind) = detect_archive_kind(&entry_path) {
+            collect_archive_file_task(&entry_path, kind, target, tasks)?;
         }
     }
 
@@ -204,7 +201,9 @@ fn collect_tasks_for_archive_target(
 
     for entry_path in sorted_dir_entries(dir) {
         if entry_path.is_file() {
-            collect_archive_file_task(&entry_path, target, tasks)?;
+            if let Some(kind) = detect_archive_kind(&entry_path) {
+                collect_archive_file_task(&entry_path, kind, target, tasks)?;
+            }
         } else if entry_path.is_dir() && contains_any_images(&entry_path) {
             let dest_path = get_dest_path(&entry_path, ArchiveKind::Directory, target)?;
             tasks.push(ConvertTask {
@@ -236,14 +235,16 @@ fn collect_path_tasks(
     }
 
     if path.is_file() {
-        if detect_archive_kind(path).is_none() {
-            eprintln!(
-                "Warning: '{}' is not a supported comic archive format, skipping.",
-                path.display()
-            );
-            return Ok(());
+        // Detect once and reuse the kind instead of re-reading magic bytes downstream.
+        match detect_archive_kind(path) {
+            Some(kind) => collect_archive_file_task(path, kind, target, tasks)?,
+            None => {
+                eprintln!(
+                    "Warning: '{}' is not a supported comic archive format, skipping.",
+                    path.display()
+                );
+            }
         }
-        collect_archive_file_task(path, target, tasks)?;
     } else if path.is_dir() {
         collect_dir_tasks(path, target, tasks)?;
     }
