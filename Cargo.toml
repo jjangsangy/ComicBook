@@ -1,0 +1,29 @@
+[package]
+name = "comic-book"
+version = "0.1.0"
+edition = "2021"
+description = "Fast comic book archive conversion and image clamping CLI tool"
+license = "MIT"
+readme = "README.md"
+keywords = ["comic", "cbz", "cbr", "image-processing", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "bmp", "gif", "pnm"] }
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["compress"] }
+unrar = "0.5"
+rars = "0.9"
+rayon = "1.10"
+indicatif = { version = "0.17", features = ["rayon"] }
+natord = "1.0"
+anyhow = "1.0"
+tempfile = "3.17"
+fast_image_resize = "5.1"
+webp = "0.3"
+walkdir = "2.5"
+same-file = "1.0"
+infer = "0.22.0"
