@@ -1,7 +1,12 @@
 use crate::archive::path::parse_entry_info;
 use crate::archive::reader::{ArchiveReader, EntryCallback};
 use anyhow::{anyhow, Result};
+use rars::rar15_40::{write_streaming_archive_to, StreamingEntry, WriterOptions};
+use rars::{ArchiveVersion, EntrySource, FeatureSet, MemberCoding, WriterResources};
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // ===================================================================
 // RAR / CBR Reader
@@ -23,7 +28,7 @@ impl RarReader {
 }
 
 impl ArchiveReader for RarReader {
-    fn read_entries(&mut self, on_entry: EntryCallback) -> Result<()> {
+    fn read_entries(&mut self, _scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         let mut archive = unrar::Archive::new(&self.path)
             .open_for_processing()
             .map_err(|e| {
@@ -64,6 +69,9 @@ impl ArchiveReader for RarReader {
                     on_entry(&clean_name, true, &[])?;
                 }
                 Some((clean_name, false)) => {
+                    // unrar allocates (and returns) its own Vec for each entry and offers no
+                    // slice-into-buffer API, so we read straight into that allocation rather than
+                    // copying it into `scratch`. This avoids a redundant full-entry memcpy.
                     let (data, next_archive) = header.read().map_err(|e| {
                         anyhow!(
                             "Error reading RAR entry in {}: {:?}",
@@ -121,18 +129,14 @@ impl ArchiveReader for RarReader {
 
 pub struct RarArchiveWriter {
     dest_path: PathBuf,
-    builder: rars::Builder,
+    entries: Vec<StreamingEntry>,
 }
 
 impl RarArchiveWriter {
     pub fn create(dest: &Path) -> Result<Self> {
-        // RAR 4.0 is the universal CBR standard supported across comic book readers.
-        // It also avoids rars' RAR 5 streaming implementation which opens a temporary
-        // spool file descriptor for each entry and can exhaust the OS file descriptor limit.
-        let builder = rars::Builder::new(rars::ArchiveVersion::Rar40).store(true);
         Ok(Self {
             dest_path: dest.to_path_buf(),
-            builder,
+            entries: Vec::new(),
         })
     }
 
@@ -140,37 +144,55 @@ impl RarArchiveWriter {
         if !is_dir {
             // RAR 4.0 uses backslash as path separator internally
             let rar_name = normalized_name.replace('/', "\\");
+            // RAR 1.5-4.0 stores pre-compressed images verbatim; there is no point compressing
+            // already-compressed image bytes. `from_bytes` hands rars a reopenable in-memory
+            // source, so a stored member is copied straight to the output as the archive is
+            // written and never duplicated into a second in-memory archive buffer.
+            let source = EntrySource::from_bytes(Arc::<[u8]>::from(data));
             // Explicitly set regular file permissions (S_IFREG | 0644 = 0o100644) so that
             // extracted files have readable permissions rather than rars's default
             // 0x20 which is interpreted on Unix as 0o040 (unreadable by user).
-            self.builder
-                .add_bytes(
-                    rar_name.as_bytes().to_vec(),
-                    data.to_vec(),
-                    None,
-                    Some(0o100644),
-                )
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to add entry {} to RAR archive: {:?}",
-                        normalized_name,
-                        e
-                    )
-                })?;
+            // host_os 3 (Unix) matches what rars' high-level Builder produces for RAR 4.0.
+            self.entries.push(
+                StreamingEntry::new(rar_name.into_bytes(), source)
+                    .with_file_attr(0o100644)
+                    .with_host_os(3),
+            );
         }
         Ok(())
     }
 
     pub fn finish(self) -> Result<()> {
-        self.builder
-            .write_to_path(&self.dest_path, None)
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to write RAR archive {}: {:?}",
-                    self.dest_path.display(),
-                    e
-                )
-            })?;
+        // rars' high-level `Builder` has no streaming writer for the RAR 1.5-4.0 family: it
+        // encodes the entire archive into a `Vec<u8>` and then copies that to disk, so a CBR
+        // conversion briefly held the whole archive twice over. The lower-level streaming
+        // writer emits members straight to the destination and copies stored members from
+        // their source, so the archive is never materialized as a whole.
+        let options = WriterOptions::new(ArchiveVersion::Rar40, FeatureSet::store_only());
+        let file = File::create(&self.dest_path).map_err(|e| {
+            anyhow!(
+                "Failed to create RAR archive {}: {e}",
+                self.dest_path.display()
+            )
+        })?;
+        let mut output = BufWriter::with_capacity(128 * 1024, file);
+        write_streaming_archive_to(
+            &self.entries,
+            options,
+            MemberCoding::Stored,
+            None,
+            &WriterResources::default(),
+            None,
+            &mut output,
+        )
+        .map_err(|e| {
+            anyhow!(
+                "Failed to write RAR archive {}: {e:?}",
+                self.dest_path.display()
+            )
+        })?;
+        output.flush()?;
+        output.get_ref().sync_all()?;
         Ok(())
     }
 }

@@ -29,7 +29,7 @@ impl TarReader {
 }
 
 impl ArchiveReader for TarReader {
-    fn read_entries(&mut self, on_entry: EntryCallback) -> Result<()> {
+    fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         let mut archive = self.open_archive()?;
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -39,9 +39,10 @@ impl ArchiveReader for TarReader {
                 if is_dir {
                     on_entry(&clean_name, true, &[])?;
                 } else {
-                    let mut buf = Vec::with_capacity(entry.size() as usize);
-                    entry.read_to_end(&mut buf)?;
-                    on_entry(&clean_name, false, &buf)?;
+                    // Reuse the caller's buffer instead of allocating per entry.
+                    scratch.clear();
+                    entry.read_to_end(scratch)?;
+                    on_entry(&clean_name, false, scratch)?;
                 }
             }
         }

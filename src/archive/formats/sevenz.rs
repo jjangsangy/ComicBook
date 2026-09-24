@@ -23,7 +23,7 @@ impl SevenZipReader {
 }
 
 impl ArchiveReader for SevenZipReader {
-    fn read_entries(&mut self, on_entry: EntryCallback) -> Result<()> {
+    fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         let mut reader =
             sevenz_rust2::ArchiveReader::open(&self.path, sevenz_rust2::Password::empty())
                 .map_err(|e| {
@@ -39,10 +39,11 @@ impl ArchiveReader for SevenZipReader {
                         on_entry(&clean_name, true, &[])
                             .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
                     } else {
-                        let mut buf = Vec::with_capacity(entry.size() as usize);
-                        r.read_to_end(&mut buf)
+                        // Reuse the caller's buffer instead of allocating per entry.
+                        scratch.clear();
+                        r.read_to_end(scratch)
                             .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
-                        on_entry(&clean_name, false, &buf)
+                        on_entry(&clean_name, false, scratch)
                             .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
                     }
                 }

@@ -27,7 +27,7 @@ impl ZipReader {
 }
 
 impl ArchiveReader for ZipReader {
-    fn read_entries(&mut self, on_entry: EntryCallback) -> Result<()> {
+    fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         for i in 0..self.archive.len() {
             let mut file_entry = self.archive.by_index(i)?;
             let raw_name = file_entry.name().to_string();
@@ -35,9 +35,10 @@ impl ArchiveReader for ZipReader {
                 if is_dir {
                     on_entry(&clean_name, true, &[])?;
                 } else {
-                    let mut buf = Vec::with_capacity(file_entry.size() as usize);
-                    file_entry.read_to_end(&mut buf)?;
-                    on_entry(&clean_name, false, &buf)?;
+                    // Reuse the caller's buffer instead of allocating per entry.
+                    scratch.clear();
+                    file_entry.read_to_end(scratch)?;
+                    on_entry(&clean_name, false, scratch)?;
                 }
             }
         }

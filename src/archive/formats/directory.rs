@@ -2,6 +2,7 @@ use crate::archive::path::{parse_entry_info, safe_join};
 use crate::archive::reader::{ArchiveReader, EntryCallback};
 use anyhow::Result;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -34,7 +35,7 @@ impl DirectoryReader {
 }
 
 impl ArchiveReader for DirectoryReader {
-    fn read_entries(&mut self, on_entry: EntryCallback) -> Result<()> {
+    fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         for entry in self.walk_sorted() {
             let p = entry.path();
             let rel_path = match p.strip_prefix(&self.path) {
@@ -47,8 +48,12 @@ impl ArchiveReader for DirectoryReader {
                 if ft.is_dir() {
                     on_entry(&clean_name, true, &[])?;
                 } else if ft.is_file() || ft.is_symlink() {
-                    if let Ok(data) = fs::read(p) {
-                        on_entry(&clean_name, false, &data)?;
+                    // Reuse the caller's buffer instead of a fresh `fs::read` allocation per file.
+                    if let Ok(mut file) = fs::File::open(p) {
+                        scratch.clear();
+                        if file.read_to_end(scratch).is_ok() {
+                            on_entry(&clean_name, false, scratch)?;
+                        }
                     }
                 }
             }

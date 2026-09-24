@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 /// redundant `./`, and `..` segments to prevent path traversal and ensure uniform cross-platform
 /// compatibility across Windows, Linux, and macOS.
 pub fn normalize_archive_path(raw: &str) -> String {
-    let mut parts = Vec::new();
+    // Build the result in place (a single buffer) rather than collecting segments into an
+    // intermediate `Vec` and joining them, which avoids an allocation for every entry.
+    let mut out = String::with_capacity(raw.len());
     for part in raw.split(['/', '\\']) {
         let trimmed = part.trim();
         if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
@@ -19,11 +21,15 @@ pub fn normalize_archive_path(raw: &str) -> String {
             continue;
         }
         let cleaned = trimmed.trim_end_matches(':');
-        if !cleaned.is_empty() {
-            parts.push(cleaned);
+        if cleaned.is_empty() {
+            continue;
         }
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(cleaned);
     }
-    parts.join("/")
+    out
 }
 
 /// Safely join an archive entry path onto a destination directory using the host platform's

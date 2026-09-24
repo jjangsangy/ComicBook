@@ -1,6 +1,6 @@
 use super::kind::ArchiveKind;
 use super::path::{copy_dir_all, find_single_root_dir, is_matching_root};
-use super::reader::open_reader;
+use super::reader::{open_reader, read_entries_with_scratch};
 use super::writer::ArchiveWriter;
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Context, Result};
@@ -9,6 +9,9 @@ use std::fs;
 use std::path::Path;
 
 /// Stream or read archive entries in memory without extracting loose files to the filesystem.
+///
+/// This allocates a throwaway scratch buffer for the duration of the call. Callers that process
+/// many archives in a row should use [`read_entries_with_scratch`] to reuse one buffer instead.
 pub fn read_archive_entries<P: AsRef<Path>, F>(
     kind: ArchiveKind,
     path: P,
@@ -17,8 +20,8 @@ pub fn read_archive_entries<P: AsRef<Path>, F>(
 where
     F: FnMut(&str, bool, &[u8]) -> Result<()>,
 {
-    let mut reader = open_reader(kind, path.as_ref())?;
-    reader.read_entries(&mut on_entry)
+    let mut scratch = Vec::new();
+    read_entries_with_scratch(kind, path, &mut scratch, &mut on_entry)
 }
 
 /// List all entry names and whether they are directories from an archive or folder.
@@ -48,6 +51,29 @@ pub fn convert_archive_ext<P: AsRef<Path>, Q: AsRef<Path>>(
     target_kind: ArchiveKind,
     dest_path: Q,
     strip_common_root: bool,
+) -> Result<()> {
+    let mut scratch = Vec::new();
+    convert_archive_ext_with_scratch(
+        src_kind,
+        src_path,
+        target_kind,
+        dest_path,
+        strip_common_root,
+        &mut scratch,
+    )
+}
+
+/// Like [`convert_archive_ext`], but reuses a caller-owned `scratch` buffer for entry data.
+///
+/// Threading one buffer through a whole batch keeps the memory footprint bounded by the largest
+/// single entry instead of allocating (and freeing) per file.
+pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
+    src_kind: ArchiveKind,
+    src_path: P,
+    target_kind: ArchiveKind,
+    dest_path: Q,
+    strip_common_root: bool,
+    scratch: &mut Vec<u8>,
 ) -> Result<()> {
     let src = src_path.as_ref();
     let dest = dest_path.as_ref();
@@ -88,7 +114,7 @@ pub fn convert_archive_ext<P: AsRef<Path>, Q: AsRef<Path>>(
 
     let mut writer = ArchiveWriter::new(target_kind, dest)?;
     let result = (|| -> Result<()> {
-        read_archive_entries(src_kind, src, |name, is_dir, data| {
+        read_entries_with_scratch(src_kind, src, scratch, &mut |name, is_dir, data| {
             if let Some(ref root) = root_to_strip {
                 if name == root {
                     return Ok(());

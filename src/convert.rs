@@ -1,6 +1,4 @@
-use crate::archive::{
-    convert_archive_ext, detect_archive_kind, parse_target_extension, ArchiveKind,
-};
+use crate::archive::{detect_archive_kind, parse_target_extension, ArchiveKind};
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -263,6 +261,10 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     );
 
     let should_strip = target_kind == ArchiveKind::Directory;
+    // One reusable buffer for the whole batch: each archive's entry data is streamed through this
+    // same allocation, so converting a directory of files never grows the footprint beyond the
+    // largest single entry.
+    let mut scratch = Vec::new();
     for task in tasks {
         let file_name = task
             .source_path
@@ -271,12 +273,13 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
             .to_string_lossy();
         pb.set_message(format!("Converting {}", file_name));
 
-        if let Err(e) = convert_archive_ext(
+        if let Err(e) = crate::archive::ops::convert_archive_ext_with_scratch(
             task.source_kind,
             &task.source_path,
             target_kind,
             &task.dest_path,
             should_strip,
+            &mut scratch,
         ) {
             pb.println(format!("Error processing {}: {}", file_name, e));
         }
