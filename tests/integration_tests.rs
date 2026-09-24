@@ -3,8 +3,7 @@ use comic_book::archive::{
     get_images_from_source, normalize_archive_path, parse_target_extension, read_archive_entries,
     safe_join, ArchiveKind, ArchiveWriter,
 };
-use comic_book::clamp::{remove_dir_all_force, run_clamp, Approach};
-use comic_book::convert::run_convert;
+use comic_book::clamp::{remove_dir_all_force, Approach};
 use comic_book::image_ops::{
     is_image_extension, is_image_file, resize_image_by_total_pixels, resize_image_by_width,
     save_image_as_webp, split_image_iterative,
@@ -13,6 +12,9 @@ use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+
+mod common;
+use common::{run_clamp, run_convert};
 
 // ===================================================================
 // Image Operations Tests

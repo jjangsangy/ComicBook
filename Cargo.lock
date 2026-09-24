@@ -250,6 +250,7 @@ dependencies = [
  "image",
  "indicatif",
  "infer",
+ "libc",
  "natord",
  "rars",
  "rayon",
