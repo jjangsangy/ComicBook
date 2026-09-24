@@ -103,6 +103,21 @@ fn test_cli_clamp_parsing_custom_options() {
 }
 
 #[test]
+fn test_cli_clamp_parses_each_approach() {
+    for (value, expected) in [
+        ("split", Approach::Split),
+        ("resize", Approach::Resize),
+        ("max-width", Approach::MaxWidth),
+    ] {
+        let cli = Cli::try_parse_from(["comic-book", "clamp", "in", "-a", value]).unwrap();
+        match cli.command {
+            Commands::Clamp { approach, .. } => assert_eq!(approach, expected),
+            _ => panic!("Expected Clamp command"),
+        }
+    }
+}
+
+#[test]
 fn test_cli_invalid_arguments() {
     // Missing required `--to`
     assert!(Cli::try_parse_from(vec!["comic-book", "convert", "dir1"]).is_err());

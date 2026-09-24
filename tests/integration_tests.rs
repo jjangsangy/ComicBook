@@ -3,7 +3,7 @@ use comic_book::archive::{
     get_images_from_source, normalize_archive_path, parse_target_extension, read_archive_entries,
     safe_join, ArchiveKind, ArchiveWriter,
 };
-use comic_book::clamp::{run_clamp, Approach};
+use comic_book::clamp::{remove_dir_all_force, run_clamp, Approach};
 use comic_book::convert::run_convert;
 use comic_book::image_ops::{
     is_image_extension, is_image_file, resize_image_by_total_pixels, resize_image_by_width,
@@ -1107,6 +1107,331 @@ fn test_clamp_single_file_input() {
     assert!(out_chap.exists());
     assert!(out_chap.join("001.webp").exists());
     assert!(out_chap.join("002.webp").exists());
+}
+
+#[test]
+fn test_clamp_missing_input_path_errors() {
+    let tmp = tempdir().unwrap();
+    let missing = tmp.path().join("does_not_exist");
+    let out = tmp.path().join("out");
+
+    let res = run_clamp(&missing, &out, 5_000_000, Approach::Split, 1);
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("does not exist"));
+}
+
+#[test]
+fn test_clamp_unsupported_file_input_errors() {
+    let tmp = tempdir().unwrap();
+    let file = tmp.path().join("notes.txt");
+    fs::write(&file, b"just some text, not an archive").unwrap();
+    let out = tmp.path().join("out");
+
+    let res = run_clamp(&file, &out, 5_000_000, Approach::Split, 1);
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported file type"));
+}
+
+#[test]
+fn test_clamp_empty_input_directory_is_noop() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("empty");
+    fs::create_dir_all(&input).unwrap();
+    let out = tmp.path().join("out");
+
+    run_clamp(&input, &out, 5_000_000, Approach::Split, 1).unwrap();
+
+    assert!(out.exists());
+    assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
+}
+
+#[test]
+fn test_clamp_threshold_one_above_floor_is_accepted() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    fs::create_dir_all(&input).unwrap();
+
+    // Each value is exactly one above the approach's floor, so validation passes.
+    run_clamp(
+        &input,
+        &tmp.path().join("out_split"),
+        500_001,
+        Approach::Split,
+        1,
+    )
+    .unwrap();
+    run_clamp(
+        &input,
+        &tmp.path().join("out_resize"),
+        500_001,
+        Approach::Resize,
+        1,
+    )
+    .unwrap();
+    run_clamp(
+        &input,
+        &tmp.path().join("out_width"),
+        401,
+        Approach::MaxWidth,
+        1,
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_clamp_threshold_equality_still_reencodes() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    fs::create_dir_all(&input).unwrap();
+
+    let raw = tmp.path().join("raw");
+    fs::create_dir_all(&raw).unwrap();
+    // Exactly 1,000,000 pixels: equal to the threshold used below.
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(raw.join("page.png")).unwrap();
+    compress_archive(ArchiveKind::Cbz, &raw, input.join("chap.cbz")).unwrap();
+
+    // "Within threshold" is a strict `<`, so an exact match is still re-encoded.
+    run_clamp(
+        &input,
+        &tmp.path().join("out"),
+        1_000_000,
+        Approach::Split,
+        1,
+    )
+    .unwrap();
+
+    let out_chap = tmp.path().join("out").join("chap");
+    assert!(out_chap.join("001.webp").exists());
+    assert!(out_chap.join("002.webp").exists());
+    // The single 1000x1000 page became two 1000x500 halves.
+    let first = image::open(out_chap.join("001.webp")).unwrap();
+    assert_eq!(first.dimensions(), (1000, 500));
+}
+
+#[test]
+fn test_clamp_orders_pages_naturally() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    fs::create_dir_all(&input).unwrap();
+
+    let raw = tmp.path().join("raw");
+    fs::create_dir_all(&raw).unwrap();
+    // Solid colours make page order observable in the numbered output.
+    DynamicImage::ImageRgb8(RgbImage::from_pixel(1000, 1000, Rgb([255, 0, 0])))
+        .save(raw.join("page_2.png"))
+        .unwrap();
+    DynamicImage::ImageRgb8(RgbImage::from_pixel(1000, 1000, Rgb([0, 0, 255])))
+        .save(raw.join("page_10.png"))
+        .unwrap();
+    compress_archive(ArchiveKind::Cbz, &raw, input.join("chap.cbz")).unwrap();
+
+    // Resize keeps a 1:1 page-to-file mapping, so colours map to indices directly.
+    run_clamp(
+        &input,
+        &tmp.path().join("out"),
+        500_001,
+        Approach::Resize,
+        1,
+    )
+    .unwrap();
+
+    let out_chap = tmp.path().join("out").join("chap");
+    let first = image::open(out_chap.join("001.webp")).unwrap().to_rgb8();
+    let second = image::open(out_chap.join("002.webp")).unwrap().to_rgb8();
+
+    // Natural order puts page_2 before page_10.
+    let first_px = first.get_pixel(0, 0).0;
+    assert!(
+        first_px[0] > 200 && first_px[2] < 60,
+        "001.webp should be the red page_2, got {first_px:?}"
+    );
+    let second_px = second.get_pixel(0, 0).0;
+    assert!(
+        second_px[2] > 200 && second_px[0] < 60,
+        "002.webp should be the blue page_10, got {second_px:?}"
+    );
+}
+
+#[test]
+fn test_clamp_directory_source_uses_directory_name() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("library");
+    let chapter = input.join("chapter_a");
+    fs::create_dir_all(&chapter).unwrap();
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(chapter.join("page.png")).unwrap();
+
+    run_clamp(&input, &tmp.path().join("out"), 500_001, Approach::Split, 1).unwrap();
+
+    let out_chap = tmp.path().join("out").join("chapter_a");
+    assert!(out_chap.join("001.webp").exists());
+    assert!(out_chap.join("002.webp").exists());
+}
+
+#[test]
+fn test_clamp_under_threshold_directory_source_copies_files() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("library");
+    let chapter = input.join("small_chapter");
+    fs::create_dir_all(&chapter).unwrap();
+    // 500 x 500 = 250,000 pixels, far below the threshold.
+    let img = DynamicImage::ImageRgb8(RgbImage::new(500, 500));
+    img.save(chapter.join("original.png")).unwrap();
+
+    run_clamp(
+        &input,
+        &tmp.path().join("out"),
+        1_000_000,
+        Approach::Split,
+        1,
+    )
+    .unwrap();
+
+    // Under the threshold the folder is copied verbatim, keeping the original name.
+    assert!(tmp
+        .path()
+        .join("out")
+        .join("small_chapter")
+        .join("original.png")
+        .exists());
+}
+
+#[test]
+fn test_clamp_skips_output_directory_inside_input() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("comics");
+    fs::create_dir_all(&input).unwrap();
+
+    let raw = tmp.path().join("raw");
+    fs::create_dir_all(&raw).unwrap();
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(raw.join("page.png")).unwrap();
+    compress_archive(ArchiveKind::Cbz, &raw, input.join("chap.cbz")).unwrap();
+
+    // The output directory lives inside the input directory.
+    let out = input.join("Results");
+    run_clamp(&input, &out, 500_001, Approach::Resize, 1).unwrap();
+
+    assert!(out.join("chap").join("001.webp").exists());
+    // The output directory must not be swept up as just another chapter.
+    assert!(!out.join("Results").exists());
+}
+
+#[test]
+fn test_clamp_removes_stale_output_on_rerun() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    fs::create_dir_all(&input).unwrap();
+
+    let raw = tmp.path().join("raw");
+    fs::create_dir_all(&raw).unwrap();
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(raw.join("page.png")).unwrap();
+    compress_archive(ArchiveKind::Cbz, &raw, input.join("chap.cbz")).unwrap();
+
+    let out = tmp.path().join("out");
+    let stale = out.join("chap").join("stale.webp");
+    fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    fs::write(&stale, b"left over from a previous run").unwrap();
+
+    run_clamp(&input, &out, 500_001, Approach::Resize, 1).unwrap();
+
+    assert!(out.join("chap").join("001.webp").exists());
+    // The existing chapter directory is replaced, dropping the stale file.
+    assert!(!stale.exists());
+}
+
+#[test]
+fn test_clamp_processes_multiple_chapters_in_parallel() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    let folder_chapter = input.join("chapter_c");
+    fs::create_dir_all(&folder_chapter).unwrap();
+
+    let raw = tmp.path().join("raw");
+    fs::create_dir_all(&raw).unwrap();
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(raw.join("page.png")).unwrap();
+    img.save(folder_chapter.join("page.png")).unwrap();
+
+    compress_archive(ArchiveKind::Cbz, &raw, input.join("chapter_a.cbz")).unwrap();
+    compress_archive(ArchiveKind::Cbt, &raw, input.join("chapter_b.cbt")).unwrap();
+
+    let out = tmp.path().join("out");
+    run_clamp(&input, &out, 500_001, Approach::Resize, 4).unwrap();
+
+    for name in ["chapter_a", "chapter_b", "chapter_c"] {
+        assert!(
+            out.join(name).join("001.webp").exists(),
+            "missing clamped output for {name}"
+        );
+    }
+}
+
+#[test]
+fn test_clamp_directory_chapter_keeps_dotted_name() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("library");
+    let chapter = input.join("chapter.02");
+    fs::create_dir_all(&chapter).unwrap();
+    let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
+    img.save(chapter.join("page.png")).unwrap();
+
+    run_clamp(&input, &tmp.path().join("out"), 500_001, Approach::Split, 1).unwrap();
+
+    // A directory source keeps its full name, including the dot, rather than its stem.
+    assert!(tmp
+        .path()
+        .join("out")
+        .join("chapter.02")
+        .join("001.webp")
+        .exists());
+}
+
+#[test]
+fn test_clamp_validation_error_messages_are_specific() {
+    let tmp = tempdir().unwrap();
+    let input = tmp.path().join("input");
+    fs::create_dir_all(&input).unwrap();
+
+    let message = |threshold, approach, name: &str| {
+        run_clamp(&input, &tmp.path().join(name), threshold, approach, 1)
+            .unwrap_err()
+            .to_string()
+    };
+
+    assert_eq!(
+        message(500_000, Approach::Split, "o1"),
+        "For 'split' or 'resize' approach, size_threshold must be > 500,000 pixels"
+    );
+    assert_eq!(
+        message(400_000, Approach::Resize, "o2"),
+        "For 'split' or 'resize' approach, size_threshold must be > 500,000 pixels"
+    );
+    assert_eq!(
+        message(400, Approach::MaxWidth, "o3"),
+        "For 'max-width' approach, size_threshold must be > 400 pixels"
+    );
+}
+
+#[test]
+fn test_remove_dir_all_force_is_idempotent() {
+    let tmp = tempdir().unwrap();
+
+    // A path that does not exist is not an error.
+    let missing = tmp.path().join("missing");
+    assert!(remove_dir_all_force(&missing).is_ok());
+
+    // A populated directory (including nested content) is removed recursively.
+    let populated = tmp.path().join("populated");
+    fs::create_dir_all(populated.join("nested")).unwrap();
+    fs::write(populated.join("nested").join("file.txt"), b"data").unwrap();
+    remove_dir_all_force(&populated).unwrap();
+    assert!(!populated.exists());
 }
 
 // ===================================================================
