@@ -41,6 +41,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    env:
+      # unrar_sys compiles its vendored C++ with `-std=c++14`, under which glibc
+      # hides BYTE_ORDER/LITTLE_ENDIAN and GCC predefines no __LITTLE_ENDIAN__ for
+      # aarch64, so unrar's os.hpp #errors out. Also set in .cargo/config.toml;
+      # repeated here so the release does not depend on Cargo propagating `[env]`
+      # into dependency build scripts. Ignored by every other target.
+      CXXFLAGS_aarch64_unknown_linux_gnu: "-DLITTLE_ENDIAN"
     strategy:
       fail-fast: false
       matrix:
