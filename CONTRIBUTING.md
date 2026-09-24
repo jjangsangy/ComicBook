@@ -33,8 +33,8 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
 
 1. **Fork and Clone**:
    ```bash
-   git clone https://github.com/<your-username>/comic-book.git
-   cd comic-book
+   git clone https://github.com/jjangsangy/ComicBook.git
+   cd ComicBook
    ```
 
 2. **Create a Feature Branch**:
