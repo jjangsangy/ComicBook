@@ -1,19 +1,37 @@
 # Build configuration.
 
-# `unrar_sys`'s build script compiles its vendored unrar C++ sources with
-# `-std=c++14` and defines no endianness macro of its own. In strict ISO C++
-# mode glibc keeps `BYTE_ORDER`/`LITTLE_ENDIAN` hidden (`<sys/types.h>` only
-# pulls in `<endian.h>` when `_DEFAULT_SOURCE`/`__USE_MISC` is active), and
-# GCC's aarch64 backend predefines `__AARCH64EL__` but not `__LITTLE_ENDIAN__`
-# (clang does predefine the latter, which is why the macOS builds are fine).
-# unrar's `vendor/unrar/os.hpp` therefore cannot detect the endianness on
-# aarch64 and trips its
-#     #error "Neither LITTLE_ENDIAN nor BIG_ENDIAN are defined."
-# in every translation unit, which surfaces as a cc-rs "command did not execute
-# successfully" failure while compiling unrar_sys.
+# Workarounds for `unrar_sys`, whose build script compiles its vendored unrar
+# C++ sources with a bare cc-rs invocation: `-std=c++14`, no endianness define,
+# and no `<cstddef>` include. Each gap is harmless on macOS (clang + libc++) and
+# on x86_64 (whose toolchain happens to close it), but breaks the old GCC
+# toolchains `cross` uses for the aarch64 Linux targets.
 #
-# Spelling the endianness out is exactly what upstream unrar asks callers to do
-# on unfamiliar platforms. `CXXFLAGS_*` rather than `CFLAGS_*` scopes the define
-# to C++ compilations, which for this dependency graph is unrar_sys alone.
+# 1. Endianness. In strict ISO C++ mode glibc keeps `BYTE_ORDER`/`LITTLE_ENDIAN`
+#    hidden (`<sys/types.h>` only pulls in `<endian.h>` when
+#    `_DEFAULT_SOURCE`/`__USE_MISC` is active), and GCC's aarch64 backend
+#    predefines `__AARCH64EL__` but not `__LITTLE_ENDIAN__` (clang does
+#    predefine the latter, which is why the macOS builds are fine). unrar's
+#    `vendor/unrar/os.hpp` therefore cannot detect the endianness on aarch64 and
+#    trips its
+#        #error "Neither LITTLE_ENDIAN nor BIG_ENDIAN are defined."
+#    in every translation unit, surfacing as a cc-rs "command did not execute
+#    successfully" failure while compiling unrar_sys. Spelling the endianness
+#    out is exactly what upstream unrar asks callers to do on unfamiliar
+#    platforms, and aarch64 Linux is little-endian on both libc flavours.
+#
+# 2. `ptrdiff_t`. `vendor/unrar/cmddata.cpp` uses unqualified `ptrdiff_t`
+#    without including `<cstddef>`. Old libstdc++ (the GCC 5 headers in cross's
+#    `aarch64-unknown-linux-gnu` image) only declares `std::ptrdiff_t` via
+#    `<new>`, so the name is undefined:
+#        error: 'ptrdiff_t' was not declared in this scope
+#    `<cstddef>` is required by the standard to declare `ptrdiff_t` in the
+#    global namespace, so force-including it at the top of each translation unit
+#    fixes the reference without patching the vendored source.
+#
+# `CXXFLAGS_<target>` rather than `CFLAGS_<target>` scopes these to C++
+# compilations, which for this dependency graph is unrar_sys alone. Both work
+# around the same vendored sources, so both are applied to both aarch64 Linux
+# targets; each define is a no-op wherever the toolchain already resolves it.
 [env]
-CXXFLAGS_aarch64_unknown_linux_gnu = "-DLITTLE_ENDIAN"
+CXXFLAGS_aarch64_unknown_linux_gnu = "-DLITTLE_ENDIAN -include cstddef"
+CXXFLAGS_aarch64_unknown_linux_musl = "-DLITTLE_ENDIAN -include cstddef"

@@ -42,12 +42,15 @@ jobs:
     permissions:
       contents: write
     env:
-      # unrar_sys compiles its vendored C++ with `-std=c++14`, under which glibc
-      # hides BYTE_ORDER/LITTLE_ENDIAN and GCC predefines no __LITTLE_ENDIAN__ for
-      # aarch64, so unrar's os.hpp #errors out. Also set in .cargo/config.toml;
-      # repeated here so the release does not depend on Cargo propagating `[env]`
-      # into dependency build scripts. Ignored by every other target.
-      CXXFLAGS_aarch64_unknown_linux_gnu: "-DLITTLE_ENDIAN"
+      # unrar_sys compiles its vendored C++ with a bare `-std=c++14` invocation
+      # that neither defines the platform endianness (so unrar's os.hpp #errors
+      # out on aarch64) nor makes `<cstddef>`'s global `ptrdiff_t` visible (which
+      # old libstdc++ only declares as `std::ptrdiff_t`, breaking cmddata.cpp).
+      # Also set in .cargo/config.toml; repeated here so the release does not
+      # depend on Cargo propagating `[env]` into dependency build scripts.
+      # Ignored by every other target.
+      CXXFLAGS_aarch64_unknown_linux_gnu: "-DLITTLE_ENDIAN -include cstddef"
+      CXXFLAGS_aarch64_unknown_linux_musl: "-DLITTLE_ENDIAN -include cstddef"
     strategy:
       fail-fast: false
       matrix:
