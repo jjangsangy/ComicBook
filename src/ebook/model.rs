@@ -42,6 +42,51 @@ impl OrderClass {
     }
 }
 
+/// An encoded page image's media type.
+///
+/// Kept alongside the bytes so the OPF manifest (AGENTS.md §12.2) can emit the
+/// matching `media-type` without re-sniffing the payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaType {
+    Jpeg,
+    Png,
+    Gif,
+    WebP,
+}
+
+impl MediaType {
+    /// Canonical file extension (without the dot).
+    pub fn extension(self) -> &'static str {
+        match self {
+            MediaType::Jpeg => "jpg",
+            MediaType::Png => "png",
+            MediaType::Gif => "gif",
+            MediaType::WebP => "webp",
+        }
+    }
+
+    /// The MIME type written into the EPUB OPF manifest.
+    pub fn mime(self) -> &'static str {
+        match self {
+            MediaType::Jpeg => "image/jpeg",
+            MediaType::Png => "image/png",
+            MediaType::Gif => "image/gif",
+            MediaType::WebP => "image/webp",
+        }
+    }
+
+    /// Map a (dotless, lower-cased) file extension to a media type.
+    pub fn from_extension(extension: &str) -> Option<MediaType> {
+        match extension {
+            "jpg" | "jpeg" => Some(MediaType::Jpeg),
+            "png" => Some(MediaType::Png),
+            "gif" => Some(MediaType::Gif),
+            "webp" => Some(MediaType::WebP),
+            _ => None,
+        }
+    }
+}
+
 /// Page-level flags carried through processing into output naming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PageFlags {
@@ -69,6 +114,14 @@ pub struct Page {
     pub image: DynamicImage,
     pub background: Background,
     pub flags: PageFlags,
+    /// The source's original encoded bytes.
+    ///
+    /// Retained so `--no-processing` can emit the page byte-for-byte instead of
+    /// re-encoding the decoded pixels (AGENTS.md §5.1.5). `None` for trees built
+    /// without a source payload.
+    pub raw: Option<Vec<u8>>,
+    /// Media type of [`Page::raw`], inferred from the source extension.
+    pub source_media_type: Option<MediaType>,
 }
 
 /// A chapter (a source subdirectory, or the single implicit chapter of a file).
@@ -78,6 +131,25 @@ pub struct Chapter {
     /// (empty for pages that sit directly in the root).
     pub name: String,
     pub pages: Vec<Page>,
+}
+
+/// One page produced by the processing stage.
+///
+/// A single source page can yield several encoded pages when the splitter
+/// bisects a double-page spread, so this is the unit the output builders consume
+/// (AGENTS.md §10).
+#[derive(Debug, Clone)]
+pub struct EncodedPage {
+    /// Output file name, including the `-kcc-<order>` suffix and the media
+    /// extension. Phase 4 replaces the source stem with the sanitized page name.
+    pub name: String,
+    /// The `-kcc-<order>` class that drives the OPF spread algorithm.
+    pub order_class: OrderClass,
+    pub media_type: MediaType,
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub flags: PageFlags,
 }
 
 /// Where a book's cover comes from.

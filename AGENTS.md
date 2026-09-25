@@ -403,6 +403,8 @@ Add (verify licenses; prefer pure Rust):
 | `time` or `chrono` | `dcterms:modified` timestamp | MIT/Apache |
 | `ndarray` | array math for crop/webtoon | MIT/Apache |
 | `imageproc` | grayscale/box-blur/edges/draw text | MIT |
+| `quantette` | fixed-palette quantisation + Floyd–Steinberg dithering | MIT/Apache |
+| `png` (direct) | indexed/palette PNG output (`image` cannot write indexed PNG) | MIT/Apache |
 | `rustfft` | moiré FFT (`rainbow_artifacts_eraser`) | MIT/Apache |
 | `ab_glyph` (via imageproc) | tome-number cover text | MIT/Apache |
 | `slug` or small custom fn | chapter slugify parity with python-slugify | MIT/Apache |
@@ -414,6 +416,13 @@ Avoid: `boko` (GPL-3.0-or-later — incompatible with this MIT project's depende
 `pdfium-render`/`mupdf` unless a bundled build is acceptable (they pull platform binaries).
 `--mozjpeg`: either drop, or use a pure-Rust/`mozjpeg` crate; default to the `image` JPEG
 encoder with `--jpeg-quality`.
+
+**Added in Phase 2.** `imageproc = "0.27"` (`default-features = false, features = ["rayon"]`),
+`quantette = "0.6"` (`default-features = false, features = ["image", "threads"]`) and
+`png = "0.18"`. `imageproc`'s default features are disabled so it does not turn on `image`'s
+default codecs (avif/exr/…); `quantette`'s `kmeans` default is disabled because only its
+`CustomPalette` path is used. Not yet added (Phase 3/6): `rustfft` for the moiré eraser and
+`ab_glyph` for cover text.
 
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
@@ -502,9 +511,22 @@ struct Page {
     image: DynamicImage,          // decoded (dimensions + pixels)
     background: Background,       // White | Black
     flags: PageFlags,             // Rotated, BlackBackground, Above/Below, OrderClass
+    raw: Option<Vec<u8>>,         // original encoded bytes (retained for --no-processing)
+    source_media_type: Option<MediaType>,
 }
 enum Background { White, Black }
 enum OrderClass { Normal, RotateFirst, RotateLast, SplitLeft, SplitRight }
+enum MediaType { Jpeg, Png, Gif, WebP }
+
+struct EncodedPage {              // one processed/encoded page (a spread can yield several)
+    name: String,                 // stem + `-kcc-<order>` + extension (slugified in Phase 4)
+    order_class: OrderClass,
+    media_type: MediaType,
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+    flags: PageFlags,
+}
 ```
 
 `Chapter::name` is the directory path relative to the image root (`""` for pages that sit
@@ -691,6 +713,43 @@ smaller ones (§13.3). The rest remain open (§13.2).
 
 ---
 
+### 13.5 Phase 2 decisions
+
+1. **Original bytes are retained on `Page`.** Phase 1 already decoded every page into memory;
+   `Page` now also keeps the source's encoded bytes and media type. This is what makes
+   `--no-processing` a byte-for-byte copy (KCC skips processing entirely under `-n`, §5.1.5)
+   and it costs only the compressed size, which is small next to the decoded pixels.
+2. **Colour-space helpers are clean-room.** Pillow's JFIF YCbCr and Rec. 601 luma formulas are
+   re-implemented in `color.rs` (AGENTS.md §5.4); `image`'s built-in grayscale uses Rec. 709,
+   which would drift from KCC, so it is not used.
+3. **Autocontrast is `imageproc::contrast::stretch_contrast`.** KCC calls
+   `ImageOps.autocontrast(preserve_tone=True)` with `cutoff=0`, i.e. a linear stretch of each
+   channel from the luminance minimum/maximum to `[0, 255]`. `stretch_contrast` is exactly
+   that, and the low-contrast guard (`max - min < 159`) is applied first, as KCC does. The
+   luma range is recomputed after `--auto-level` because Pillow's autocontrast uses the
+   *current* histogram.
+4. **Quantisation is `quantette` with Floyd–Steinberg.** `--force-png` on a grayscale page maps
+   it onto the profile palette (a grayscale ramp) using `QuantizeMethod::CustomPalette` +
+   `dither::FloydSteinberg`, matching `PIL.Image.quantize(palette=…)`, which also dithers by
+   default. Distance is computed in Oklab rather than RGB (quantette's choice); for the
+   grayscale ramps used here that is equivalent up to rounding.
+5. **Palette PNGs are written by the `png` crate** at the smallest bit depth the palette fits
+   in (4-bit for the 16-level palettes), reproducing KCC's non-legacy PNG. `--png-legacy`, PDF
+   and KDX-CBZ first reduce the quantised page to 8-bit grayscale, as KCC does.
+6. **`image`'s GIF encoder needs RGB.** Monochrome Kindle pages (`--force-png` on a Kindle
+   profile) are encoded as GIF; because `image`'s GIF encoder rejects L8, the page is widened
+   to RGB first (GIF is palette-based anyway).
+7. **`--wallpaper` implements the intended fit.** KCC 9.x's `resizeImage` has an unreachable
+   `elif self.opt.wallpaper: ImageOps.fit(...)` after a bare `pass` for the same condition, so
+   wallpaper mode currently leaves the page unsized. We implement the documented intent (crop
+   to fill the screen). Flagged as a deliberate, tested deviation from the reference code.
+8. **`kfx` resize is deferred.** KCC's KFX branch resizes to the inputs' most common
+   resolution, which requires scanning sources in `checkOptions`; that lands with Phase 5's
+   KFX preset. Until then `--format kfx` falls through the normal resize chain.
+9. **`--no-processing` media types are preserved.** Pages are emitted with their source
+   extension/media type and `OrderClass::Normal` (no splitting), since processing is skipped
+   wholesale in KCC too.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -755,12 +814,29 @@ resolution and source loading are in place. Tests: `tests/ebook_input_tests.rs` 
 CBZ/CBR/CB7/CBT/folder parity, natural order, root/nested chapters, archive flattening,
 ComicInfo capture, junk filtering, and error paths). Decisions recorded in §13.4.
 
-### Phase 2 — Core image pipeline (B/W + color, no crop)
+### Phase 2 — Core image pipeline (B/W + color, no crop) (complete)
 - `colorCheck`, `fillCheck`, `splitCheck`, gamma, autocontrast, autolevel, grayscale,
   quantize, resize, encode (JPEG/PNG/WebP/GIF).
 - Parallel processing with rayon.
 - **Exit:** unit tests for each algorithm + snapshot of output image dimensions/flags for a
   fixture book.
+
+**Delivered.** `src/ebook/processing/`:
+- `color.rs` — `color_check` (the Cb/Cr histogram cascade) plus the shared colour helpers
+  (`rgb_to_ycbcr`/`ycbcr_to_rgb`, Rec. 601 `luma601`/`to_luma601`).
+- `fill.rs` — `fill_check` (mask bounding boxes, then the 5-pixel border-strip vote).
+- `page.rs` — the `ComicPageParser`/`ComicPage` port: `split_check` (bisect/rotate/maximize
+  strips), gamma → grayscale → autocontrast/autolevel → resize → encode in KCC's order, the
+  contain/fit/pad geometry, and the `save_with_codec` branch order (JPEG/PNG/WebP/GIF, with
+  palette PNGs via `quantette` + the `png` crate).
+- `mod.rs` — `process_tree`: per-page background detection then a `rayon` pass over pages
+  producing `ProcessedBook`/`ProcessedChapter` of `EncodedPage`s.
+
+The tree now retains each page's original bytes and source media type (§13.5.1), so
+`--no-processing` emits them byte-for-byte. Cropping and the moiré eraser remain Phase 3.
+Tests: unit tests in each module plus `tests/ebook_processing_tests.rs` (fixture book
+snapshot: order classes, media types, dimensions, flags, and byte-exact `--no-processing`).
+Decisions recorded in §13.5.
 
 ### Phase 3 — Cropping & enhancement
 - Margin/page-number crop, inter-panel crop, preserve-margin/minimum, moiré eraser,

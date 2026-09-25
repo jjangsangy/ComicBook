@@ -27,6 +27,13 @@ webp = "0.3"
 walkdir = "2.5"
 same-file = "1.0"
 infer = "0.22.0"
+# Image processing for `comic-book ebook` (AGENTS.md §7). `imageproc` supplies the
+# contrast/threshold/filter primitives, `quantette` the fixed-palette quantisation and
+# Floyd-Steinberg dithering. Both are MIT/Apache-2.0 and pure Rust.
+imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
+quantette = { version = "0.6", default-features = false, features = ["image", "threads"] }
+# Palette (indexed) PNG output; the `image` crate cannot write an indexed PNG.
+png = "0.18"
 
 [dev-dependencies]
 libc = "0.2"
