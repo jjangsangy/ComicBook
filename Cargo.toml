@@ -37,6 +37,9 @@ png = "0.18"
 # The moiré eraser (`--erase-rainbow`) transforms the luminance plane with a 2D
 # FFT; AGENTS.md §7. Pure Rust, MIT/Apache-2.0.
 rustfft = "6"
+# Sub-byte PNG scanline packing for palette pages (AGENTS.md §15, Phase R). Already
+# in the tree transitively via `quantette`; promoted to a direct dependency.
+bitvec = "1"
 
 [dev-dependencies]
 libc = "0.2"

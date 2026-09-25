@@ -21,7 +21,7 @@ use image::DynamicImage;
 use std::cmp::Ordering;
 use std::path::Path;
 
-use crate::archive::{open_reader, ArchiveKind};
+use crate::archive::{is_os_metadata, open_reader, ArchiveKind};
 
 use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
 
@@ -29,7 +29,8 @@ use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
 ///
 /// This is KCC's `shared.IMAGE_TYPES` minus `.jp2` and `.avif`, which have no decoder in the
 /// current (pure-Rust) dependency set and are therefore ignored like any other non-image
-/// rather than aborting the conversion.
+/// rather than aborting the conversion. Deliberately narrower than `image_ops::IMG_EXTENSIONS`
+/// (§5.3): the clamp/convert commands use the wider set.
 const EBOOK_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 /// Load an archive or image folder into a [`ComicTree`].
@@ -45,7 +46,7 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
     let mut comicinfo: Option<Vec<u8>> = None;
 
     reader.read_entries(&mut scratch, &mut |name, is_dir, data| {
-        if is_dir || is_junk_entry(name) {
+        if is_dir || is_os_metadata(name) {
             return Ok(());
         }
         if is_comicinfo(name) {
@@ -120,15 +121,6 @@ fn is_ebook_image(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `name` is an OS metadata file KCC's `dot_clean` would remove.
-fn is_junk_entry(name: &str) -> bool {
-    if name.split('/').any(|component| component == "__MACOSX") {
-        return true;
-    }
-    let base = name.rsplit('/').next().unwrap_or(name);
-    base.starts_with("._") || base == ".DS_Store" || base.eq_ignore_ascii_case("thumbs.db")
-}
-
 /// Whether `name` is a `ComicInfo.xml` (at any depth).
 fn is_comicinfo(name: &str) -> bool {
     name.rsplit('/').next() == Some("ComicInfo.xml")
@@ -139,7 +131,7 @@ fn is_comicinfo(name: &str) -> bool {
 /// Mirrors KCC's `getWorkFolder` behaviour: when an archive extracts to exactly
 /// one top-level folder, that folder's contents are hoisted to the image root.
 /// Paths already at the root (or spanning more than one top-level entry) are left
-/// untouched.
+/// untouched. Kept bespoke (AGENTS.md §5.3) — the rule is KCC-specific (§13.4.4).
 fn strip_common_root(pages: &mut [LoadedPage]) {
     let mut root: Option<&str> = None;
     for page in pages.iter() {

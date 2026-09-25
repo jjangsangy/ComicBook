@@ -28,7 +28,8 @@ pub use ops::{
     get_images_from_source, list_archive_entry_names, read_archive_entries,
 };
 pub use path::{
-    copy_dir_all, find_single_root_dir, is_matching_root, normalize_archive_path, safe_join,
+    copy_dir_all, find_single_root_dir, is_matching_root, is_os_metadata, normalize_archive_path,
+    safe_join,
 };
 pub use reader::{open_reader, ArchiveReader, EntryCallback};
 pub use writer::ArchiveWriter;

@@ -404,6 +404,7 @@ name = "comic-book"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitvec",
  "clap",
  "clap_complete",
  "fast_image_resize",

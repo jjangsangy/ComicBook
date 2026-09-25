@@ -7,11 +7,13 @@
 //! `--color-autocontrast`.
 //!
 //! The JFIF YCbCr matrix below is the conversion Pillow applies in
-//! `Image.convert("YCbCr")`.
+//! `Image.convert("YCbCr")`. Kept bespoke (AGENTS.md §5.3): the coefficients are
+//! pinned to JFIF/Rec. 601 by the tests below.
 
 use image::{DynamicImage, GrayImage, Luma, RgbImage};
 
 use crate::ebook::options::Options;
+use crate::ebook::processing::crop::trim_histogram_ends;
 
 /// `(cutoff percent, neutral diff threshold)` pairs, applied in order until one
 /// decides (AGENTS.md §11.1).
@@ -51,9 +53,9 @@ fn calculate_color(image: &RgbImage, force_color: bool) -> bool {
 }
 
 /// Cb and Cr histograms of an RGB image.
-fn chroma_histograms(image: &RgbImage) -> ([u32; 256], [u32; 256]) {
-    let mut cb_hist = [0u32; 256];
-    let mut cr_hist = [0u32; 256];
+fn chroma_histograms(image: &RgbImage) -> ([u64; 256], [u64; 256]) {
+    let mut cb_hist = [0u64; 256];
+    let mut cr_hist = [0u64; 256];
 
     for pixel in image.pixels() {
         let (_, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
@@ -67,8 +69,8 @@ fn chroma_histograms(image: &RgbImage) -> ([u32; 256], [u32; 256]) {
 /// One cascade step. `Some(decision)` when the step can decide, `None` to carry
 /// on to the next cutoff.
 fn color_precision(
-    cb_hist: &[u32; 256],
-    cr_hist: &[u32; 256],
+    cb_hist: &[u64; 256],
+    cr_hist: &[u64; 256],
     cutoff: f64,
     diff_threshold: i32,
     force_color: bool,
@@ -107,46 +109,19 @@ fn color_precision(
 
 /// Remove `cutoff` percent of samples from both ends of each histogram, which
 /// discards JPEG ringing artefacts before the spread is measured.
-fn histograms_cutoff(cb_hist: &mut [u32; 256], cr_hist: &mut [u32; 256], cutoff: f64) {
+fn histograms_cutoff(cb_hist: &mut [u64; 256], cr_hist: &mut [u64; 256], cutoff: f64) {
     if cutoff == 0.0 {
         return;
     }
     for hist in [cb_hist, cr_hist] {
-        let sample_count: u64 = hist.iter().map(|&count| u64::from(count)).sum();
+        let sample_count: u64 = hist.iter().sum();
         let cut = ((sample_count as f64 * cutoff) / 100.0).floor() as u64;
-
-        let mut remaining = cut;
-        for count in hist.iter_mut() {
-            if remaining > u64::from(*count) {
-                remaining -= u64::from(*count);
-                *count = 0;
-            } else {
-                *count -= remaining as u32;
-                remaining = 0;
-            }
-            if remaining == 0 {
-                break;
-            }
-        }
-
-        let mut remaining = cut;
-        for count in hist.iter_mut().rev() {
-            if remaining > u64::from(*count) {
-                remaining -= u64::from(*count);
-                *count = 0;
-            } else {
-                *count -= remaining as u32;
-                remaining = 0;
-            }
-            if remaining == 0 {
-                break;
-            }
-        }
+        trim_histogram_ends(hist, cut);
     }
 }
 
 /// The first and last non-zero bins of a histogram, or `None` when it is empty.
-fn nonzero_bounds(hist: &[u32; 256]) -> Option<(u8, u8)> {
+fn nonzero_bounds(hist: &[u64; 256]) -> Option<(u8, u8)> {
     let first = hist.iter().position(|&count| count != 0)?;
     let last = hist.iter().rposition(|&count| count != 0)?;
     Some((first as u8, last as u8))

@@ -1,7 +1,7 @@
 use comic_book::archive::{
     compress_archive, detect_archive_kind, detect_archive_kind_from_bytes, extract_archive,
-    get_images_from_source, normalize_archive_path, parse_target_extension, read_archive_entries,
-    safe_join, ArchiveKind, ArchiveWriter,
+    get_images_from_source, is_os_metadata, normalize_archive_path, parse_target_extension,
+    read_archive_entries, safe_join, ArchiveKind, ArchiveWriter,
 };
 use comic_book::clamp::{remove_dir_all_force, Approach};
 use comic_book::image_ops::{
@@ -1489,6 +1489,32 @@ fn test_normalize_archive_path() {
     assert_eq!(normalize_archive_path("\\"), "");
     assert_eq!(normalize_archive_path("./"), "");
     assert_eq!(normalize_archive_path("."), "");
+}
+
+#[test]
+fn test_is_os_metadata() {
+    // `__MACOSX` is matched per component and the dot-files by base name, at any depth.
+    for junk in [
+        "__MACOSX",
+        "__MACOSX/._page.jpg",
+        "Chapter 1/__MACOSX/foo",
+        "._page.jpg",
+        "Chapter 1/._page.jpg",
+        ".DS_Store",
+        "Chapter 1/.DS_Store",
+        "Thumbs.db",
+        "thumbs.db",
+    ] {
+        assert!(is_os_metadata(junk), "{junk} should be junk");
+    }
+    for real in [
+        "page.jpg",
+        "Chapter 1/page.jpg",
+        "__MACOSXfoo/page.jpg",
+        "ComicInfo.xml",
+    ] {
+        assert!(!is_os_metadata(real), "{real} should not be junk");
+    }
 }
 
 #[test]

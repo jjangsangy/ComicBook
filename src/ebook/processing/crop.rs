@@ -19,10 +19,12 @@
 //!   even in the vertical direction. That lives in [`super::interpanel`], but the
 //!   same "reproduce the reference" rule applies.
 
-use image::{DynamicImage, GrayImage, ImageBuffer, Luma, Pixel, Primitive};
+use image::{DynamicImage, GrayImage, ImageBuffer, Luma, Pixel};
+use imageproc::contrast::ThresholdType;
 
 use crate::ebook::model::Background;
 use crate::ebook::processing::color::to_luma601;
+use crate::ebook::processing::fill::bounding_box;
 
 /// Height of the window inspected for a page number, as a fraction of the page
 /// height.
@@ -153,46 +155,48 @@ pub(crate) fn invert(image: &GrayImage) -> GrayImage {
     imageproc::map::map_pixels(image, |pixel| Luma([255 - pixel[0]]))
 }
 
+/// Drop `cut` samples from each end of a 256-bin histogram (Pillow's
+/// `autocontrast` trim; shared with `color.rs`).
+pub(crate) fn trim_histogram_ends(histogram: &mut [u64; 256], cut: u64) {
+    let mut remaining = cut;
+    for count in histogram.iter_mut() {
+        if remaining > *count {
+            remaining -= *count;
+            *count = 0;
+        } else {
+            *count -= remaining;
+            remaining = 0;
+        }
+        if remaining == 0 {
+            break;
+        }
+    }
+
+    let mut remaining = cut;
+    for count in histogram.iter_mut().rev() {
+        if remaining > *count {
+            remaining -= *count;
+            *count = 0;
+        } else {
+            *count -= remaining;
+            remaining = 0;
+        }
+        if remaining == 0 {
+            break;
+        }
+    }
+}
+
 /// Pillow's `ImageOps.autocontrast(image, cutoff)`: drop `cutoff` percent of the
 /// samples from each end of the histogram, then stretch the remainder to
 /// `[0, 255]` with a truncated (not rounded) linear map.
 pub(crate) fn autocontrast_cutoff(image: &GrayImage, cutoff: f64) -> GrayImage {
-    let mut histogram = [0u64; 256];
-    for pixel in image.pixels() {
-        histogram[pixel[0] as usize] += 1;
-    }
+    let mut histogram: [u64; 256] = imageproc::stats::histogram(image).channels[0].map(u64::from);
 
     if cutoff != 0.0 {
         let total: u64 = histogram.iter().sum();
         let cut = ((total as f64 * cutoff) / 100.0).floor() as u64;
-
-        let mut remaining = cut;
-        for count in histogram.iter_mut() {
-            if remaining > *count {
-                remaining -= *count;
-                *count = 0;
-            } else {
-                *count -= remaining;
-                remaining = 0;
-            }
-            if remaining == 0 {
-                break;
-            }
-        }
-
-        let mut remaining = cut;
-        for count in histogram.iter_mut().rev() {
-            if remaining > *count {
-                remaining -= *count;
-                *count = 0;
-            } else {
-                *count -= remaining;
-                remaining = 0;
-            }
-            if remaining == 0 {
-                break;
-            }
-        }
+        trim_histogram_ends(&mut histogram, cut);
     }
 
     let low = histogram.iter().position(|&count| count != 0);
@@ -218,7 +222,7 @@ pub(crate) fn autocontrast_cutoff(image: &GrayImage, cutoff: f64) -> GrayImage {
 /// average, each rounded, with edge pixels replicated.
 ///
 /// The two passes are *not* equivalent to a single 3x3 average because each pass
-/// rounds; the reference rounds per pass, so we do too.
+/// rounds; the reference rounds per pass, so we do too. Kept bespoke (§5.3).
 pub(crate) fn box_blur_1(image: &GrayImage) -> GrayImage {
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 {
@@ -254,76 +258,31 @@ pub(crate) fn box_blur_1(image: &GrayImage) -> GrayImage {
 
 /// `255` where `value <= threshold`, else `0` (KCC's `point` threshold).
 pub(crate) fn binarize(image: &GrayImage, threshold: f64) -> GrayImage {
-    imageproc::map::map_pixels(image, |pixel| {
-        Luma([if f64::from(pixel[0]) <= threshold {
-            255
-        } else {
-            0
-        }])
-    })
+    // A negative (or NaN) threshold matches no pixel; the `u8` cast would otherwise
+    // saturate a large `--cropping-power` threshold to 0 and match every black pixel.
+    if threshold.is_nan() || threshold < 0.0 {
+        return GrayImage::new(image.width(), image.height());
+    }
+    imageproc::contrast::threshold(
+        image,
+        threshold.min(255.0) as u8,
+        ThresholdType::BinaryInverted,
+    )
 }
 
 /// The bounding box of the non-zero pixels, as Pillow's `getbbox` returns it
 /// (`(left, upper, right, lower)`, `right`/`lower` exclusive), or `None` when the
 /// image is entirely zero.
-pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<(u32, u32, u32, u32)> {
-    let (width, height) = image.dimensions();
-    let (mut min_x, mut min_y, mut max_x, mut max_y) = (width, height, 0u32, 0u32);
-    let mut found = false;
-
-    for (x, y, pixel) in image.enumerate_pixels() {
-        if pixel[0] != 0 {
-            found = true;
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x);
-            max_y = max_y.max(y);
-        }
-    }
-
-    found.then_some((min_x, min_y, max_x + 1, max_y + 1))
-}
-
-/// An empty buffer of the same pixel type.
-fn blank<P>(width: u32, height: u32) -> ImageBuffer<P, Vec<P::Subpixel>>
-where
-    P: Pixel + 'static,
-{
-    let length = width as usize * height as usize * P::CHANNEL_COUNT as usize;
-    ImageBuffer::from_raw(width, height, vec![P::Subpixel::DEFAULT_MIN_VALUE; length])
-        .expect("an in-memory buffer is a valid image")
-}
-
-/// Copy `src` into `dst` at `(offset_x, offset_y)`, clipping to `dst`'s bounds.
-///
-/// Works on the typed buffer (rather than through `DynamicImage`'s `Rgba<u8>`
-/// view) so grayscale pages are not silently re-lumaed.
-fn blit<P>(
-    dst: &mut ImageBuffer<P, Vec<P::Subpixel>>,
-    src: &ImageBuffer<P, Vec<P::Subpixel>>,
-    offset_x: i64,
-    offset_y: i64,
-) where
-    P: Pixel + 'static,
-{
-    let (dst_w, dst_h) = (dst.width() as i64, dst.height() as i64);
-    let (src_w, src_h) = (src.width() as i64, src.height() as i64);
-
-    let x_start = offset_x.max(0);
-    let y_start = offset_y.max(0);
-    let x_end = (offset_x + src_w).min(dst_w);
-    let y_end = (offset_y + src_h).min(dst_h);
-
-    for y in y_start..y_end {
-        for x in x_start..x_end {
-            let pixel = *src.get_pixel((x - offset_x) as u32, (y - offset_y) as u32);
-            dst.put_pixel(x as u32, y as u32, pixel);
-        }
-    }
+fn bbox_nonzero(image: &GrayImage) -> Option<(u32, u32, u32, u32)> {
+    bounding_box(image, |value| value != 0)
 }
 
 /// Pillow's `Image.crop`: the requested rectangle, with out-of-bounds pixels
 /// filled with zero.
+///
+/// The copy runs on the typed buffer (via [`image::imageops::replace`], whose
+/// negative-offset clipping matches Pillow's) so grayscale pages keep their pixel
+/// type rather than being re-lumaed through `DynamicImage`'s `Rgba<u8>` view.
 fn crop_padded_buf<P>(
     source: &ImageBuffer<P, Vec<P::Subpixel>>,
     left: i64,
@@ -336,8 +295,8 @@ where
 {
     let width = (right - left).max(0) as u32;
     let height = (lower - upper).max(0) as u32;
-    let mut cropped = blank::<P>(width, height);
-    blit(&mut cropped, source, -left, -upper);
+    let mut cropped = ImageBuffer::new(width, height);
+    image::imageops::replace(&mut cropped, source, -left, -upper);
     cropped
 }
 
@@ -394,20 +353,22 @@ fn count_nonzero(image: &GrayImage, left: i64, upper: i64, right: i64, lower: i6
     (count, area)
 }
 
-/// Zero every pixel of `[left, right) x [upper, lower)`, clipped to the image.
+/// Set every pixel of `[left, right) x [upper, lower)` to `value`, clipped to the
+/// image.
 fn fill_rect(image: &mut GrayImage, left: i64, upper: i64, right: i64, lower: i64, value: u8) {
     let width = image.width() as i64;
     let height = image.height() as i64;
-    let left = left.max(0);
-    let upper = upper.max(0);
-    let right = right.min(width);
-    let lower = lower.min(height);
-
-    for y in upper..lower {
-        for x in left..right {
-            image.put_pixel(x as u32, y as u32, Luma([value]));
-        }
+    let left = left.clamp(0, width);
+    let upper = upper.clamp(0, height);
+    let right = right.clamp(0, width);
+    let lower = lower.clamp(0, height);
+    if left >= right || upper >= lower {
+        return;
     }
+
+    let rect = imageproc::rect::Rect::at(left as i32, upper as i32)
+        .of_size((right - left) as u32, (lower - upper) as u32);
+    imageproc::drawing::draw_filled_rect_mut(image, rect, Luma([value]));
 }
 
 /// Suppress near-edge noise so scan artefacts cannot anchor the crop box.
@@ -481,24 +442,11 @@ fn ignore_pixels_near_edge(bw: &mut GrayImage) {
     }
 }
 
-/// Pillow's `round`: half-to-even.
-fn round_half_even(value: f64) -> i64 {
-    let floor = value.floor();
-    let fraction = value - floor;
-    let rounded = if fraction < 0.5 {
-        floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) % 2 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    };
-    rounded as i64
-}
-
 /// Pillow's `Image.crop` with float coordinates, which rounds (half-to-even)
 /// before cropping.
+///
+/// `f64::round_ties_even` is exactly Pillow's `round` (banker's rounding); see
+/// `pillow_round_is_half_to_even`.
 fn crop_rounded(
     image: &DynamicImage,
     left: f64,
@@ -508,10 +456,10 @@ fn crop_rounded(
 ) -> DynamicImage {
     crop_padded(
         image,
-        round_half_even(left),
-        round_half_even(upper),
-        round_half_even(right),
-        round_half_even(lower),
+        left.round_ties_even() as i64,
+        upper.round_ties_even() as i64,
+        right.round_ties_even() as i64,
+        lower.round_ties_even() as i64,
     )
 }
 
@@ -810,6 +758,26 @@ mod tests {
     }
 
     #[test]
+    fn trim_histogram_ends_drops_both_ends_and_stops_when_empty() {
+        // 100 samples: one at each extreme, the rest in the middle. A cut of 1
+        // clears both outlier bins and leaves the interior alone.
+        let mut histogram = [0u64; 256];
+        histogram[0] = 1;
+        histogram[10] = 98;
+        histogram[255] = 1;
+        trim_histogram_ends(&mut histogram, 1);
+        assert_eq!(histogram[0], 0);
+        assert_eq!(histogram[255], 0);
+        assert_eq!(histogram[10], 98, "interior bins are untouched");
+
+        // A cut larger than the total simply empties the histogram.
+        let mut small = [0u64; 256];
+        small[100] = 5;
+        trim_histogram_ends(&mut small, 999);
+        assert!(small.iter().all(|&count| count == 0));
+    }
+
+    #[test]
     fn margin_bbox_traces_the_ink() {
         let page = framed(200, 300, (20, 30, 180, 270));
         // The 1px blur widens the box by one pixel on each side.
@@ -910,14 +878,50 @@ mod tests {
     }
 
     #[test]
-    fn round_half_even_matches_pillow() {
-        assert_eq!(round_half_even(0.5), 0);
-        assert_eq!(round_half_even(1.5), 2);
-        assert_eq!(round_half_even(2.5), 2);
-        assert_eq!(round_half_even(3.5), 4);
-        assert_eq!(round_half_even(-0.5), 0);
-        assert_eq!(round_half_even(2.4), 2);
-        assert_eq!(round_half_even(2.6), 3);
+    fn pillow_round_is_half_to_even() {
+        // Pillow's `Image.crop` rounds float coordinates with `round`, which is
+        // banker's rounding; `f64::round_ties_even` is the same function.
+        let round = |value: f64| value.round_ties_even() as i64;
+        assert_eq!(round(0.5), 0);
+        assert_eq!(round(1.5), 2);
+        assert_eq!(round(2.5), 2);
+        assert_eq!(round(3.5), 4);
+        assert_eq!(round(-0.5), 0);
+        assert_eq!(round(2.4), 2);
+        assert_eq!(round(2.6), 3);
+    }
+
+    #[test]
+    fn binarize_is_white_at_or_below_the_threshold() {
+        let mut image = gray(4, 1, 100);
+        for (x, value) in [0u8, 128, 129, 255].into_iter().enumerate() {
+            image.put_pixel(x as u32, 0, Luma([value]));
+        }
+        let bw = binarize(&image, 128.0);
+        let output: Vec<u8> = (0..4).map(|x| bw.get_pixel(x, 0)[0]).collect();
+        assert_eq!(output, vec![255, 255, 0, 0]);
+
+        // A negative (or NaN) threshold matches nothing; above 255 matches everything.
+        let blank = gray(4, 4, 0);
+        assert!(binarize(&blank, -400.0).pixels().all(|pixel| pixel[0] == 0));
+        assert!(binarize(&blank, 300.0)
+            .pixels()
+            .all(|pixel| pixel[0] == 255));
+    }
+
+    #[test]
+    fn fill_rect_clips_to_the_image_and_ignores_empty_rects() {
+        let mut image = gray(4, 4, 0);
+        fill_rect(&mut image, 1, 1, 3, 3, 200);
+        assert_eq!(image.get_pixel(2, 2)[0], 200);
+        assert_eq!(image.get_pixel(0, 0)[0], 0);
+
+        // Out-of-bounds coordinates are clamped, not wrapped; an inverted rect is a no-op.
+        fill_rect(&mut image, -2, -2, 2, 2, 100);
+        fill_rect(&mut image, 3, 3, 1, 1, 7);
+        assert_eq!(image.get_pixel(0, 0)[0], 100);
+        assert_eq!(image.get_pixel(2, 2)[0], 200);
+        assert_eq!(image.get_pixel(3, 3)[0], 0);
     }
 
     #[test]

@@ -55,8 +55,12 @@ fn box_area((left, top, right, bottom): (u32, u32, u32, u32)) -> u64 {
     u64::from(right - left) * u64::from(bottom - top)
 }
 
-/// The bounding box of every pixel satisfying `predicate`, or `None` when none do.
-fn bounding_box(mask: &GrayImage, predicate: impl Fn(u8) -> bool) -> Option<(u32, u32, u32, u32)> {
+/// The bounding box of every pixel satisfying `predicate`, or `None` when none do
+/// (shared with `crop.rs`'s `getbbox`, §5.3).
+pub(crate) fn bounding_box(
+    mask: &GrayImage,
+    predicate: impl Fn(u8) -> bool,
+) -> Option<(u32, u32, u32, u32)> {
     let (width, height) = mask.dimensions();
     let mut min_x = width;
     let mut min_y = height;

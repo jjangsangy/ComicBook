@@ -11,14 +11,15 @@
 //! their hooks live in [`super::crop`] / [`super::interpanel`] / [`super::rainbow`].
 
 use anyhow::{bail, Context, Result};
+use bitvec::prelude::{BitVec, Msb0};
 use fast_image_resize::images::Image as FastImage;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image::codecs::gif::GifEncoder;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::{
-    DynamicImage, ExtendedColorType, GenericImageView, GrayImage, ImageEncoder, Luma, Rgb,
-    RgbImage, RgbaImage,
+    DynamicImage, ExtendedColorType, GenericImageView, GrayImage, ImageBuffer, ImageEncoder, Luma,
+    Pixel, Rgb, RgbImage, RgbaImage,
 };
 use quantette::deps::palette::Srgb;
 use quantette::{dither::FloydSteinberg, ImageRef, PaletteSize, Pipeline, QuantizeMethod};
@@ -522,62 +523,45 @@ fn resize_to(image: &DynamicImage, width: u32, height: u32, method: Method) -> D
     let alg = ResizeAlg::Convolution(method.filter());
     match image {
         DynamicImage::ImageLuma8(buffer) => {
-            DynamicImage::ImageLuma8(resize_luma(buffer, width, height, alg))
+            DynamicImage::ImageLuma8(resize_buffer(buffer, width, height, alg, PixelType::U8))
         }
         DynamicImage::ImageRgb8(buffer) => {
-            DynamicImage::ImageRgb8(resize_rgb(buffer, width, height, alg))
+            DynamicImage::ImageRgb8(resize_buffer(buffer, width, height, alg, PixelType::U8x3))
         }
         DynamicImage::ImageRgba8(buffer) => {
-            DynamicImage::ImageRgba8(resize_rgba(buffer, width, height, alg))
+            DynamicImage::ImageRgba8(resize_buffer(buffer, width, height, alg, PixelType::U8x4))
         }
         other => {
             let rgb = other.to_rgb8();
-            DynamicImage::ImageRgb8(resize_rgb(&rgb, width, height, alg))
+            DynamicImage::ImageRgb8(resize_buffer(&rgb, width, height, alg, PixelType::U8x3))
         }
     }
 }
 
-fn resizer() -> Resizer {
+/// Resize an 8-bit L8/Rgb8/Rgba8 buffer with `fast_image_resize`, preserving the type.
+fn resize_buffer<P>(
+    source: &ImageBuffer<P, Vec<u8>>,
+    width: u32,
+    height: u32,
+    alg: ResizeAlg,
+    pixel_type: PixelType,
+) -> ImageBuffer<P, Vec<u8>>
+where
+    P: Pixel<Subpixel = u8> + 'static,
+{
+    let (src_w, src_h) = source.dimensions();
+    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), pixel_type)
+        .expect("valid source image");
+    let mut dst = FastImage::new(width, height, pixel_type);
+    let options = ResizeOptions::new().resize_alg(alg);
     Resizer::new()
-}
-
-fn resize_luma(source: &GrayImage, width: u32, height: u32, alg: ResizeAlg) -> GrayImage {
-    let (src_w, src_h) = source.dimensions();
-    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), PixelType::U8)
-        .expect("valid source image");
-    let mut dst = FastImage::new(width, height, PixelType::U8);
-    let options = ResizeOptions::new().resize_alg(alg);
-    resizer()
         .resize(&src, &mut dst, &options)
         .expect("resize succeeds");
-    GrayImage::from_raw(width, height, dst.into_vec()).expect("valid destination image")
+    ImageBuffer::from_raw(width, height, dst.into_vec()).expect("valid destination image")
 }
 
-fn resize_rgb(source: &RgbImage, width: u32, height: u32, alg: ResizeAlg) -> RgbImage {
-    let (src_w, src_h) = source.dimensions();
-    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), PixelType::U8x3)
-        .expect("valid source image");
-    let mut dst = FastImage::new(width, height, PixelType::U8x3);
-    let options = ResizeOptions::new().resize_alg(alg);
-    resizer()
-        .resize(&src, &mut dst, &options)
-        .expect("resize succeeds");
-    RgbImage::from_raw(width, height, dst.into_vec()).expect("valid destination image")
-}
-
-fn resize_rgba(source: &RgbaImage, width: u32, height: u32, alg: ResizeAlg) -> RgbaImage {
-    let (src_w, src_h) = source.dimensions();
-    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), PixelType::U8x4)
-        .expect("valid source image");
-    let mut dst = FastImage::new(width, height, PixelType::U8x4);
-    let options = ResizeOptions::new().resize_alg(alg);
-    resizer()
-        .resize(&src, &mut dst, &options)
-        .expect("resize succeeds");
-    RgbaImage::from_raw(width, height, dst.into_vec()).expect("valid destination image")
-}
-
-/// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly.
+/// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly
+/// (kept bespoke, §5.3 — Pillow's half-to-even rounding is pinned).
 fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
     let (width, height) = image.dimensions();
     let image_ratio = f64::from(width) / f64::from(height);
@@ -607,7 +591,8 @@ fn contain(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicIma
     resize_to(image, target_w, target_h, method)
 }
 
-/// Pillow's `ImageOps.contain` size calculation (`get_contain_resolution`).
+/// Pillow's `ImageOps.contain` size calculation (`get_contain_resolution`; kept
+/// bespoke, §5.3).
 fn contain_size(width: u32, height: u32, size: (u32, u32)) -> (u32, u32) {
     let image_ratio = f64::from(width) / f64::from(height);
     let dest_ratio = f64::from(size.0) / f64::from(size.1);
@@ -736,8 +721,18 @@ fn encode_image(
         };
 
         let bytes = match &prepared {
-            PreparedPng::Gray(gray) => encode_png_gray(gray)?,
-            PreparedPng::Rgb(rgb) => encode_png_rgb(rgb)?,
+            PreparedPng::Gray(gray) => encode_png(
+                gray.as_raw(),
+                gray.width(),
+                gray.height(),
+                ExtendedColorType::L8,
+            )?,
+            PreparedPng::Rgb(rgb) => encode_png(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                ExtendedColorType::Rgb8,
+            )?,
             PreparedPng::Indexed(quantized) => encode_png_indexed(quantized)?,
         };
         return Ok((MediaType::Png, bytes));
@@ -807,34 +802,16 @@ fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
             image.as_bytes(),
             image.width(),
             image.height(),
-            dynamic_color_type(image),
+            ExtendedColorType::from(image.color()),
         )
         .context("JPEG encoding failed")?;
     Ok(buffer)
 }
 
-fn encode_png_gray(image: &GrayImage) -> Result<Vec<u8>> {
+fn encode_png(raw: &[u8], width: u32, height: u32, color: ExtendedColorType) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
     PngEncoder::new(&mut buffer)
-        .write_image(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            ExtendedColorType::L8,
-        )
-        .context("PNG encoding failed")?;
-    Ok(buffer)
-}
-
-fn encode_png_rgb(image: &RgbImage) -> Result<Vec<u8>> {
-    let mut buffer = Vec::new();
-    PngEncoder::new(&mut buffer)
-        .write_image(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            ExtendedColorType::Rgb8,
-        )
+        .write_image(raw, width, height, color)
         .context("PNG encoding failed")?;
     Ok(buffer)
 }
@@ -868,25 +845,30 @@ fn encode_png_indexed(quantized: &Quantized) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
-/// Pack one-byte palette indices into the sub-byte layout the `png` crate writes.
+/// Pack one-byte palette indices into the sub-byte MSB-first layout the `png` crate
+/// writes, padding each scanline to a byte.
 fn pack_indices(indices: &[u8], width: u32, height: u32, depth: png::BitDepth) -> Vec<u8> {
-    let bits = depth as u32;
+    let bits = depth as usize;
     if bits == 8 {
         return indices.to_vec();
     }
-    let per_byte = 8 / bits;
     let mask = (1u8 << bits) - 1;
-    let row_bytes = width.div_ceil(per_byte);
-    let mut packed = vec![0u8; (row_bytes * height) as usize];
+    let mut packed = BitVec::<u8, Msb0>::with_capacity(indices.len() * bits);
 
     for y in 0..height {
         for x in 0..width {
             let value = indices[(y * width + x) as usize] & mask;
-            let shift = 8 - bits * ((x % per_byte) + 1);
-            packed[(y * row_bytes + x / per_byte) as usize] |= value << shift;
+            for shift in (0..bits).rev() {
+                packed.push((value >> shift) & 1 == 1);
+            }
+        }
+        // PNG pads every scanline to a byte boundary with zero bits.
+        while !packed.len().is_multiple_of(8) {
+            packed.push(false);
         }
     }
-    packed
+
+    packed.into_vec()
 }
 
 fn encode_gif(image: &DynamicImage) -> Result<Vec<u8>> {
@@ -923,8 +905,21 @@ fn encode_dynamic(image: &DynamicImage, media_type: MediaType, quality: u8) -> R
     match media_type {
         MediaType::Jpeg => encode_jpeg(image, quality),
         MediaType::Png => match image {
-            DynamicImage::ImageLuma8(gray) => encode_png_gray(gray),
-            other => encode_png_rgb(&other.to_rgb8()),
+            DynamicImage::ImageLuma8(gray) => encode_png(
+                gray.as_raw(),
+                gray.width(),
+                gray.height(),
+                ExtendedColorType::L8,
+            ),
+            other => {
+                let rgb = other.to_rgb8();
+                encode_png(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    ExtendedColorType::Rgb8,
+                )
+            }
         },
         MediaType::Gif => encode_gif(image),
         MediaType::WebP => Ok(encode_webp_lossy(&image.to_rgb8(), quality)),
@@ -942,22 +937,6 @@ fn encodable(image: &DynamicImage) -> std::borrow::Cow<'_, DynamicImage> {
             std::borrow::Cow::Owned(DynamicImage::ImageRgb8(image.to_rgb8()))
         }
         _ => std::borrow::Cow::Borrowed(image),
-    }
-}
-
-fn dynamic_color_type(image: &DynamicImage) -> ExtendedColorType {
-    match image {
-        DynamicImage::ImageLuma8(_) => ExtendedColorType::L8,
-        DynamicImage::ImageLumaA8(_) => ExtendedColorType::La8,
-        DynamicImage::ImageRgb8(_) => ExtendedColorType::Rgb8,
-        DynamicImage::ImageRgba8(_) => ExtendedColorType::Rgba8,
-        DynamicImage::ImageLuma16(_) => ExtendedColorType::L16,
-        DynamicImage::ImageLumaA16(_) => ExtendedColorType::La16,
-        DynamicImage::ImageRgb16(_) => ExtendedColorType::Rgb16,
-        DynamicImage::ImageRgba16(_) => ExtendedColorType::Rgba16,
-        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => ExtendedColorType::Rgb8,
-        // `DynamicImage` is `#[non_exhaustive]`.
-        _ => ExtendedColorType::Rgb8,
     }
 }
 
@@ -1236,5 +1215,33 @@ mod tests {
         // Two 4-bit indices per byte: 0x1 and 0x2 -> 0x12.
         let packed = pack_indices(&[1, 2], 2, 1, png::BitDepth::Four);
         assert_eq!(packed, vec![0x12]);
+
+        // Three indices per row occupy 12 bits, so the row is padded to two bytes
+        // with a zero low nibble and the next row starts on a fresh byte.
+        let padded = pack_indices(&[0x1, 0x2, 0x3, 0x4, 0x5, 0x6], 3, 2, png::BitDepth::Four);
+        assert_eq!(padded, vec![0x12, 0x30, 0x45, 0x60]);
+    }
+
+    #[test]
+    fn indexed_packing_handles_one_two_and_eight_bit_depths() {
+        // 1-bit: eight pixels per byte, most-significant bit first.
+        assert_eq!(
+            pack_indices(&[1, 0, 1, 1, 0, 0, 0, 1], 8, 1, png::BitDepth::One),
+            vec![0b1011_0001]
+        );
+        // 2-bit: four pixels per byte, padded when the scanline is not a multiple of four.
+        assert_eq!(
+            pack_indices(&[0b01, 0b10, 0b11, 0b00], 4, 1, png::BitDepth::Two),
+            vec![0b0110_1100]
+        );
+        assert_eq!(
+            pack_indices(&[0b01, 0b10, 0b11], 3, 1, png::BitDepth::Two),
+            vec![0b0110_1100]
+        );
+        // 8-bit indices pass through untouched.
+        assert_eq!(
+            pack_indices(&[0, 1, 2, 255], 4, 1, png::BitDepth::Eight),
+            vec![0, 1, 2, 255]
+        );
     }
 }

@@ -457,6 +457,13 @@ default codecs (avif/exr/…); `quantette`'s `kmeans` default is disabled becaus
 **Added in Phase 3.** `rustfft = "6"` (MIT/Apache-2.0, pure Rust) for the `--erase-rainbow`
 moiré eraser. Not yet added (Phase 6): `ab_glyph` for cover text.
 
+**Added in Phase R.** `bitvec = "1"` (MIT, pure Rust) for the sub-byte scanline packing in
+`page.rs::pack_indices`. It was already in the tree transitively via `quantette`; Phase R
+promoted it to a direct dependency rather than keep the hand-rolled shifting. No other new
+dependency was taken: the remaining Phase R swaps either use a crate already present
+(`image`, `imageproc`) or std (`f64::round_ties_even`). The `remove_dir_all`/`dircpy`/
+`thousands` candidates were deliberately not adopted (see §15 Phase R and §13.7).
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -827,6 +834,38 @@ smaller ones (§13.3). The rest remain open (§13.2).
    which lets the port assert the crop boxes *exactly* (`tests/ebook_crop_tests.rs`) instead of
    with a tolerance.
 
+### 13.7 Phase R decisions
+
+Phase R's first pass is complete; §15 Phase R records the per-item outcome.
+
+1. **Adopted.** `crop.rs::blank`/`blit` → `ImageBuffer::new` / `imageops::replace`;
+   `round_half_even` → `f64::round_ties_even`; `binarize` → `imageproc::contrast::threshold`
+   (`BinaryInverted`, with a negative/NaN guard); `fill_rect` → `draw_filled_rect_mut`;
+   `autocontrast_cutoff` binning → `imageproc::stats::histogram`; `dynamic_color_type` →
+   `ExtendedColorType::from(image.color())`; `pack_indices` → `bitvec` (**new direct dep**,
+   already transitive via `quantette`); `encode_png_gray`/`encode_png_rgb` → one `encode_png`;
+   `bbox_nonzero` merged into a `pub(crate)` `fill::bounding_box`; a shared
+   `crop::trim_histogram_ends` (chroma histograms widened to `u64`); one generic
+   `resize_buffer` for the three resize wrappers; and the two junk predicates unified into
+   `archive::is_os_metadata` (component/base-name aware).
+2. **Kept bespoke**, each with a §5.3 pointer at its site: `group_thousands`,
+   `remove_dir_all_force`, `copy_dir_all`, `normalize_archive_path`/`safe_join`/
+   `is_matching_root`, `strip_common_root`, the `image_ops`/`EBOOK_IMAGE_EXTENSIONS` split
+   (§13.4.6), `fit`/`contain_size`/`pad`, `box_blur_1`, `keep_lines`, the colour matrices
+   (JFIF/Rec. 601), the full-spectrum FFT (§13.6.6), and the clamp/convert `ProgressStyle`s.
+3. **No new dependency for the trivial helpers.** `remove_dir_all`/`dircpy`/`thousands` were
+   rejected: `dircpy` alone pulls ~13 transitive crates (`jwalk`/`crossbeam`/`nix`/`fs_at`/…),
+   so adopting them would grow the dependency tree more than they shrink our source. `bitvec`
+   was already transitive, so promoting it adds no weight.
+4. **Net effect.** The hand-rolled production source shrank (roughly 80 lines); the repository
+diff still reads positive because the new unit tests (in `crop.rs`/`page.rs` and
+   `tests/integration_tests.rs`) and this decision record outweigh it. Tests were kept: they are
+the safety net the swaps rely on.
+5. **No behaviour change.** `cargo test` (incl. `tests/ebook_crop_tests.rs` and
+   `tests/ebook_processing_tests.rs`) and `clippy -D warnings` stay green; new unit tests pin
+   `trim_histogram_ends`, `binarize`, `fill_rect`, `pack_indices` (byte-identical `bitvec`
+   output across 1/2/4/8-bit), and `is_os_metadata`.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -1000,20 +1039,28 @@ Each change is its own behaviour-preserving commit; the corresponding unit/fixtu
 Phases 1–3 are the safety net. Anything below that turns out to be parity-locked (§5.2) is
 *not* swapped — it is documented instead, so the next reader does not re-litigate it.
 
+**Status (first pass complete).** Adopted: `blank`, `blit`, `round_half_even`, `binarize`,
+`fill_rect`, `dynamic_color_type`, `pack_indices`, the `encode_png` merge, and the
+histogram-trim/bbox/resize-wrapper/junk-predicate consolidations (§C), plus `imageproc`
+histogram binning (§B). **Kept**, each with a §5.3 comment at its call site:
+`remove_dir_all_force`, `copy_dir_all`, `group_thousands` — the only candidates that would have
+required a brand-new dependency (`remove_dir_all`/`dircpy`/`thousands`, which pull ~13 transitive
+crates). Full rationale and the net-size note are in §13.7; the rows below note what happened.
+
 **A. Clear wins — the dependency already ships the function.** No fixture risk; pure deletions.
 
 | Where | Hand-rolled today | Use instead | Note |
 |:---|:---|:---|:---|
-| `crop.rs::blank` | manual `vec![Subpixel::DEFAULT_MIN_VALUE]` image buffer | `image::ImageBuffer::new` | the `image` crate builds exactly this buffer |
-| `crop.rs::blit` | manual clipped pixel copy | `image::imageops::replace` | the same call is already used in `page.rs::maximize_strips` / `pad`; verify the negative-offset clipping |
-| `crop.rs::round_half_even` | manual floor/fraction half-to-even | `f64::round_ties_even()` (std) | stable since Rust 1.77; nothing to depend on |
-| `crop.rs::binarize` | manual `value <= threshold` map | `imageproc::contrast::threshold` + `invert` | `imageproc` is already a dependency |
-| `crop.rs::fill_rect` | manual nested-loop fill | `imageproc::drawing::draw_filled_rect_mut` | |
-| `page.rs::dynamic_color_type` | manual match over every `DynamicImage` variant | `ExtendedColorType::from(image.color())` | `DynamicImage::color()` already returns the right `ColorType` |
-| `clamp.rs::remove_dir_all_force` | hand-rolled Windows read-only walk | `remove_dir_all` crate (or `fs_extra::dir::remove`) | that crate exists for exactly this Windows case |
-| `archive/path.rs::copy_dir_all` | recursive `fs::read_dir` + `fs::copy` | `fs_extra::dir::copy` or `dircpy` | used by the same-format directory fast path in `archive/ops.rs` |
-| `clamp.rs::group_thousands` | manual 3-digit grouping | `num-format` or `thousands` | user-facing message only |
-| `page.rs::pack_indices` | manual sub-byte bit packing | `bitvec` (already in the tree transitively via `quantette`) | trivial, but promoting the existing dep beats new code |
+| `crop.rs::blank` | manual `vec![Subpixel::DEFAULT_MIN_VALUE]` image buffer | `image::ImageBuffer::new` | **done** — the `image` crate builds exactly this buffer |
+| `crop.rs::blit` | manual clipped pixel copy | `image::imageops::replace` | **done** — the negative-offset clipping matches the old loop |
+| `crop.rs::round_half_even` | manual floor/fraction half-to-even | `f64::round_ties_even()` (std) | **done** — stable since Rust 1.77; nothing to depend on |
+| `crop.rs::binarize` | manual `value <= threshold` map | `imageproc::contrast::threshold(.., ThresholdType::BinaryInverted)` | **done** — plus an out-of-range (negative/NaN) threshold guard |
+| `crop.rs::fill_rect` | manual nested-loop fill | `imageproc::drawing::draw_filled_rect_mut` | **done** |
+| `page.rs::dynamic_color_type` | manual match over every `DynamicImage` variant | `ExtendedColorType::from(image.color())` | **done** |
+| `clamp.rs::remove_dir_all_force` | hand-rolled Windows read-only walk | `remove_dir_all` crate (or `fs_extra::dir::remove`) | **kept** (§13.7.2) — would add a new dependency |
+| `archive/path.rs::copy_dir_all` | recursive `fs::read_dir` + `fs::copy` | `fs_extra::dir::copy` or `dircpy` | **kept** (§13.7.2) — would add a new dependency |
+| `clamp.rs::group_thousands` | manual 3-digit grouping | `num-format` or `thousands` | **kept** (§13.7.2) — trivial, user-facing message only |
+| `page.rs::pack_indices` | manual sub-byte bit packing | `bitvec` (already in the tree transitively via `quantette`) | **done** — promoted the existing dep |
 
 **B. Evaluate for a crate swap.** A maintained crate covers this, but the output is pinned to
 KCC/Pillow, so each swap must be validated against the committed fixtures
@@ -1021,29 +1068,30 @@ KCC/Pillow, so each swap must be validated against the committed fixtures
 before the hand-rolled code is deleted. If a crate cannot reproduce the pinned behaviour, keep
 ours and record why.
 
-| Where | Hand-rolled today | Candidate | Validation required |
+| Where | Hand-rolled today | Candidate | Outcome |
 |:---|:---|:---|:---|
-| `page.rs::fit` / `contain_size` / `pad` / `resize_image` | Pillow `ImageOps` geometry layered on `fast_image_resize` | `fast_image_resize`'s `fit_into_destination` + `CropBox` (already a dep) | rounding must match Pillow |
-| `crop.rs::box_blur_1` | horizontal + vertical 3-tap, rounded per pass | `imageproc::filter::box_blur` | imageproc normalises/edges differently; only if crop boxes stay identical (§13.6.3) |
-| `crop.rs::autocontrast_cutoff` | histogram trim + truncated LUT | `imageproc::contrast` covers the `cutoff = 0` case only | must match Pillow's 1 % drop |
-| `color.rs::rgb_to_ycbcr` / `ycbcr_to_rgb` / `luma601` and `rainbow.rs::rgb_to_yuv` / `yuv_to_rgb` | four hand-written colour matrices | `palette` (already transitive via `quantette`) | coefficients must stay JFIF/Rec. 601 (§13.5.2); pinned by the `color.rs` tests |
-| `rainbow.rs::forward` / `inverse` | 2-D FFT composed from `rustfft` rows + columns | `ndrustfft` (or `realfft`) | must keep the full-spectrum attenuation semantics (§13.6.6) |
-| `crop.rs::count_nonzero`, `color.rs::chroma_histograms`, `crop.rs::autocontrast_cutoff`, `page.rs::black_point` | hand-written 256-bin histogram loops | `imageproc::stats::histogram` | binning can come from the crate; the trim/cutoff logic is KCC-specific |
-| `interpanel.rs::keep_lines` | manual row/column compaction over raw buffers | `image` / `ndarray` indexing | must preserve pixel type and the exact removed-line set |
-| `archive/path.rs::normalize_archive_path` / `safe_join` | manual segment loop trimming, dropping `.`/`..`, stripping drive letters | `normalize-path` / `path-clean`, composed with `std::path` | archive-entry hygiene is deliberate; drive by the archive + input tests |
-| `input/archive.rs::strip_common_root` | manual first-segment common-prefix scan | `common-path` (`common_path`) | must reproduce the "single redundant root" rule (§13.4.4) |
-| `archive/path.rs::is_matching_root` (`normalize`) | manual alphanumeric filter + lowercase | `deunicode` | only matters for non-ASCII roots |
+| `page.rs::fit` / `contain_size` / `pad` / `resize_image` | Pillow `ImageOps` geometry layered on `fast_image_resize` | `fast_image_resize`'s `fit_into_destination` + `CropBox` (already a dep) | **kept** (§13.7.2) — Pillow rounding/centering is pinned by the processing fixtures |
+| `crop.rs::box_blur_1` | horizontal + vertical 3-tap, rounded per pass | `imageproc::filter::box_blur` | **kept** (§13.7.2) — imageproc normalises/edges differently (§13.6.3) |
+| `crop.rs::autocontrast_cutoff` | histogram trim + truncated LUT | `imageproc::contrast` covers the `cutoff = 0` case only | **partial** — binning now `imageproc::stats::histogram`; trim/LUT kept |
+| `color.rs::rgb_to_ycbcr` / `ycbcr_to_rgb` / `luma601` and `rainbow.rs::rgb_to_yuv` / `yuv_to_rgb` | four hand-written colour matrices | `palette` (already transitive via `quantette`) | **kept** (§13.7.2) — coefficients stay JFIF/Rec. 601 (§13.5.2) |
+| `rainbow.rs::forward` / `inverse` | 2-D FFT composed from `rustfft` rows + columns | `ndrustfft` (or `realfft`) | **kept** (§13.7.2) — full-spectrum semantics (§13.6.6) |
+| `crop.rs::count_nonzero`, `color.rs::chroma_histograms`, `page.rs::black_point` | hand-written 256-bin histogram loops | `imageproc::stats::histogram` | **kept** (§13.7.2) — Cb/Cr come from per-pixel YCbCr and `count_nonzero` is a rect count |
+| `interpanel.rs::keep_lines` | manual row/column compaction over raw buffers | `image` / `ndarray` indexing | **kept** (§13.7.2) — preserves pixel type + removed set |
+| `archive/path.rs::normalize_archive_path` / `safe_join` | manual segment loop trimming, dropping `.`/`..`, stripping drive letters | `normalize-path` / `path-clean`, composed with `std::path` | **kept** (§13.7.2) — archive-entry hygiene is deliberate |
+| `input/archive.rs::strip_common_root` | manual first-segment common-prefix scan | `common-path` (`common_path`) | **kept** (§13.7.2) — the "single redundant root" rule is KCC-specific (§13.4.4) |
+| `archive/path.rs::is_matching_root` (`normalize`) | manual alphanumeric filter + lowercase | `deunicode` | **kept** (§13.7.2) — only matters for non-ASCII roots |
 
 **C. Consolidate duplicates** (internal duplication, not a crate gap):
 
-| Where | Problem | Action |
+| Where | Problem | Outcome |
 |:---|:---|:---|
-| `archive/path.rs::is_os_metadata` vs `input/archive.rs::is_junk_entry` | two junk-`dot_clean` predicates with slightly different matching | unify into one shared helper |
-| `crop.rs::bbox_nonzero` vs `fill.rs::bounding_box` | the same non-zero bounding-box scan written twice | unify on the predicate form in `fill.rs` |
-| `color.rs::histograms_cutoff` vs `crop.rs::autocontrast_cutoff` | the same "drop N % from each histogram end" loop written twice | one shared histogram-trim helper |
-| `image_ops.rs::is_image_extension` / `is_image_file` vs `input/archive.rs::is_ebook_image` / `image_extension` | two extension taxonomies | one shared extension helper |
-| `page.rs::resize_luma` / `resize_rgb` / `resize_rgba` | three near-identical `fast_image_resize` wrappers | one generic helper |
-| `clamp.rs` / `convert.rs` inline `ProgressStyle` vs `ebook/progress.rs` | progress styling built in three places | route them through `ebook/progress.rs` |
+| `archive/path.rs::is_os_metadata` vs `input/archive.rs::is_junk_entry` | two junk-`dot_clean` predicates with slightly different matching | **done** — unified into `is_os_metadata` (component/base-name aware) |
+| `crop.rs::bbox_nonzero` vs `fill.rs::bounding_box` | the same non-zero bounding-box scan written twice | **done** — `fill::bounding_box` is now `pub(crate)`, predicate form |
+| `color.rs::histograms_cutoff` vs `crop.rs::autocontrast_cutoff` | the same "drop N % from each histogram end" loop written twice | **done** — shared `crop::trim_histogram_ends`; chroma histograms widened to `u64` |
+| `image_ops.rs::is_image_extension` / `is_image_file` vs `input/archive.rs::is_ebook_image` / `image_extension` | two extension taxonomies | **kept** (§13.7.2) — intentionally different sets (§13.4.6) |
+| `page.rs::resize_luma` / `resize_rgb` / `resize_rgba` | three near-identical `fast_image_resize` wrappers | **done** — one generic `resize_buffer` |
+| `page.rs::encode_png_gray` / `encode_png_rgb` | two byte-identical `PngEncoder` bodies differing only in the colour type | **done** — one `encode_png(raw, w, h, color)` |
+| `clamp.rs` / `convert.rs` inline `ProgressStyle` vs `ebook/progress.rs` | progress styling built in three places | **kept** (§13.7.2) — routing them through one helper would change those commands' terminal output |
 
 **D. Keep — irreproducible reference behaviour.** These encode KCC/Pillow quirks no crate
 reproduces; a swap would silently change output, so they stay (and stay documented):
@@ -1173,6 +1221,11 @@ but these are the candidates §7 depends on.
 Deliberately avoided: `pdfium-render`/`mupdf` (pull platform binaries — violates the
 "self-contained, no external programs" rule), `boko` (GPL-3, see above), `mobi-sys`
 (FFI to `libmobi`, a C dependency we do not need).
+
+**Adopted in Phase R.** `bitvec = "1"` (MIT, pure Rust) for `page.rs::pack_indices`; already
+in the tree via `quantette`, promoted to a direct dependency (§7, §13.7.1). `remove_dir_all`,
+`dircpy`/`fs_extra` and `thousands`/`num-format` were considered for the trivial bespoke
+helpers in `clamp.rs`/`archive::path` and deliberately **not** added (§13.7.3).
 
 **Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
 EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our

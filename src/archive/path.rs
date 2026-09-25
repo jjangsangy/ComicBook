@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Strips leading/trailing slashes, backslashes, Windows drive prefixes (e.g. `C:`),
 /// redundant `./`, and `..` segments to prevent path traversal and ensure uniform cross-platform
-/// compatibility across Windows, Linux, and macOS.
+/// compatibility across Windows, Linux, and macOS. Kept bespoke (AGENTS.md §5.3).
 pub fn normalize_archive_path(raw: &str) -> String {
     // Build the result in place (a single buffer) rather than collecting segments into an
     // intermediate `Vec` and joining them, which avoids an allocation for every entry.
@@ -52,7 +52,7 @@ pub fn safe_join<P: AsRef<Path>>(base: P, relative: &str) -> PathBuf {
     target
 }
 
-/// Recursively copy an entire directory tree from `src` to `dst`.
+/// Recursively copy an entire directory tree from `src` to `dst` (kept bespoke, §5.3).
 pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     let dst = dst.as_ref();
     fs::create_dir_all(dst)?;
@@ -69,12 +69,18 @@ pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Resul
     Ok(())
 }
 
-/// Helper to determine whether an entry is OS-generated junk/metadata.
+/// Whether an entry is OS-generated junk/metadata (KCC's `dot_clean`).
+///
+/// `__MACOSX` is matched per path component and the dot-files by base name, so a
+/// nested `Chapter/._page.jpg` is caught as well as a root-level one.
 pub fn is_os_metadata(name: &str) -> bool {
-    name.starts_with("__MACOSX")
-        || name.ends_with(".DS_Store")
-        || name.ends_with("Thumbs.db")
-        || name.starts_with("._")
+    if name.split(['/', '\\']).any(|part| part == "__MACOSX") {
+        return true;
+    }
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    base.starts_with("._")
+        || base.eq_ignore_ascii_case(".DS_Store")
+        || base.eq_ignore_ascii_case("Thumbs.db")
 }
 
 /// Helper to extract normalized entry path and directory flag from raw archive metadata.
@@ -127,7 +133,8 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
     candidate_root.map(str::to_string)
 }
 
-/// Check whether an archive's root folder matches the destination folder or source file stem.
+/// Check whether an archive's root folder matches the destination folder or source file
+/// stem (kept bespoke, §5.3).
 pub fn is_matching_root(root: &str, dest_name: &str, src_stem: &str) -> bool {
     fn normalize(s: &str) -> String {
         s.chars()

@@ -78,7 +78,7 @@ fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize
 /// Copy `source` without the lines listed in `remove`.
 ///
 /// Rows/columns are moved through the typed buffer, so grayscale pages keep their
-/// pixel type.
+/// pixel type (kept bespoke, §5.3).
 fn keep_lines<P>(
     source: &ImageBuffer<P, Vec<P::Subpixel>>,
     remove: &BTreeSet<usize>,
