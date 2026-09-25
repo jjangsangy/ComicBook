@@ -53,6 +53,13 @@ regex = "1"
 # `dcterms:modified` timestamp (AGENTS.md §7/§12.2). MIT/Apache-2.0, pure Rust.
 uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
+# Phase 6: the generated EPUB/KePub documents (OPF/NCX/NAV/XHTML) are rendered
+# from templates instead of being assembled with `push_str` (AGENTS.md §5.3).
+# Askama compiles the templates into Rust, so there is no runtime parsing and a
+# malformed template is a compile error. MIT OR Apache-2.0, pure Rust. Only the
+# derive and `askama.toml` support are enabled; the templates carry their own
+# XML/HTML text.
+askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
 
 [dev-dependencies]
 libc = "0.2"

@@ -11,6 +11,8 @@ pub mod opf;
 pub mod package;
 pub mod xhtml;
 
+mod templates;
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -95,7 +97,7 @@ pub fn build_epub(
     let mut zip_entries: Vec<(String, Vec<u8>)> = Vec::new();
     zip_entries.push((
         "META-INF/container.xml".to_string(),
-        opf::container_xml().into_bytes(),
+        opf::CONTAINER_XML.as_bytes().to_vec(),
     ));
     zip_entries.push((
         "OEBPS/Text/style.css".to_string(),

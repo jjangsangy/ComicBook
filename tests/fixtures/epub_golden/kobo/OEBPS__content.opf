@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" unique-identifier="BookID" xmlns="http://www.idpf.org/2007/opf">
+<metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:title>book</dc:title>
+<dc:language>en-US</dc:language>
+<dc:identifier id="BookID">urn:uuid:UUID</dc:identifier>
+<dc:contributor id="contributor">KindleComicConverter-11.3.2</dc:contributor>
+<dc:creator>KCC</dc:creator>
+<meta property="dcterms:modified">TIMESTAMP</meta>
+<meta name="cover" content="cover"/>
+<meta property="rendition:spread">landscape</meta>
+<meta property="rendition:layout">pre-paginated</meta>
+</metadata>
+<manifest>
+<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>
+<item id="cover" href="Images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+<item id="page_Images_kcc-0001-kcc-x" href="Text/kcc-0001-kcc-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_kcc-0001-kcc-x" href="Images/kcc-0001-kcc-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_kcc-0002-kcc-d" href="Text/kcc-0002-kcc-d.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_kcc-0002-kcc-d" href="Images/kcc-0002-kcc-d.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-1_kcc-0003-kcc-x" href="Text/chapter-1/kcc-0003-kcc-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-1_kcc-0003-kcc-x" href="Images/chapter-1/kcc-0003-kcc-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-1_kcc-0004-kcc-x" href="Text/chapter-1/kcc-0004-kcc-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-1_kcc-0004-kcc-x" href="Images/chapter-1/kcc-0004-kcc-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-2_kcc-0005-kcc-x" href="Text/chapter-2/kcc-0005-kcc-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-2_kcc-0005-kcc-x" href="Images/chapter-2/kcc-0005-kcc-x.jpg" media-type="image/jpeg"/>
+<item id="css" href="Text/style.css" media-type="text/css"/>
+</manifest>
+<spine page-progression-direction="rtl" toc="ncx">
+<itemref idref="page_Images_kcc-0001-kcc-x" properties="rendition:page-spread-left"/>
+<itemref idref="page_Images_kcc-0002-kcc-d" properties="rendition:page-spread-center"/>
+<itemref idref="page_Images_chapter-1_kcc-0003-kcc-x" properties="rendition:page-spread-right"/>
+<itemref idref="page_Images_chapter-1_kcc-0004-kcc-x" properties="rendition:page-spread-left"/>
+<itemref idref="page_Images_chapter-2_kcc-0005-kcc-x" properties="rendition:page-spread-right"/>
+</spine>
+</package>

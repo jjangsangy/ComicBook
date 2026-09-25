@@ -6,8 +6,14 @@
 //! page's dimensions, halved-and-a-bit in `--hq` mode exactly as the reference
 //! does. Kindle Panel View markup is emitted when the profile and options enable
 //! it.
+//!
+//! The document skeleton lives in `templates/page.xhtml`; this module computes the
+//! values it interpolates (AGENTS.md §5.3).
+
+use askama::Template;
 
 use super::html_escape;
+use super::templates::{PageXhtml, PanelBox};
 use crate::ebook::model::PageFlags;
 use crate::ebook::options::Options;
 
@@ -38,10 +44,10 @@ pub(crate) fn build_xhtml(
     } else {
         format!("{image_dir}/")
     };
-    let style_prefix = "../".repeat(backref - 1);
-    let image_prefix = "../".repeat(backref);
+    let style_href = format!("{}style.css", "../".repeat(backref - 1));
+    let image_src = format!("{}Images/{postfix}{file}", "../".repeat(backref));
 
-    let frame = if options.hq {
+    let (viewport_width, viewport_height) = if options.hq {
         (
             (f64::from(width) / 1.5).floor() as u32,
             (f64::from(height) / 1.5).floor() as u32,
@@ -50,74 +56,52 @@ pub(crate) fn build_xhtml(
         (width, height)
     };
 
-    let additional_style = if flags.black_background {
+    let body_style = if flags.black_background {
         "background-color:#000000;"
     } else {
         ""
     };
+    let title = html_escape(stem);
 
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<!DOCTYPE html>\n");
-    out.push_str(
-        "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\n",
-    );
-    out.push_str("<head>\n");
-    out.push_str(&format!("<title>{}</title>\n", html_escape(stem)));
-    out.push_str(&format!(
-        "<link href=\"{style_prefix}style.css\" type=\"text/css\" rel=\"stylesheet\"/>\n"
-    ));
-    out.push_str(&format!(
-        "<meta name=\"viewport\" content=\"width={}, height={}\"/>\n",
-        frame.0, frame.1
-    ));
-    out.push_str("</head>\n");
-    out.push_str(&format!("<body style=\"{additional_style}\">\n"));
-    out.push_str("<div style=\"text-align:center;\">\n");
-    if options.is_kindle {
-        // This `display:none` div fixes formatting issues with virtual panel mode.
-        out.push_str("<div style=\"display:none;\">.</div>\n");
-    }
-    out.push_str(&format!(
-        "<img width=\"{width}\" height=\"{height}\" src=\"{image_prefix}Images/{postfix}{file}\"/>\n"
-    ));
-    out.push_str("</div>\n");
+    let panel = options.is_kindle && options.panel_view;
+    let (boxes, panel_width, panel_height) = if panel {
+        panel_layout(width, height, flags, options)
+    } else {
+        (Vec::new(), width, height)
+    };
 
-    if options.is_kindle && options.panel_view {
-        panel_view(
-            &mut out,
-            file,
-            width,
-            height,
-            flags,
-            additional_style,
-            &image_prefix,
-            &postfix,
-            options,
-        );
-    }
-
-    out.push_str("</body>\n");
-    out.push_str("</html>\n");
+    let view = PageXhtml {
+        title: &title,
+        style_href: &style_href,
+        viewport_width,
+        viewport_height,
+        body_style,
+        kindle_spacer: options.is_kindle,
+        img_width: width,
+        img_height: height,
+        image_src: &image_src,
+        panel,
+        boxes: &boxes,
+        panel_width,
+        panel_height,
+    };
+    // askama drops a single trailing newline from every template; KCC's page
+    // XHTML is newline terminated (AGENTS.md §5.2).
+    let mut out = view.render().expect("page.xhtml is a static template");
+    out.push('\n');
     out.into_bytes()
 }
 
-/// Append the Kindle virtual Panel View markup (`buildHTML`'s `PV-*` block).
+/// The Kindle virtual Panel View grid (`buildHTML`'s `PV-*` block).
 ///
 /// The panel grid depends on how the page's scaled size compares with the device
 /// screen: a page far smaller than the screen in one axis drops those panels.
-#[allow(clippy::too_many_arguments)]
-fn panel_view(
-    out: &mut String,
-    file: &str,
+fn panel_layout(
     width: u32,
     height: u32,
     flags: PageFlags,
-    additional_style: &str,
-    image_prefix: &str,
-    postfix: &str,
     options: &Options,
-) {
+) -> (Vec<PanelBox>, u32, u32) {
     let device = (options.profile_data.width, options.profile_data.height);
 
     // `--two-panel` scales the page to the device width; `--hq` magnifies by 1.5x.
@@ -139,23 +123,9 @@ fn panel_view(
     let x = panel_offset(device.0, size.0);
     let y = panel_offset(device.1, size.1);
 
-    let style = |name: &str| -> String {
-        match name {
-            "PV-TL" => "position:absolute;left:0;top:0;".to_string(),
-            "PV-TR" => "position:absolute;right:0;top:0;".to_string(),
-            "PV-BL" => "position:absolute;left:0;bottom:0;".to_string(),
-            "PV-BR" => "position:absolute;right:0;bottom:0;".to_string(),
-            "PV-T" => format!("position:absolute;top:0;left:{x}%;"),
-            "PV-B" => format!("position:absolute;bottom:0;left:{x}%;"),
-            "PV-L" => format!("position:absolute;left:0;top:{y}%;"),
-            "PV-R" => format!("position:absolute;right:0;top:{y}%;"),
-            _ => String::new(),
-        }
-    };
-
     // The panel order and grid follow `buildHTML`: a rotated page reorders the
     // quadrants, and right-to-left reading mirrors them.
-    let (boxes, order): (&[&str], &[u32]) = if !no_horizontal && !no_vertical {
+    let (names, order): (&[&'static str], &[u32]) = if !no_horizontal && !no_vertical {
         if flags.rotated {
             if options.right_to_left {
                 (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[1, 3, 2, 4])
@@ -183,28 +153,31 @@ fn panel_view(
         (&[], &[])
     };
 
-    out.push_str("<div id=\"PV\">\n");
-    for (index, box_name) in boxes.iter().enumerate() {
-        out.push_str(&format!("<div id=\"{box_name}\">\n"));
-        out.push_str(&format!(
-            "<a style=\"display:inline-block;width:100%;height:100%;\" class=\"app-amzn-magnify\" \
-             data-app-amzn-magnify='{{\"targetId\":\"{box_name}-P\", \"ordinal\":{}}}'></a>\n",
-            order[index]
-        ));
-        out.push_str("</div>\n");
-    }
-    out.push_str("</div>\n");
-    for box_name in boxes {
-        out.push_str(&format!(
-            "<div class=\"PV-P\" id=\"{box_name}-P\" style=\"{additional_style}\">\n"
-        ));
-        out.push_str(&format!(
-            "<img style=\"{}\" src=\"{image_prefix}Images/{postfix}{file}\" width=\"{}\" height=\"{}\"/>\n",
-            style(box_name),
-            size.0,
-            size.1
-        ));
-        out.push_str("</div>\n");
+    let boxes = names
+        .iter()
+        .zip(order)
+        .map(|(&name, &ordinal)| PanelBox {
+            id: name,
+            ordinal,
+            style: panel_style(name, x, y),
+        })
+        .collect();
+
+    (boxes, size.0, size.1)
+}
+
+/// The `style` attribute of a Panel View region.
+fn panel_style(name: &str, x: i64, y: i64) -> String {
+    match name {
+        "PV-TL" => "position:absolute;left:0;top:0;".to_string(),
+        "PV-TR" => "position:absolute;right:0;top:0;".to_string(),
+        "PV-BL" => "position:absolute;left:0;bottom:0;".to_string(),
+        "PV-BR" => "position:absolute;right:0;bottom:0;".to_string(),
+        "PV-T" => format!("position:absolute;top:0;left:{x}%;"),
+        "PV-B" => format!("position:absolute;bottom:0;left:{x}%;"),
+        "PV-L" => format!("position:absolute;left:0;top:{y}%;"),
+        "PV-R" => format!("position:absolute;right:0;top:{y}%;"),
+        _ => String::new(),
     }
 }
 

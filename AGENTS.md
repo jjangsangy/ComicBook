@@ -297,6 +297,9 @@ Decisions already taken under this policy:
   because the emitted layout must match KCC byte-for-byte-ish (§5.2) and no crate offers
   that control; if a suitable crate appears, prefer it. Even here, use a zip writer
   (`zip`/`flate2`) and an XML writer (`quick-xml`) rather than hand-assembling bytes.
+  **Update (Phase 6):** the document *skeletons* (OPF/NCX/NAV/XHTML/`style.css`) are now
+  rendered from `askama` templates instead of `push_str` chains; the packaging itself is
+  still ours, and the byte-for-byte output is unchanged (§13.10).
 
 ### 5.4 Clean-room re-implementation of KCC behaviour (do NOT copy source)
 
@@ -398,6 +401,7 @@ src/
       mod.rs                  # dispatch by Format; filename resolution; --delete
       epub/
         mod.rs                # buildEPUB driver
+        templates.rs          # askama view structs for the generated documents
         xhtml.rs              # buildHTML (+ Panel View)
         nav.rs                # buildNCX / buildNAV
         opf.rs                # buildOPF (spread logic, kindle meta)
@@ -411,6 +415,11 @@ src/
 Reuse (no change): `crate::archive` (`detect_archive_kind`, `ArchiveReader`,
 `ArchiveWriter`), `crate::image_ops` (resize/encode helpers), `crate::clamp` patterns
 (`remove_dir_all_force`).
+
+The generated document *skeletons* (`page.xhtml`, `content.opf`, `toc.ncx`, `nav.xhtml`,
+`style.css`) live in the crate-root `templates/` directory and are pulled in by askama's
+`path = "…"`, so they are compiled into the binary — there is no runtime template file.
+See §13.10.
 
 ---
 
@@ -430,6 +439,7 @@ Add (verify licenses; prefer pure Rust):
 |:---|:---|:---|
 | `kindling-mobi` (lib `kindling`) | EPUB/OPF → AZW3/MOBI | MIT (compatible) |
 | `quick-xml` | ComicInfo/EPUB/OPF parse + write | MIT/Apache |
+| `askama` | EPUB/KePub XHTML/OPF/NCX/NAV + `style.css` document skeletons | MIT/Apache, pure Rust, compile-time |
 | `uuid` | EPUB `dc:identifier` urn:uuid | MIT/Apache |
 | `time` or `chrono` | `dcterms:modified` timestamp | MIT/Apache |
 | `ndarray` | array math for crop/webtoon | MIT/Apache |
@@ -476,6 +486,12 @@ EPUB `dc:identifier`/`dtb:uid` and `time = { version = "0.3", features = ["forma
 "macros"] }` (MIT/Apache-2.0, pure Rust) for `dcterms:modified`, both from §7's candidate
 table (§13.9.5). `zip` was re-declared as a dev-dependency so the Phase 5 tests can read the
 EPUB container back.
+
+**Added in Phase 6.** `askama = { version = "0.16", default-features = false, features =
+["config", "derive", "std"] }` (MIT OR Apache-2.0, pure Rust) renders the generated
+document skeletons (§13.10). `config` is also what enables askama's `external-sources`, i.e.
+the `path = "…"` template files; those extra crates are proc-macro/build-time only, so the
+runtime dependency added to the binary is just `itoa`.
 
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
@@ -970,6 +986,37 @@ the safety net the swaps rely on.
    `--custom-height` instead of feeding a zero target into the resizer (KCC divides by the
    zero width there and raises). This path only became reachable with a shippable `-f epub`.
 
+### 13.10 Phase 6 decisions (document templating)
+
+1. **The EPUB/KePub document skeletons are askama templates.** `page.xhtml`, `content.opf`,
+   `toc.ncx`, `nav.xhtml` and `style.css` live in the crate-root `templates/` directory and
+   are compiled into the binary (`path = "…"`), so there is no runtime template parsing and a
+   malformed template fails the build (AGENTS.md §5.3, §14). The builders in
+   `output/epub/{xhtml,opf,nav}.rs` now compute plain view structs (`epub/templates.rs`) and
+   call `render()`; every algorithm (the spread pass, the Panel View grid, the manifest/spine
+   ordering, `--hq` geometry) stays in Rust. `container.xml` is fully static and remains a
+   `const` literal.
+2. **Escaping stays in Rust; the templates do not escape.** The interpolated fields are
+   pre-escaped (or intentionally raw) exactly where the reference escapes them, so the
+   templates are declared `escape = "none"`. This matters because askama maps the `.xml`
+   extension to its *HTML* escaper by default (§20.3), which would double-escape.
+3. **Whitespace is preserved.** askama's `Whitespace::default()` is `Preserve`, and no config
+   is needed; the templates are authored to reproduce KCC's newlines exactly. Its one quirk —
+   askama drops a single trailing newline per template (Jinja's
+   `keep_trailing_newline = false`) — is handled explicitly: the OPF and page XHTML wrappers
+   `push('\n')` because KCC newline-terminates them, while the NCX and NAV are not terminated.
+4. **Byte-for-byte parity is pinned by golden tests.** `tests/ebook_golden_tests.rs` converts
+   three fixture scenarios (`kindle_hq`, `kindle_panel`, `kobo`) and compares the generated
+   documents against committed references in `tests/fixtures/epub_golden/` (only the UUID and
+   `dcterms:modified` are normalised). The references were captured from the `push_str`
+   implementation *before* the refactor, so the migration is provably behaviour-preserving;
+   regenerate with `UPDATE_GOLDEN=1 cargo test --test ebook_golden_tests` only for an
+   intentional format change.
+5. **The Scribe `-above`/`-below` manifest branch is unit-tested directly.** No fixture
+   currently *generates* an `-above` page (that split is still Phase 6 work), so
+   `opf.rs::manifest_items` is a separate function with a unit test covering the added
+   `-below` image item.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -1150,6 +1197,12 @@ Decisions recorded in §13.9.
   (`-2`, `--vertical-4-panel`, `--legacy-panel-view`, `-q`); Scribe `above`/`below`;
   `--spread-shift`, `--one-page-landscape`, `--invert-direction`.
 - **Exit:** OPF spine/spread assertions across RTL/LTR/shift/one-page cases.
+
+**Delivered so far (document templating).** The OPF/NCX/NAV/XHTML/`style.css` skeletons are
+rendered from askama templates (`templates/`, `epub/templates.rs`), replacing the `push_str`
+chains; output is byte-identical and pinned by `tests/ebook_golden_tests.rs` (§13.10). The
+remaining Phase 6 scope (`Cover::process`, the Scribe `-above`/`-below` split, panel-view
+variant hardening) is still open.
 
 ### Phase 7 — CBZ, PDF, light-novel
 - CBZ output + `--keep-comicinfo`; PDF output; light-novel mode.
@@ -1367,6 +1420,7 @@ but these are the candidates §7 depends on.
 
 | Crate | Latest | License | Assessment |
 |:---|:---|:---|:---|
+| `askama` | 0.16.x | MIT OR Apache-2.0 | Compile-time Jinja templates; pure Rust; the derive compiles each template into Rust, so there is no runtime parse. Needs Rust ≥1.88 / edition 2024 (the crate, not this one). Its `path = "…"` template files require the `config` feature (which pulls `external-sources`); those are build-time crates only. Note `.xml`/`.xhtml` map to its HTML escaper, so our templates set `escape = "none"`. **Adopted in Phase 6 (§13.10).** |
 | `kindling-mobi` (lib `kindling`) | 0.45.x | MIT | Pure Rust, static, edition 2024 (needs Rust ≥1.85). Drop-in kindlegen replacement. Its `build` consumes an EPUB/OPF (fixed-layout supported) and emits KF8-only `.azw3` by default or a dual MOBI7+KF8 `.mobi` with `--legacy-mobi`; `--doc-type` maps to our `--doc-type`. **This is the §9 integration point.** Note it also ships its own comic pipeline (`kindling comic`) — use only the *builder* so we keep our ported KCC pipeline in control. |
 | `boko` | 0.5.x | **GPL-3.0-or-later** | EPUB/AZW3/KFX reader+writer, pure Rust. KFX/AZW3 **write** support would be valuable, but the GPL-3 license is incompatible with this repo's MIT policy — **do not depend on it** unless the project relicenses. |
 | `epub3-kindle` | 0.4.x | verify | Alternative EPUB3→KF8/dual-MOBI converter if `kindling-mobi`'s API does not fit. |

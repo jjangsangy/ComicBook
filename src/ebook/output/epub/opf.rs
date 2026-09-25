@@ -7,15 +7,31 @@
 //! followed by a backward fix-up pass that anchors the tail of the book, with
 //! `--spread-shift`, `--one-page-landscape` and the PDF/EPUB source flip applied
 //! as the reference does.
+//!
+//! The document skeleton lives in `templates/content.opf`, `templates/style.css`
+//! and the `CONTAINER_XML` literal; this module computes the values they
+//! interpolate (AGENTS.md §5.3).
 
 use std::path::Path;
 
+use askama::Template;
+
+use super::templates::{Opf, OpfItem, SpineItem, StyleCss};
 use super::{html_escape, images_dir, text_dir, unique_id, PageRef};
 use crate::ebook::metadata::BookMetadata;
 use crate::ebook::options::Options;
 
 /// KCC's `KindleComicConverter-<version>` contributor string.
 const CONTRIBUTOR: &str = "KindleComicConverter-11.3.2";
+
+/// `META-INF/container.xml`; fully static, so it is a literal rather than a
+/// template.
+pub(crate) const CONTAINER_XML: &str = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+<rootfiles>
+<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+</rootfiles>
+</container>"#;
 
 /// Build `OEBPS/content.opf`.
 #[allow(clippy::too_many_arguments)]
@@ -34,162 +50,146 @@ pub(crate) fn build_opf(
 
     // `--vertical-4-panel` writes top-to-bottom; `--invert-direction` swaps the
     // two suffixes relative to the normal rule.
-    let mut writing_mode = if options.vertical_4_panel {
-        "vertical"
-    } else {
-        "horizontal"
-    }
-    .to_string();
-    writing_mode.push_str(match (options.invert_direction, options.right_to_left) {
-        (true, true) | (false, false) => "-lr",
-        _ => "-rl",
-    });
-
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str(
-        "<package version=\"3.0\" unique-identifier=\"BookID\" xmlns=\"http://www.idpf.org/2007/opf\">\n",
-    );
-    out.push_str(
-        "<metadata xmlns:opf=\"http://www.idpf.org/2007/opf\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n",
-    );
-    out.push_str(&format!("<dc:title>{}</dc:title>\n", html_escape(title)));
-    out.push_str(&format!("<dc:language>{language}</dc:language>\n"));
-    out.push_str(&format!(
-        "<dc:identifier id=\"BookID\">urn:uuid:{uuid}</dc:identifier>\n"
-    ));
-    out.push_str(&format!(
-        "<dc:contributor id=\"contributor\">{CONTRIBUTOR}</dc:contributor>\n"
-    ));
-    if !metadata.summary.is_empty() {
-        out.push_str(&format!(
-            "<dc:description>{}</dc:description>\n",
-            html_escape(&metadata.summary)
-        ));
-    }
-    for author in &metadata.authors {
-        out.push_str(&format!(
-            "<dc:creator>{}</dc:creator>\n",
-            html_escape(author)
-        ));
-    }
-
-    // Series metadata is only meaningful for non-Kindle readers.
-    if !options.is_kindle && !metadata.series.is_empty() {
-        out.push_str(&format!(
-            "<meta property=\"belongs-to-collection\" id=\"c02\">{}</meta>\n",
-            html_escape(&metadata.series)
-        ));
-        out.push_str("<meta refines=\"#c02\" property=\"collection-type\">series</meta>\n");
-        let group = if !metadata.volume.is_empty() && !metadata.number.is_empty() {
-            Some(format!("{}.{}", metadata.volume, metadata.number))
-        } else if !metadata.volume.is_empty() {
-            Some(metadata.volume.clone())
-        } else if !metadata.number.is_empty() {
-            Some(metadata.number.clone())
+    let writing_mode = format!(
+        "{}{}",
+        if options.vertical_4_panel {
+            "vertical"
         } else {
-            None
-        };
-        if let Some(group) = group {
-            out.push_str(&format!(
-                "<meta refines=\"#c02\" property=\"group-position\">{}</meta>\n",
-                html_escape(&group)
-            ));
+            "horizontal"
+        },
+        match (options.invert_direction, options.right_to_left) {
+            (true, true) | (false, false) => "-lr",
+            _ => "-rl",
         }
-    }
-
-    out.push_str(&format!(
-        "<meta property=\"dcterms:modified\">{modified}</meta>\n"
-    ));
-    if has_cover {
-        out.push_str("<meta name=\"cover\" content=\"cover\"/>\n");
-    }
-
-    if options.is_kindle && !options.custom_profile {
-        out.push_str("<meta name=\"fixed-layout\" content=\"true\"/>\n");
-        out.push_str(&format!(
-            "<meta name=\"original-resolution\" content=\"{}x{}\"/>\n",
-            device.0, device.1
-        ));
-        out.push_str("<meta name=\"book-type\" content=\"comic\"/>\n");
-        out.push_str(&format!(
-            "<meta name=\"primary-writing-mode\" content=\"{writing_mode}\"/>\n"
-        ));
-        out.push_str("<meta name=\"zero-gutter\" content=\"true\"/>\n");
-        out.push_str("<meta name=\"zero-margin\" content=\"true\"/>\n");
-        out.push_str("<meta name=\"ke-border-color\" content=\"#FFFFFF\"/>\n");
-        out.push_str("<meta name=\"ke-border-width\" content=\"0\"/>\n");
-        out.push_str("<meta name=\"orientation-lock\" content=\"none\"/>\n");
-        out.push_str(&format!(
-            "<meta name=\"region-mag\" content=\"{}\"/>\n",
-            if options.kfx { "false" } else { "true" }
-        ));
-    }
-
-    out.push_str("<meta property=\"rendition:spread\">landscape</meta>\n");
-    out.push_str("<meta property=\"rendition:layout\">pre-paginated</meta>\n");
-    out.push_str("</metadata>\n<manifest>\n");
-    out.push_str("<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n");
-    out.push_str(
-        "<item id=\"nav\" href=\"nav.xhtml\" properties=\"nav\" media-type=\"application/xhtml+xml\"/>\n",
     );
-    if has_cover {
-        out.push_str(
-            "<item id=\"cover\" href=\"Images/cover.jpg\" media-type=\"image/jpeg\" properties=\"cover-image\"/>\n",
-        );
-    }
 
-    for entry in filelist {
-        let id = unique_id(entry);
-        out.push_str(&format!(
-            "<item id=\"page_{id}\" href=\"{}/{}.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
-            text_dir(entry.image_dir),
-            entry.stem
-        ));
-        out.push_str(&format!(
-            "<item id=\"img_{id}\" href=\"{}/{}\" media-type=\"{}\"/>\n",
-            images_dir(entry.image_dir),
-            entry.file,
-            entry.media_type.mime()
-        ));
-        // A Scribe `-above` page has a matching `-below` image in the same chapter.
-        if entry.file.contains("above") {
-            let below_id = id.replace("above", "below");
-            out.push_str(&format!(
-                "<item id=\"img_{below_id}\" href=\"{}/{}\" media-type=\"{}\"/>\n",
-                images_dir(entry.image_dir),
-                entry.file.replace("above", "below"),
-                entry.media_type.mime()
-            ));
-        }
-    }
-    out.push_str("<item id=\"css\" href=\"Text/style.css\" media-type=\"text/css\"/>\n");
-    out.push_str("</manifest>\n");
+    let manifest = manifest_items(filelist);
 
-    let reflist: Vec<String> = filelist.iter().map(unique_id).collect();
     let (direction, initial_side) = match (options.invert_direction, options.right_to_left) {
         (true, false) | (false, true) => ("rtl", "right"),
         _ => ("ltr", "left"),
     };
     let initial_side = flip_for_source(initial_side, source, options);
+    let reflist: Vec<String> = filelist.iter().map(unique_id).collect();
     let spread = spread_properties(&reflist, options.right_to_left, initial_side);
+    let spine: Vec<SpineItem> = reflist
+        .iter()
+        .zip(&spread)
+        .map(|(entry, property)| {
+            let property = if options.one_page_landscape {
+                "center"
+            } else {
+                property
+            };
+            SpineItem {
+                idref: format!("page_{entry}"),
+                attr: page_spread_property(property, options),
+            }
+        })
+        .collect();
 
-    out.push_str(&format!(
-        "<spine page-progression-direction=\"{direction}\" toc=\"ncx\">\n"
-    ));
-    for (entry, property) in reflist.iter().zip(&spread) {
-        let property = if options.one_page_landscape {
-            "center"
-        } else {
-            property
-        };
-        out.push_str(&format!(
-            "<itemref idref=\"page_{entry}\" {}/>\n",
-            page_spread_property(property, options)
-        ));
-    }
-    out.push_str("</spine>\n</package>\n");
+    let title = html_escape(title);
+    let has_description = !metadata.summary.is_empty();
+    let description = html_escape(&metadata.summary);
+    let creators: Vec<String> = metadata
+        .authors
+        .iter()
+        .map(|author| html_escape(author))
+        .collect();
+
+    // Series metadata is only meaningful for non-Kindle readers.
+    let has_series = !options.is_kindle && !metadata.series.is_empty();
+    let series = html_escape(&metadata.series);
+    let group = if !metadata.volume.is_empty() && !metadata.number.is_empty() {
+        Some(format!("{}.{}", metadata.volume, metadata.number))
+    } else if !metadata.volume.is_empty() {
+        Some(metadata.volume.clone())
+    } else if !metadata.number.is_empty() {
+        Some(metadata.number.clone())
+    } else {
+        None
+    };
+    let has_group = has_series && group.is_some();
+    let group = html_escape(group.as_deref().unwrap_or(""));
+
+    let view = Opf {
+        title: &title,
+        language,
+        uuid,
+        contributor: CONTRIBUTOR,
+        has_description,
+        description: &description,
+        creators: &creators,
+        has_series,
+        series: &series,
+        has_group,
+        group: &group,
+        modified,
+        has_cover,
+        kindle_layout: options.is_kindle && !options.custom_profile,
+        device_width: device.0,
+        device_height: device.1,
+        writing_mode: &writing_mode,
+        region_mag: if options.kfx { "false" } else { "true" },
+        manifest: &manifest,
+        direction,
+        spine: &spine,
+    };
+    // askama drops a single trailing newline from every template; KCC's OPF is
+    // newline terminated (AGENTS.md §5.2).
+    let mut out = view.render().expect("content.opf is a static template");
+    out.push('\n');
     out
+}
+
+/// The OPF manifest: a page item and an image item per page, plus the `-below`
+/// image of a Scribe `-above` tall-page split (KCC's `buildOPF`).
+fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
+    let mut manifest = Vec::with_capacity(filelist.len() * 2);
+    for entry in filelist {
+        let id = unique_id(entry);
+        manifest.push(OpfItem {
+            id: format!("page_{id}"),
+            href: format!("{}/{}.xhtml", text_dir(entry.image_dir), entry.stem),
+            media_type: "application/xhtml+xml",
+            properties: String::new(),
+            has_properties_before: false,
+            has_properties_after: false,
+        });
+        manifest.push(OpfItem {
+            id: format!("img_{id}"),
+            href: format!("{}/{}", images_dir(entry.image_dir), entry.file),
+            media_type: entry.media_type.mime(),
+            properties: String::new(),
+            has_properties_before: false,
+            has_properties_after: false,
+        });
+        if entry.file.contains("above") {
+            let below_id = id.replace("above", "below");
+            manifest.push(OpfItem {
+                id: format!("img_{below_id}"),
+                href: format!(
+                    "{}/{}",
+                    images_dir(entry.image_dir),
+                    entry.file.replace("above", "below")
+                ),
+                media_type: entry.media_type.mime(),
+                properties: String::new(),
+                has_properties_before: false,
+                has_properties_after: false,
+            });
+        }
+    }
+    manifest
+}
+
+/// The shared `style.css`.
+pub(crate) fn style_css(options: &Options) -> String {
+    let view = StyleCss {
+        scribe: options.kindle_scribe_azw3,
+        panel: options.is_kindle && options.panel_view,
+    };
+    view.render().expect("style.css is a static template")
 }
 
 /// The `page-spread-*` property for each spine item (KCC's two-pass algorithm).
@@ -286,44 +286,6 @@ fn page_spread_property(property: &str, options: &Options) -> String {
     }
 }
 
-/// `META-INF/container.xml` for the OEBPS layout.
-pub(crate) fn container_xml() -> String {
-    [
-        "<?xml version=\"1.0\"?>\n",
-        "<container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">\n",
-        "<rootfiles>\n",
-        "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>\n",
-        "</rootfiles>\n",
-        "</container>",
-    ]
-    .concat()
-}
-
-/// The shared `style.css`.
-pub(crate) fn style_css(options: &Options) -> String {
-    let mut css = String::from(
-        "@page {\nmargin: 0;\n}\nbody {\ndisplay: block;\nmargin: 0;\npadding: 0;\n}\n",
-    );
-    if options.kindle_scribe_azw3 {
-        css.push_str("img {\ndisplay: block;\n}\n");
-    }
-    if options.is_kindle && options.panel_view {
-        css.push_str(
-            "#PV {\nposition: absolute;\nwidth: 100%;\nheight: 100%;\ntop: 0;\nleft: 0;\n}\n\
-             #PV-T {\ntop: 0;\nwidth: 100%;\nheight: 50%;\n}\n\
-             #PV-B {\nbottom: 0;\nwidth: 100%;\nheight: 50%;\n}\n\
-             #PV-L {\nleft: 0;\nwidth: 49.5%;\nheight: 100%;\nfloat: left;\n}\n\
-             #PV-R {\nright: 0;\nwidth: 49.5%;\nheight: 100%;\nfloat: right;\n}\n\
-             #PV-TL {\ntop: 0;\nleft: 0;\nwidth: 49.5%;\nheight: 50%;\nfloat: left;\n}\n\
-             #PV-TR {\ntop: 0;\nright: 0;\nwidth: 49.5%;\nheight: 50%;\nfloat: right;\n}\n\
-             #PV-BL {\nbottom: 0;\nleft: 0;\nwidth: 49.5%;\nheight: 50%;\nfloat: left;\n}\n\
-             #PV-BR {\nbottom: 0;\nright: 0;\nwidth: 49.5%;\nheight: 50%;\nfloat: right;\n}\n\
-             .PV-P {\nwidth: 100%;\nheight: 100%;\ntop: 0;\nposition: absolute;\ndisplay: none;\n}\n",
-        );
-    }
-    css
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +342,40 @@ mod tests {
             spread(&["a-kcc-x", "b-kcc-x"], false, "right"),
             vec!["right", "left"]
         );
+    }
+
+    #[test]
+    fn a_scribe_above_page_adds_its_below_image_to_the_manifest() {
+        use crate::ebook::model::{MediaType, OrderClass, PageFlags};
+
+        let entry = PageRef {
+            image_dir: "Chapter 1",
+            file: "kcc-0001-kcc-x-above.jpg",
+            stem: "kcc-0001-kcc-x-above",
+            width: 100,
+            height: 150,
+            flags: PageFlags {
+                order_class: OrderClass::Normal,
+                rotated: false,
+                black_background: false,
+                above: true,
+                below: false,
+            },
+            media_type: MediaType::Jpeg,
+            bytes: &[],
+        };
+
+        let items = manifest_items(&[entry]);
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "page_Images_Chapter 1_kcc-0001-kcc-x-above",
+                "img_Images_Chapter 1_kcc-0001-kcc-x-above",
+                "img_Images_Chapter 1_kcc-0001-kcc-x-below",
+            ]
+        );
+        assert_eq!(items[2].href, "Images/Chapter 1/kcc-0001-kcc-x-below.jpg");
     }
 
     #[test]

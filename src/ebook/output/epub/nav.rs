@@ -4,10 +4,17 @@
 //! or one per `ComicInfo.xml` bookmark when the book carries them. The NCX uses
 //! `<navPoint>`/`<content>`, the NAV carries the same list twice (a `toc` and a
 //! `page-list`), matching KCC's output exactly.
+//!
+//! The document skeletons live in `templates/toc.ncx` and `templates/nav.xhtml`;
+//! this module computes the navigation entries they render (AGENTS.md §5.3).
 
 use std::collections::HashMap;
 
-use super::{html_escape, text_dir, PageRef};
+use askama::Template;
+
+use super::html_escape;
+use super::templates::{Nav, NavEntry, Ncx};
+use super::{text_dir, PageRef};
 
 /// Title for a chapter entry: a bookmark title, the chapter's original basename,
 /// or the book title for the implicit root chapter.
@@ -38,6 +45,36 @@ fn source_path(entry: &PageRef<'_>) -> String {
     format!("{}/{}.xhtml", text_dir(entry.image_dir), entry.stem)
 }
 
+/// The navigation targets shared by the NCX and NAV documents.
+fn nav_entries(
+    entries: &[usize],
+    filelist: &[PageRef<'_>],
+    title: &str,
+    chapter_titles: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+) -> Vec<NavEntry> {
+    let mut out = Vec::with_capacity(entries.len());
+    for &index in entries {
+        let Some(entry) = filelist.get(index) else {
+            continue;
+        };
+        let folder = text_dir(entry.image_dir);
+        let source = source_path(entry);
+        let id = if page_titles.is_empty() {
+            folder.replace('/', "_")
+        } else {
+            source.replace('/', "_")
+        };
+        let entry_title = entry_title(entry, title, chapter_titles, page_titles);
+        out.push(NavEntry {
+            id,
+            title: html_escape(entry_title),
+            source,
+        });
+    }
+    out
+}
+
 /// Build `OEBPS/toc.ncx`.
 pub(crate) fn build_ncx(
     title: &str,
@@ -48,46 +85,15 @@ pub(crate) fn build_ncx(
     language: &str,
     uuid: &str,
 ) -> String {
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str(&format!(
-        "<ncx version=\"2005-1\" xml:lang=\"{language}\" xmlns=\"http://www.daisy.org/z3986/2005/ncx/\">\n"
-    ));
-    out.push_str("<head>\n");
-    out.push_str(&format!(
-        "<meta name=\"dtb:uid\" content=\"urn:uuid:{uuid}\"/>\n"
-    ));
-    out.push_str("<meta name=\"dtb:depth\" content=\"1\"/>\n");
-    out.push_str("<meta name=\"dtb:totalPageCount\" content=\"0\"/>\n");
-    out.push_str("<meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n");
-    out.push_str("<meta name=\"generated\" content=\"true\"/>\n");
-    out.push_str("</head>\n");
-    out.push_str(&format!(
-        "<docTitle><text>{}</text></docTitle>\n",
-        html_escape(title)
-    ));
-    out.push_str("<navMap>\n");
-
-    for &index in entries {
-        let Some(entry) = filelist.get(index) else {
-            continue;
-        };
-        let folder = text_dir(entry.image_dir);
-        let source = source_path(entry);
-        let nav_id = if page_titles.is_empty() {
-            folder.replace('/', "_")
-        } else {
-            source.replace('/', "_")
-        };
-        let entry_title = entry_title(entry, title, chapter_titles, page_titles);
-        out.push_str(&format!(
-            "<navPoint id=\"{nav_id}\"><navLabel><text>{}</text></navLabel><content src=\"{source}\"/></navPoint>\n",
-            html_escape(entry_title)
-        ));
-    }
-
-    out.push_str("</navMap>\n</ncx>");
-    out
+    let navpoints = nav_entries(entries, filelist, title, chapter_titles, page_titles);
+    let escaped_title = html_escape(title);
+    let view = Ncx {
+        title: &escaped_title,
+        language,
+        uuid,
+        navpoints: &navpoints,
+    };
+    view.render().expect("toc.ncx is a static template")
 }
 
 /// Build `OEBPS/nav.xhtml`.
@@ -98,47 +104,11 @@ pub(crate) fn build_nav(
     chapter_titles: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    out.push_str("<!DOCTYPE html>\n");
-    out.push_str(
-        "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\n",
-    );
-    out.push_str("<head>\n");
-    out.push_str(&format!("<title>{}</title>\n", html_escape(title)));
-    out.push_str("<meta charset=\"utf-8\"/>\n");
-    out.push_str("</head>\n");
-    out.push_str("<body>\n");
-
-    let list = |out: &mut String| {
-        for &index in entries {
-            let Some(entry) = filelist.get(index) else {
-                continue;
-            };
-            let entry_title = entry_title(entry, title, chapter_titles, page_titles);
-            out.push_str(&format!(
-                "<li><a href=\"{}\">{}</a></li>\n",
-                source_path(entry),
-                html_escape(entry_title)
-            ));
-        }
+    let entries = nav_entries(entries, filelist, title, chapter_titles, page_titles);
+    let escaped_title = html_escape(title);
+    let view = Nav {
+        title: &escaped_title,
+        entries: &entries,
     };
-
-    // Both the table of contents and the page list carry the same entries, as the
-    // reference writes them.
-    out.push_str(
-        "<nav xmlns:epub=\"http://www.idpf.org/2007/ops\" epub:type=\"toc\" id=\"toc\">\n",
-    );
-    out.push_str("<ol>\n");
-    list(&mut out);
-    out.push_str("</ol>\n");
-    out.push_str("</nav>\n");
-    out.push_str("<nav epub:type=\"page-list\">\n");
-    out.push_str("<ol>\n");
-    list(&mut out);
-    out.push_str("</ol>\n");
-    out.push_str("</nav>\n");
-    out.push_str("</body>\n");
-    out.push_str("</html>");
-    out
+    view.render().expect("nav.xhtml is a static template")
 }
