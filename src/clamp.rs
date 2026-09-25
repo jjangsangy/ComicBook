@@ -84,7 +84,7 @@ fn group_thousands(value: u64) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (idx, ch) in digits.char_indices() {
-        if idx > 0 && (digits.len() - idx) % 3 == 0 {
+        if idx > 0 && (digits.len() - idx).is_multiple_of(3) {
             grouped.push(',');
         }
         grouped.push(ch);

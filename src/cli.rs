@@ -5,11 +5,13 @@ use std::path::PathBuf;
 
 use crate::clamp::{self, Approach};
 use crate::convert;
+use crate::ebook::{self, EbookArgs};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "comic-book",
     version,
+    propagate_version = true,
     about = "Comic book archive conversion and image clamping tool",
     long_about = None
 )]
@@ -53,6 +55,9 @@ pub enum Commands {
         #[arg(short = 'w', long = "workers", default_value_t = num_cpus())]
         workers: usize,
     },
+
+    /// Convert comics into e-book formats (epub, kepub, azw3, mobi, pdf, cbz)
+    Ebook(EbookArgs),
 
     /// Generate shell completion scripts
     #[command(alias = "completion")]
@@ -109,6 +114,7 @@ pub fn run(cli: Cli) -> Result<()> {
             approach,
             workers,
         } => clamp::run_clamp(&input_dir, &output_dir, size_threshold, approach, workers),
+        Commands::Ebook(args) => ebook::run_ebook(args),
         Commands::Completions { shell, shell_flag } => run_completions(shell, shell_flag),
     }
 }

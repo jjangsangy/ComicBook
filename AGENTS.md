@@ -554,7 +554,8 @@ OEBPS/content.opf
 
 ## 13. Decisions and open questions
 
-The two most consequential items are now **resolved** (§13.1). The rest remain open (§13.2).
+The two most consequential items are now **resolved** (§13.1); Phase 0 closed out several
+smaller ones (§13.3). The rest remain open (§13.2).
 
 ### 13.1 Resolved
 
@@ -574,11 +575,35 @@ The two most consequential items are now **resolved** (§13.1). The rest remain 
    add a pure-Rust rasterizer for vector PDFs.
 4. **Memory policy.** Default in-memory vs. spool-to-temp for large inputs; choose the
    spill budget and flag.
-5. **`--mozjpeg`.** Drop or provide an equivalent; recommend drop with a clear message.
+5. **`--mozjpeg` — RESOLVED in Phase 0 (§13.3.1).** Drop with a clear message; no mozjpeg
+   encoder is bundled.
 6. **KFX.** Confirm "EPUB preset only" (KCC behavior) is acceptable.
 7. **Option naming.** Confirm the snake-case renames in §4.2, or preserve KCC spellings.
 8. **Parity testing.** Approve committing KCC-generated reference EPUBs (from our own test
    content) for byte/structure comparison, or restrict to structural assertions.
+
+### 13.3 Phase 0 decisions
+
+1. **`--mozjpeg` — drop with a clear error.** The flag still parses (so KCC command lines
+   don't silently change meaning) but `Options::resolve` rejects it with
+   `--mozjpeg is not supported; use --jpeg-quality to control JPEG output`. No mozjpeg
+   encoder (or `mozjpeg`-equivalent crate) is bundled; JPEG quality is governed solely by
+   `--jpeg-quality`.
+2. **`Profile` value names — exact KCC codes.** `clap::ValueEnum` for `Profile` is
+   hand-implemented over `ALL_PROFILES`/`PROFILE_TABLE` so `--help`, errors and
+   `shell completions` list the canonical codes (`KV`, `KoE`, `RmkPP`, `OTHER`) rather than
+   heck-cased variants; `--profile` sets `ignore_case`, so any casing (e.g. `kv`) is accepted.
+3. **`propagate_version`.** The root `Cli` enables `propagate_version = true`, so
+   `comic-book ebook --version` works (a Phase 0 exit criterion). This also adds `-V` to the
+   other subcommands.
+4. **`--doc-type` replaces `--ebok` (§4.2).** Default `none`; `ebok`/`pdoc` select the
+   EBOK/PDOC tag for Kindle output (§9). `Kepub`/`Azw3` are first-class `Format` values in
+   addition to the KCC set.
+5. **Exit codes.** `clap` command-line usage errors exit `2` (clap's default); any runtime
+   error returned by the pipeline exits `1`. Documented in `src/ebook/mod.rs`.
+6. **Gate hygiene.** Phase 0 also had to fix a pre-existing `clippy::manual_is_multiple_of`
+   lint in `src/clamp.rs` to keep `clippy -D warnings` green under the current toolchain.
+   No behaviour change.
 
 ---
 
@@ -598,11 +623,30 @@ The two most consequential items are now **resolved** (§13.1). The rest remain 
 Each phase ends with `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
 and `cargo test` green on the CI matrix.
 
-### Phase 0 — Scaffolding
+### Phase 0 — Scaffolding (complete)
 - Add `ebook` subcommand to `src/cli.rs` and `pub mod ebook;` to `src/lib.rs`.
 - Skeleton modules per §6 with `Options`, `Format`, `Profile`, `ProfileTable`.
 - Error type/exit-code conventions; progress scaffolding (`indicatif`, headless-safe).
 - **Exit:** `comic-book ebook --help` and `--version` work; `--format`/`--profile` parse.
+
+**Delivered.** `src/ebook/`:
+- `cli.rs` — every option group from §4.2 (Device, Main, Processing, Output, Custom profile).
+- `options.rs` — `Format`, `DocType`, `BorderColor`, and `Options::resolve` (the
+  `checkOptions` port: `Auto`/preset expansion, panel-view gating, custom geometry,
+  per-device JPEG quality, Scribe width cap, KDX CBZ height, non-Kindle MOBI rejection).
+- `profiles.rs` — `Profile` (41 devices), `ProfileEntry`/`PROFILE_TABLE`, `PALETTE4/15/16`,
+  `DeviceKind`, `ProfileData`.
+- `model.rs` — `ComicTree`/`Chapter`/`Page`/`PageFlags`/`Background`/`OrderClass`/
+  `CoverSource` (§10).
+- `progress.rs` — terminal-safe indicatif bars (hidden when not a TTY or
+  `COMIC_BOOK_QUIET` is set).
+- Documented skeletons, tagged with their phase, for `input/*`, `processing/*`,
+  `output/**`, `metadata.rs`, `naming.rs`, `chunk.rs`.
+
+`run_ebook` resolves options and returns a clear "not implemented yet" error until the
+processing/output pipeline lands. Tests: `tests/ebook_tests.rs` (clap `debug_assert`,
+format/profile parsing incl. case-insensitivity, profile-table consistency, option
+resolution across profiles). Decisions recorded in §13.3.
 
 ### Phase 1 — Input adapters + model
 - `ComicTree`/`Chapter`/`Page`; archive adapter over `crate::archive` preserving chapters.
