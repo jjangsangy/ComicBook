@@ -77,7 +77,9 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
     };
     let (width, height) = page.image.dimensions();
     Ok(vec![EncodedPage {
-        name: output_name(&page.source_name, OrderClass::Normal, media_type),
+        // Under `--no-processing` KCC never runs `ComicPage`, so the sanitized
+        // name keeps no `-kcc-x` order suffix (AGENTS.md §13.8.3).
+        name: unsuffixed_name(&page.source_name, media_type),
         order_class: OrderClass::Normal,
         media_type,
         bytes,
@@ -943,6 +945,16 @@ fn encodable(image: &DynamicImage) -> std::borrow::Cow<'_, DynamicImage> {
 /// The output file name for a payload, keeping the source directory and adding
 /// the `-kcc-<order>` suffix (AGENTS.md §10).
 fn output_name(source_name: &str, order: OrderClass, media_type: MediaType) -> String {
+    named_page(source_name, media_type, Some(order))
+}
+
+/// The output file name for a `--no-processing` page: the sanitized name alone.
+fn unsuffixed_name(source_name: &str, media_type: MediaType) -> String {
+    named_page(source_name, media_type, None)
+}
+
+/// Build a page name from a source path, media type and optional order suffix.
+fn named_page(source_name: &str, media_type: MediaType, order: Option<OrderClass>) -> String {
     let (directory, file_name) = match source_name.rsplit_once('/') {
         Some((directory, file_name)) => (Some(directory), file_name),
         None => (None, source_name),
@@ -951,7 +963,10 @@ fn output_name(source_name: &str, order: OrderClass, media_type: MediaType) -> S
         Some((stem, _)) if !stem.is_empty() => stem,
         _ => file_name,
     };
-    let name = format!("{stem}-kcc-{}.{}", order.suffix(), media_type.extension());
+    let name = match order {
+        Some(order) => format!("{stem}-kcc-{}.{}", order.suffix(), media_type.extension()),
+        None => format!("{stem}.{}", media_type.extension()),
+    };
     match directory {
         Some(directory) => format!("{directory}/{name}"),
         None => name,

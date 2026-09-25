@@ -464,6 +464,13 @@ dependency was taken: the remaining Phase R swaps either use a crate already pre
 (`image`, `imageproc`) or std (`f64::round_ties_even`). The `remove_dir_all`/`dircpy`/
 `thousands` candidates were deliberately not adopted (see §15 Phase R and §13.7).
 
+**Added in Phase 4.** `quick-xml = "0.37"` (MIT, pure Rust) for `ComicInfo.xml` parsing;
+`slug = "0.1"` (MIT, pulls `deunicode`) for chapter-directory slugification; and `regex =
+"1"` (MIT, already in the tree transitively via `unrar`) for KCC's two number-padding
+substitutions and its `\W+` Kobo filename rule. No crate reproduces `python-slugify`'s
+option set, so `slug` supplies the transliteration/collapse step and the KCC-specific
+padding is layered on top (§13.8.1).
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -866,6 +873,50 @@ the safety net the swaps rely on.
    `trim_histogram_ends`, `binarize`, `fill_rect`, `pack_indices` (byte-identical `bitvec`
    output across 1/2/4/8-bit), and `is_os_metadata`.
 
+### 13.8 Phase 4 decisions
+
+1. **Slugification uses the `slug` crate, not a `python-slugify` reimplementation.** KCC
+   calls `python-slugify` with a custom `regex_pattern` that also preserves `_` and `.`;
+   `generic slug ::slugify` collapses every non-alphanumeric run (so `_`/`.` become `-`). This
+   is the one intentional deviation from the reference. It is accepted because no maintained
+   crate reproduces `python-slugify`'s option set (§5.3) and the affected characters are not
+   device-sensitive — the pinned properties (ASCII output, zero-padded numbers, the `-kcc-x`
+   page suffixes) are all preserved. The KCC-specific shortcuts are layered on top: the CBZ
+   pass-through for a naturally ordered tree and the two-step zero-padding
+   (`re.sub(r'([0-9]+)', r'0000\1', …, count=2)` then `re.sub(r'0*([0-9]{4,})', r'\1', …)`),
+   implemented with `regex` and pinned by unit tests.
+2. **`ComicInfo.xml` is parsed leniently where KCC crashes.** `metadata.MetadataParser`
+   dereferences `firstChild.nodeValue` unconditionally, so an empty `<Series/>` (or any
+   unescaped element) raises, and `getMetadata` then **discards all metadata**. This port
+   treats a missing text node as an empty string instead. A genuinely malformed document (an
+   unparseable `Page/@Image`, or invalid XML) is still ignored wholesale, matching the
+   reference's `except Exception` path; `resolve` never fails on bad metadata. Both behaviours
+   are covered by tests.
+3. **`--no-processing` names have no order suffix.** `sanitizeTree` runs before the
+   processing stage regardless of `-n`, but with `-n` KCC never constructs a `ComicPage`, so
+   the `-kcc-x` suffix is never appended: pages are emitted as `kcc-NNNN.ext`. The Phase 2
+   passthrough is adjusted to match (`page.rs::unsuffixed_name`), and pinned by
+   `tests/ebook_processing_tests.rs`.
+4. **`naming::sanitize_tree` mutates the tree in place.** Chapter directory paths are
+   slugified component by component (with per-parent natural-sortedness and the `A`-suffix
+   collision rule) and pages are renumbered `kcc-NNNN` globally in pre-order, exactly as
+   `sanitizeTree` does on disk. The `Page::source_name`/`Chapter::name` fields therefore hold
+   the *output* layout after this step; the output builders consume them directly.
+5. **`getOutputFilename` is ported for file output only.** KCC's `-f FOLDER`
+   (`options.folder_output`/`skip_zip`) is not in the §4.3 format set, so that branch is
+   absent. The KePub extension keys off the resolved `options.kepub` flag (true for
+   Kobo-brand EPUB without `--no-kepub`, and for the explicit `-f kepub` this port adds)
+   rather than re-testing the profile. Output paths are made absolute with
+   `std::path::absolute`, mirroring `os.path.abspath`.
+6. **`Covers/` selection reproduces KCC's index rule.** The source's position among the
+   same-extension sibling files (excluding `_kcc` copies) selects the same-index image from
+   `Covers/`, natural-sorted; a missing directory, an absent source, or too few covers yields
+   no override. `--file-fusion`'s `fusion_cover_path` (Phase 9) is not wired yet.
+7. **`prepare_book` is the Phase 4 seam.** `ebook::prepare_book` composes
+   `input::load_tree` → `metadata::resolve` → `naming::sanitize_tree` → `naming::select_cover`
+   into the `PreparedBook` the output builders will consume in Phase 5 (KCC's `makeBook`
+   pre-output half). `run_ebook` still stops at the "output not implemented" error.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -981,11 +1032,31 @@ backgrounds, crop caps) and `tests/ebook_crop_tests.rs` (9 tests) which asserts 
 and row/column removals on committed fixtures, plus end-to-end `process_tree` checks for the
 page-number crop, the inter-panel pass and `--erase-rainbow`. Decisions recorded in §13.6.
 
-### Phase 4 — Metadata & naming
+### Phase 4 — Metadata & naming (complete)
 - ComicInfo parse → title/authors/series/volume/number/summary/bookmarks; `--metadata-title`;
   naming/slugify; output filename resolution incl. KEPUB and `_kcc<N>` collisions; cover pick
   incl. `Covers/`.
 - **Exit:** metadata unit tests; filename tests for all formats.
+
+**Delivered.** `src/ebook/`:
+- `metadata.rs` — `ComicInfo` (the `MetadataParser` port) with a `quick-xml` pull-parse that
+  matches elements by local name at any depth, and `resolve` (the `getMetadata` port) folding
+  the ComicInfo with `--title`/`--author`/`--metadata-title`/`--keep-comicinfo` into a
+  `BookMetadata`. People are de-duplicated and sorted; volume/number are `zfill`ed; a
+  malformed document is ignored exactly as KCC discards it.
+- `naming.rs` — `slugify` (the `slug` crate plus KCC's zero-padding and CBZ pass-through),
+  `sanitize_tree` (chapter slugification with per-parent natural-sortedness and the `A`-suffix
+  collision rule, global `kcc-NNNN` page numbering, cover capture), `output_filename` (the
+  full `getOutputFilename`, including the `.kepub.epub` extension and the `_kcc<N>` /
+  `.mobi`-collision counters), and `select_cover` (the sibling `Covers/` index rule).
+- `mod.rs` — `PreparedBook`/`prepare_book`, the Phase 5 seam.
+- `processing/page.rs` — `--no-processing` now emits the sanitized name without the `-kcc-x`
+  suffix (§13.8.3).
+
+Tests: unit tests in `metadata.rs`/`naming.rs`, `tests/ebook_naming_tests.rs` (17 tests —
+chapter/page renaming, zero-padding per format, slug collisions, archive/folder parity,
+filename resolution across formats/flags/collisions/covers) and a `--no-processing` naming
+check in `tests/ebook_processing_tests.rs`. Decisions recorded in §13.8.
 
 ### Phase 5 — EPUB/KEPUB (first shippable output)
 - XHTML, NCX, NAV, OPF (incl. spread algorithm), container, style, panel-view markup, zip
@@ -1107,8 +1178,12 @@ reproduces; a swap would silently change output, so they stay (and stay document
 **Do not repeat the mistake in later phases.** Phases not yet written must reach for a crate
 first (§5.3). Concretely:
 
-- `naming.rs` (Phase 4) slugs and filenames → `slug` + `deunicode` + `sanitize-filename`.
-- `metadata.rs` (Phase 4) ComicInfo XML → `quick-xml`.
+- `naming.rs` (Phase 4) slugs and filenames → **done**: `slug` (+ `regex` for the two
+  padding substitutions and the `\W+` Kobo rule); `deunicode` arrived transitively via `slug`.
+  `sanitize-filename` was not needed — KCC only rewrites names through the slug rule and the
+  `\W+`→`_` Kobo rule, both of which are reproduced. `python-slugify`'s custom `_`/`.` class
+  is the one documented deviation (§13.8.1).
+- `metadata.rs` (Phase 4) ComicInfo XML → **done**: `quick-xml`.
 - `output/epub/*` (Phase 5) → evaluate the `epub` crate before hand-writing OPF/NCX/NAV; if it
   cannot emit KCC's fixed layout (§5.2), fall back to `zip` + `quick-xml` as §5.3 says.
 - `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `lopdf` / `pdf-render` (§7).
@@ -1226,6 +1301,10 @@ Deliberately avoided: `pdfium-render`/`mupdf` (pull platform binaries — violat
 in the tree via `quantette`, promoted to a direct dependency (§7, §13.7.1). `remove_dir_all`,
 `dircpy`/`fs_extra` and `thousands`/`num-format` were considered for the trivial bespoke
 helpers in `clamp.rs`/`archive::path` and deliberately **not** added (§13.7.3).
+
+**Adopted in Phase 4.** `quick-xml = "0.37"` (MIT) for ComicInfo parsing; `slug = "0.1"` (MIT,
++ `deunicode`) for chapter slugification; `regex = "1"` (MIT, already transitive via `unrar`)
+for the KCC number-padding and `\W+` rules. See §7 and §13.8.1.
 
 **Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
 EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our

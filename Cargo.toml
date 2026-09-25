@@ -40,6 +40,15 @@ rustfft = "6"
 # Sub-byte PNG scanline packing for palette pages (AGENTS.md §15, Phase R). Already
 # in the tree transitively via `quantette`; promoted to a direct dependency.
 bitvec = "1"
+# Phase 4: `ComicInfo.xml` parsing (AGENTS.md §7/§13.8). MIT, pure Rust.
+quick-xml = "0.37"
+# Phase 4: chapter-directory slugification (AGENTS.md §15, Phase R). `slug`
+# transliterates Unicode to ASCII and collapses disallowed runs to single dashes,
+# matching KCC's `python-slugify` call for the ASCII-alphanumeric case §13.8.1.
+slug = "0.1"
+# Phase 4: KCC's two number-padding substitutions in `slugify`. Already in the
+# tree transitively via `unrar`; promoted to a direct dependency.
+regex = "1"
 
 [dev-dependencies]
 libc = "0.2"

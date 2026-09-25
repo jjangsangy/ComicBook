@@ -140,3 +140,28 @@ fn no_processing_copies_source_bytes_verbatim() {
     assert_eq!(pages[0].order_class, OrderClass::Normal);
     assert_eq!(pages[0].bytes, pristine, "the source bytes are untouched");
 }
+
+#[test]
+fn no_processing_keeps_the_sanitized_name() {
+    std::env::set_var(comic_book::ebook::progress::QUIET_ENV, "1");
+
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("source");
+    write_png(&source.join("01-page.png"), 100, 150, [10, 10, 10]);
+
+    let archive = tmp.path().join("book.cbz");
+    compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
+
+    let options = options(&["-p", "KoE", "--no-processing"]);
+    let mut tree = load_tree(&archive).unwrap();
+    comic_book::ebook::naming::sanitize_tree(&mut tree, &options);
+    let book = process_tree(&mut tree, &options).unwrap();
+
+    let names: Vec<&str> = book
+        .chapters
+        .iter()
+        .flat_map(|chapter| chapter.pages.iter().map(|page| page.name.as_str()))
+        .collect();
+    // `--no-processing` emits the sanitized name without an order suffix.
+    assert_eq!(names, vec!["kcc-0001.png"]);
+}
