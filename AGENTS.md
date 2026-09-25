@@ -262,14 +262,41 @@ The fixed-layout XHTML/OPF/NCX/NAV that KCC emits and the MOBI that `kindlegen` 
 viewport meta, spread properties, EXTH/`doc-type` behavior). Optimize the *code that builds
 them*, not the document format. Any intentional deviation must be called out and tested.
 
-### 5.3 Dependencies instead of reimplementation where it is safer
+### 5.3 Prefer off-the-shelf solutions — do not reinvent the wheel
+
+This repo has to stay **maintainable**. Code we write, we own: we have to debug it, test it,
+keep it correct as inputs change, and carry it forever. A maintained crate is somebody
+else's problem, is battle-tested in the wild, and can be upgraded. **Default to an existing
+library; only write our own implementation when there is a concrete reason that a library
+cannot be used.** This is a hard default, not a suggestion.
+
+Before hand-rolling anything, check (in order):
+
+1. Does an existing dependency (§7 *Existing*) already do it? Reuse it rather than adding a
+   new crate or writing code.
+2. Does a maintained, well-licensed crate do it? Prefer it, even if the API is not a perfect
+   fit — a thin adapter is cheaper to own than the algorithm.
+3. Only then write bespoke code, and say why in the PR/commit: no suitable crate exists, the
+   crate is unmaintained or incompatible with §7's licence/self-contained rules, its output
+   cannot be pinned to KCC's format (§5.2), or the need is genuinely trivial (a few lines).
+
+The clean-room requirement (§5.4) is *not* a licence to hand-roll: it means we must not copy
+KCC's GPL source, not that we must avoid libraries. Where a crate can supply the behaviour,
+use the crate. **Phase R** (§15) tracks the concrete follow-ups of applying this retroactively
+to code already committed.
+
+Decisions already taken under this policy:
 
 - **MOBI/AZW3 encoding → `kindling-mobi`** (MIT, pure Rust, cross-platform, explicitly a
   kindlegen replacement with comic/fixed-layout support). Replaces `kindlegen` +
   `dualmetafix` + tool detection. **Decision (see §13.1/§13.2): `kindling` is an accepted
   hard dependency; we do not shell out to any external tool or sister binary.**
-- **EPUB/KEPUB packaging** → hand-written to match KCC's layout (small, well-understood);
-  do not pull a heavy EPUB framework unless it proves necessary.
+- **Image primitives → `image`, `fast_image_resize`, `imageproc`, `quantette`, `png`,
+  `rustfft`** rather than bespoke pixel loops (Phases 2–3, §7).
+- **EPUB/KEPUB packaging** → hand-written for now. This is the one place we do own the writer,
+  because the emitted layout must match KCC byte-for-byte-ish (§5.2) and no crate offers
+  that control; if a suitable crate appears, prefer it. Even here, use a zip writer
+  (`zip`/`flate2`) and an XML writer (`quick-xml`) rather than hand-assembling bytes.
 
 ### 5.4 Clean-room re-implementation of KCC behaviour (do NOT copy source)
 
@@ -388,6 +415,10 @@ Reuse (no change): `crate::archive` (`detect_archive_kind`, `ArchiveReader`,
 ---
 
 ## 7. Dependencies
+
+**Policy (§5.3):** before writing new code, check this table and crates.io — prefer an
+existing maintained crate over a hand-rolled implementation, and reuse an already-present
+dependency over adding a new one.
 
 Existing (reuse): `clap`, `clap_complete`, `image`, `zip`, `tar`, `sevenz-rust2`, `unrar`,
 `rars`, `rayon`, `indicatif`, `natord`, `anyhow`, `tempfile`, `fast_image_resize`, `webp`,
@@ -812,6 +843,9 @@ smaller ones (§13.3). The rest remain open (§13.2).
 Each phase ends with `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
 and `cargo test` green on the CI matrix.
 
+Side phases (currently **Phase R**, below) are not milestones and may be worked alongside any
+feature phase.
+
 ### Phase 0 — Scaffolding (complete)
 - Add `ebook` subcommand to `src/cli.rs` and `pub mod ebook;` to `src/lib.rs`.
 - Skeleton modules per §6 with `Options`, `Format`, `Profile`, `ProfileTable`.
@@ -955,6 +989,88 @@ page-number crop, the inter-panel pass and `--erase-rainbow`. Decisions recorded
 - Fuzz/robustness on malformed archives; large-book memory test; cross-platform verification;
   update README and this document; bump version.
 
+### Phase R — Off-the-shelf refactor (side phase, no fixed position)
+
+The standing follow-up to §5.3: replace code we hand-rolled with an existing maintained crate
+wherever the output is **not** pinned to KCC (§5.2). This is not a milestone; pick items up
+alongside any feature phase, and prefer doing the naming/metadata items **before Phase 4
+starts**, so those modules are written against a crate rather than reimplemented first.
+
+Each change is its own behaviour-preserving commit; the corresponding unit/fixture tests from
+Phases 1–3 are the safety net. Anything below that turns out to be parity-locked (§5.2) is
+*not* swapped — it is documented instead, so the next reader does not re-litigate it.
+
+**A. Clear wins — the dependency already ships the function.** No fixture risk; pure deletions.
+
+| Where | Hand-rolled today | Use instead | Note |
+|:---|:---|:---|:---|
+| `crop.rs::blank` | manual `vec![Subpixel::DEFAULT_MIN_VALUE]` image buffer | `image::ImageBuffer::new` | the `image` crate builds exactly this buffer |
+| `crop.rs::blit` | manual clipped pixel copy | `image::imageops::replace` | the same call is already used in `page.rs::maximize_strips` / `pad`; verify the negative-offset clipping |
+| `crop.rs::round_half_even` | manual floor/fraction half-to-even | `f64::round_ties_even()` (std) | stable since Rust 1.77; nothing to depend on |
+| `crop.rs::binarize` | manual `value <= threshold` map | `imageproc::contrast::threshold` + `invert` | `imageproc` is already a dependency |
+| `crop.rs::fill_rect` | manual nested-loop fill | `imageproc::drawing::draw_filled_rect_mut` | |
+| `page.rs::dynamic_color_type` | manual match over every `DynamicImage` variant | `ExtendedColorType::from(image.color())` | `DynamicImage::color()` already returns the right `ColorType` |
+| `clamp.rs::remove_dir_all_force` | hand-rolled Windows read-only walk | `remove_dir_all` crate (or `fs_extra::dir::remove`) | that crate exists for exactly this Windows case |
+| `archive/path.rs::copy_dir_all` | recursive `fs::read_dir` + `fs::copy` | `fs_extra::dir::copy` or `dircpy` | used by the same-format directory fast path in `archive/ops.rs` |
+| `clamp.rs::group_thousands` | manual 3-digit grouping | `num-format` or `thousands` | user-facing message only |
+| `page.rs::pack_indices` | manual sub-byte bit packing | `bitvec` (already in the tree transitively via `quantette`) | trivial, but promoting the existing dep beats new code |
+
+**B. Evaluate for a crate swap.** A maintained crate covers this, but the output is pinned to
+KCC/Pillow, so each swap must be validated against the committed fixtures
+(`tests/ebook_crop_tests.rs`, `tests/ebook_processing_tests.rs`) and the module unit tests
+before the hand-rolled code is deleted. If a crate cannot reproduce the pinned behaviour, keep
+ours and record why.
+
+| Where | Hand-rolled today | Candidate | Validation required |
+|:---|:---|:---|:---|
+| `page.rs::fit` / `contain_size` / `pad` / `resize_image` | Pillow `ImageOps` geometry layered on `fast_image_resize` | `fast_image_resize`'s `fit_into_destination` + `CropBox` (already a dep) | rounding must match Pillow |
+| `crop.rs::box_blur_1` | horizontal + vertical 3-tap, rounded per pass | `imageproc::filter::box_blur` | imageproc normalises/edges differently; only if crop boxes stay identical (§13.6.3) |
+| `crop.rs::autocontrast_cutoff` | histogram trim + truncated LUT | `imageproc::contrast` covers the `cutoff = 0` case only | must match Pillow's 1 % drop |
+| `color.rs::rgb_to_ycbcr` / `ycbcr_to_rgb` / `luma601` and `rainbow.rs::rgb_to_yuv` / `yuv_to_rgb` | four hand-written colour matrices | `palette` (already transitive via `quantette`) | coefficients must stay JFIF/Rec. 601 (§13.5.2); pinned by the `color.rs` tests |
+| `rainbow.rs::forward` / `inverse` | 2-D FFT composed from `rustfft` rows + columns | `ndrustfft` (or `realfft`) | must keep the full-spectrum attenuation semantics (§13.6.6) |
+| `crop.rs::count_nonzero`, `color.rs::chroma_histograms`, `crop.rs::autocontrast_cutoff`, `page.rs::black_point` | hand-written 256-bin histogram loops | `imageproc::stats::histogram` | binning can come from the crate; the trim/cutoff logic is KCC-specific |
+| `interpanel.rs::keep_lines` | manual row/column compaction over raw buffers | `image` / `ndarray` indexing | must preserve pixel type and the exact removed-line set |
+| `archive/path.rs::normalize_archive_path` / `safe_join` | manual segment loop trimming, dropping `.`/`..`, stripping drive letters | `normalize-path` / `path-clean`, composed with `std::path` | archive-entry hygiene is deliberate; drive by the archive + input tests |
+| `input/archive.rs::strip_common_root` | manual first-segment common-prefix scan | `common-path` (`common_path`) | must reproduce the "single redundant root" rule (§13.4.4) |
+| `archive/path.rs::is_matching_root` (`normalize`) | manual alphanumeric filter + lowercase | `deunicode` | only matters for non-ASCII roots |
+
+**C. Consolidate duplicates** (internal duplication, not a crate gap):
+
+| Where | Problem | Action |
+|:---|:---|:---|
+| `archive/path.rs::is_os_metadata` vs `input/archive.rs::is_junk_entry` | two junk-`dot_clean` predicates with slightly different matching | unify into one shared helper |
+| `crop.rs::bbox_nonzero` vs `fill.rs::bounding_box` | the same non-zero bounding-box scan written twice | unify on the predicate form in `fill.rs` |
+| `color.rs::histograms_cutoff` vs `crop.rs::autocontrast_cutoff` | the same "drop N % from each histogram end" loop written twice | one shared histogram-trim helper |
+| `image_ops.rs::is_image_extension` / `is_image_file` vs `input/archive.rs::is_ebook_image` / `image_extension` | two extension taxonomies | one shared extension helper |
+| `page.rs::resize_luma` / `resize_rgb` / `resize_rgba` | three near-identical `fast_image_resize` wrappers | one generic helper |
+| `clamp.rs` / `convert.rs` inline `ProgressStyle` vs `ebook/progress.rs` | progress styling built in three places | route them through `ebook/progress.rs` |
+
+**D. Keep — irreproducible reference behaviour.** These encode KCC/Pillow quirks no crate
+reproduces; a swap would silently change output, so they stay (and stay documented):
+
+| Where | Why it stays hand-rolled |
+|:---|:---|
+| `crop.rs::group_close_values` / `merge_boxes` | KCC's value-drop and restart-after-merge semantics are load-bearing (§13.6.4–5) |
+| `crop.rs::ignore_pixels_near_edge`, `clamp_bbox`, `page_number_bbox` | KCC's crop heuristics and their off-by-design edge cases |
+| `page.rs::resize_method` / `split_check` / `bisect` / `maximize_strips` / `rotate_*` | KCC's spread/rotate decisions |
+| `clamp.rs::split_image_iterative` | an app feature, not a solved problem |
+| `archive/formats/*` wrappers | thin adapters over `zip`/`tar`/`sevenz-rust2`/`unrar`/`rars` |
+
+**Do not repeat the mistake in later phases.** Phases not yet written must reach for a crate
+first (§5.3). Concretely:
+
+- `naming.rs` (Phase 4) slugs and filenames → `slug` + `deunicode` + `sanitize-filename`.
+- `metadata.rs` (Phase 4) ComicInfo XML → `quick-xml`.
+- `output/epub/*` (Phase 5) → evaluate the `epub` crate before hand-writing OPF/NCX/NAV; if it
+  cannot emit KCC's fixed layout (§5.2), fall back to `zip` + `quick-xml` as §5.3 says.
+- `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `lopdf` / `pdf-render` (§7).
+
+- **Exit:** every swap/consolidation is a separate no-behaviour-change commit that keeps
+  `cargo test` (including `tests/ebook_crop_tests.rs` and `tests/ebook_processing_tests.rs`)
+  and `clippy -D warnings` green; new direct deps pass the §7/§18 licence and pure-Rust checks;
+  §7 and §20.3 record what was adopted, and each deliberately-kept item carries a comment
+  pointing at §5.3 so it is not "fixed" later.
+
 ---
 
 ## 16. Testing & validation strategy
@@ -1013,6 +1129,8 @@ page-number crop, the inter-panel pass and `--erase-rainbow`. Decisions recorded
 - No external programs are invoked or required; works offline on all three OSes.
 - The full option set in §4 is implemented with KCC-equivalent semantics.
 - The vision in §1 (self-contained, cross-platform, no GUI/Kindle-device code) holds.
+- New behaviour reuses an existing maintained crate where one fits; any hand-rolled
+  component is justified against the policy in §5.3.
 - Tests, clippy, fmt pass on CI; docs updated; this AGENTS.md kept current.
 
 ---
