@@ -2,8 +2,9 @@
 //!
 //! This is a clean-room Rust port of KCC's `kcc-c2e` pipeline (see `AGENTS.md`).
 //! Phase 0 provides the command-line surface, the device-profile tables, option
-//! resolution and progress scaffolding; the conversion stages are added by the
-//! phases that follow.
+//! resolution and progress scaffolding; Phase 1 adds the input adapters
+//! ([`input`]) that decode archives/folders into a [`ComicTree`]. The remaining
+//! conversion stages are added by the phases that follow.
 //!
 //! # Exit codes
 //!
@@ -33,10 +34,11 @@ use anyhow::{bail, Result};
 pub fn run_ebook(args: EbookArgs) -> Result<()> {
     let options = Options::resolve(&args)?;
 
-    // Phase 0 scaffolding: argument parsing and option resolution are complete,
-    // but the processing/output pipeline lands in later phases (AGENTS.md §15).
+    // Phases 0-1 are in place (CLI, option resolution, input adapters); the
+    // processing/output pipeline lands in later phases (AGENTS.md §15).
     bail!(
-        "`comic-book ebook` is not implemented yet (Phase 0 scaffolding only).\n\
+        "`comic-book ebook` is not implemented yet: parsing, option resolution and \
+         source loading are in place, but image processing and output land in later phases.\n\
          Parsed {} input(s); profile {} [{}x{}]; format {:?}.",
         options.inputs.len(),
         options.profile_data.name,

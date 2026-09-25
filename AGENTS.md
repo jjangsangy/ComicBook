@@ -288,6 +288,51 @@ Contributors must not paste GPL code, comments, or identifiers from those files 
 repo. When in doubt, write the implementation from the described behaviour and a test that
 pins it.
 
+### 5.5 Attribution and licence compliance
+
+This repo ships under the **MIT** licence (`LICENSE`). The `comic-book ebook` command is an
+independent, clean-room reimplementation of KCC's `kcc-c2e` behaviour (§5.4): no KCC source
+is copied into this repo, and MOBI/AZW3 encoding is delegated to the separate MIT
+`kindling` crate (§9).
+
+KCC itself (Kindle Comic Converter) is distributed under the **ISC** licence, which permits
+reuse provided its copyright and permission notice is retained in all copies and
+substantial portions. Even though we reimplement rather than copy, the design is derived
+from studying KCC and the emitted document formats (§5.2) intentionally match it, so we
+honour KCC's notice:
+
+- Keep the notice below alongside the project (README and/or a `NOTICE` / `ATTRIBUTIONS`
+  file) and in any distribution that ships the KCC-derived pipeline or format-compatible
+  output.
+- Never copy from `image.py` / `dualmetafix.py`, which carry GPL-3 headers — see §5.4.
+- Third-party dependencies keep their own licences; verify each new crate's licence before
+  adding it (§7, §18).
+
+KCC's licence notice (`kcc/LICENSE.txt`), reproduced verbatim:
+
+```text
+ISC LICENSE
+
+Copyright (c) 2012-2025 Ciro Mattia Gonano <ciromattia@gmail.com>
+Copyright (c) 2013-2019 Paweł Jastrzębski <pawelj@iosphe.re>
+Copyright (c) 2021-2023 Darodi (https://github.com/darodi)
+Copyright (c) 2023-2025 Alex Xu (https://github.com/axu2)
+
+Permission to use, copy, modify, and/or distribute this software for
+any purpose with or without fee is hereby granted, provided that the
+above copyright notice and this permission notice appear in all
+copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL
+WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA
+OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
+
 ---
 
 ## 6. Proposed Rust module architecture
@@ -445,11 +490,15 @@ KFX-oriented flags) — no KFX encoder needed.
 ## 10. Data model
 
 ```rust
-struct ComicTree { chapters: Vec<Chapter>, cover: Option<CoverSource> }
-struct Chapter { name: String, pages: Vec<Page> }        // name = source dir (pre-slug)
+struct ComicTree {
+    chapters: Vec<Chapter>,
+    cover: Option<CoverSource>,
+    comicinfo: Option<Vec<u8>>,     // raw discovered ComicInfo.xml, if any
+}
+struct Chapter { name: String, pages: Vec<Page> }  // name = image-root-relative dir path ("" = root)
 struct Page {
-    source_name: String,          // original archive entry / path
-    rel_path: String,             // chapter-relative
+    source_name: String,          // book-relative source path (root dir stripped)
+    rel_path: String,             // chapter-relative file name
     image: DynamicImage,          // decoded (dimensions + pixels)
     background: Background,       // White | Black
     flags: PageFlags,             // Rotated, BlackBackground, Above/Below, OrderClass
@@ -457,6 +506,12 @@ struct Page {
 enum Background { White, Black }
 enum OrderClass { Normal, RotateFirst, RotateLast, SplitLeft, SplitRight }
 ```
+
+`Chapter::name` is the directory path relative to the image root (`""` for pages that sit
+directly in the root, `"Chapter 1"`, `"Chapter 1/Sub"`, …); output slugifies each path
+component. `Page::source_name` is the path within the book after an archive's redundant
+single root directory has been stripped, so equivalent CBZ/folder inputs produce the same
+value (see §13.4).
 
 `processing` turns each `Page` into one or more `EncodedPage { name, bytes, width, height,
 media_type, order_class, flags }`. The tree then feeds chunking and output builders.
@@ -605,6 +660,35 @@ smaller ones (§13.3). The rest remain open (§13.2).
    lint in `src/clamp.rs` to keep `clippy -D warnings` green under the current toolchain.
    No behaviour change.
 
+### 13.4 Phase 1 decisions
+
+1. **`ComicTree` gains a `comicinfo` field.** The loader retains the raw `ComicInfo.xml`
+   bytes it discovers (rather than re-reading the source later), so `--keep-comicinfo` can
+   round-trip it and the Phase 4 metadata pass parses on demand (§10).
+2. **`Chapter::name` is the image-root-relative directory path** (`""` for the root chapter,
+   `"Chapter 1/Sub"` for nested directories), and each page records its chapter-relative
+   file name. This preserves arbitrarily nested chapter structure and lets Phase 4 slugify
+   level by level, matching KCC's per-directory `sanitizeTree`.
+3. **`Page::source_name` is book-relative.** KCC keeps the original archive entry, but the
+   original differs between equivalent archive and folder inputs (an archive gets its single
+   root folder flattened; a folder source is copied verbatim). Storing the post-strip path
+   makes the two load into byte-identical trees, which is Phase 1's exit criterion.
+4. **Archive-vs-folder flattening parity.** A single redundant root directory is stripped
+   only for archive sources, matching KCC's `getWorkFolder` (folders keep their own layout
+   because they are already relative to the selected directory). Fixtures that must load
+   identically across formats therefore avoid a wrapper directory when the folder source is
+   also compared.
+5. **Junk filtering.** `._*`, `.DS_Store`, `Thumbs.db` and `__MACOSX/` entries are skipped
+   before decoding (KCC's `dot_clean`), so AppleDouble sidecars never reach the image decoder.
+6. **Image extensions follow KCC's `shared.IMAGE_TYPES` minus `.jp2`/`.avif`**
+   (`.png/.jpg/.jpeg/.gif/.webp`) rather than the wider `image_ops::IMG_EXTENSIONS`, so
+   `.bmp`/`.tiff` pages are dropped exactly as KCC drops them. `.jp2`/`.avif` have no decoder
+   in the current pure-Rust dependency set, so they are ignored like any other non-image
+   instead of aborting the conversion.
+7. **Ordering is case-insensitive natural sort.** Pages within a chapter and sibling chapter
+   directories are ordered with a component-wise natural comparison (`natord`), reproducing
+   KCC's `walkSort`/`os_sorted` pre-order walk (`"" < "A" < "A/B" < "B"`).
+
 ---
 
 ## 14. Performance & memory goals
@@ -648,11 +732,28 @@ processing/output pipeline lands. Tests: `tests/ebook_tests.rs` (clap `debug_ass
 format/profile parsing incl. case-insensitivity, profile-table consistency, option
 resolution across profiles). Decisions recorded in §13.3.
 
-### Phase 1 — Input adapters + model
+### Phase 1 — Input adapters + model (complete)
 - `ComicTree`/`Chapter`/`Page`; archive adapter over `crate::archive` preserving chapters.
 - ComicInfo discovery; natural sort of pages/chapters.
 - **Exit:** a fixture CBZ/CBR/CB7/CBT/folder all load into an identical tree with correct
   page order and chapter structure.
+
+**Delivered.** `src/ebook/input/`:
+- `mod.rs` — `load_tree(source)` and `detect_source_kind` classify a path as an archive/
+  folder, an EPUB or a PDF (extension-first, so an EPUB's ZIP payload is not mistaken for a
+  CBZ), then dispatch to the matching adapter.
+- `archive.rs` — `archive::load(source, kind)` streams entries through
+  `crate::archive::open_reader` and decodes images straight into a `ComicTree`: drops
+  non-images and OS junk, strips a single redundant archive root directory, groups pages
+  into chapters and orders both naturally (case-insensitive), and captures `ComicInfo.xml`.
+- `epub.rs`/`pdf.rs` — clearly-tagged Phase 11 stubs that fail with a "not implemented yet"
+  error rather than silently mis-handling the input.
+
+`model.rs` gained `ComicTree::comicinfo` (§13.4). `run_ebook` still returns a clear "not
+implemented" error until Phase 5, but the message now reflects that parsing, option
+resolution and source loading are in place. Tests: `tests/ebook_input_tests.rs` (12 tests —
+CBZ/CBR/CB7/CBT/folder parity, natural order, root/nested chapters, archive flattening,
+ComicInfo capture, junk filtering, and error paths). Decisions recorded in §13.4.
 
 ### Phase 2 — Core image pipeline (B/W + color, no crop)
 - `colorCheck`, `fillCheck`, `splitCheck`, gamma, autocontrast, autolevel, grayscale,

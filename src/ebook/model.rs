@@ -57,9 +57,13 @@ pub struct PageFlags {
 /// A single decoded source page.
 #[derive(Debug, Clone)]
 pub struct Page {
-    /// Original archive entry or filesystem path.
+    /// Source path within the book's image tree (see [`crate::ebook::input`]).
+    ///
+    /// This is the archive entry or folder-relative path *after* a single
+    /// redundant root directory has been stripped, so equivalent CBZ/folder
+    /// inputs yield the same value.
     pub source_name: String,
-    /// Chapter-relative path.
+    /// Chapter-relative path (the file name within [`Chapter::name`]).
     pub rel_path: String,
     /// Decoded pixels.
     pub image: DynamicImage,
@@ -70,7 +74,8 @@ pub struct Page {
 /// A chapter (a source subdirectory, or the single implicit chapter of a file).
 #[derive(Debug, Clone)]
 pub struct Chapter {
-    /// Source directory name, before slugification.
+    /// Source directory path relative to the image root, before slugification
+    /// (empty for pages that sit directly in the root).
     pub name: String,
     pub pages: Vec<Page>,
 }
@@ -91,6 +96,12 @@ pub enum CoverSource {
 pub struct ComicTree {
     pub chapters: Vec<Chapter>,
     pub cover: Option<CoverSource>,
+    /// Raw bytes of a discovered `ComicInfo.xml`, if any.
+    ///
+    /// The tree keeps the original document (rather than parsed fields) so that
+    /// `--keep-comicinfo` can round-trip it and the metadata pass in Phase 4 can
+    /// parse it once, on demand.
+    pub comicinfo: Option<Vec<u8>>,
 }
 
 impl ComicTree {
@@ -99,6 +110,7 @@ impl ComicTree {
         ComicTree {
             chapters: Vec::new(),
             cover: None,
+            comicinfo: None,
         }
     }
 
