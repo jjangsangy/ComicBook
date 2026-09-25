@@ -279,11 +279,16 @@ fn prepare_image(
     }
     autocontrast_image(&mut image, options, color);
     resize_image(&mut image, options, size, order, fill);
+    // The moiré eraser runs on the resized plane, after autocontrast and before
+    // quantization (KCC's `optimizeForDisplay`).
+    if options.erase_rainbow && image.width() > 1 && image.height() > 1 {
+        image = super::rainbow::erase_rainbow_artifacts(&image, color_output);
+    }
     image
 }
 
 /// Whether a decoded image came from a grayscale source (KCC's `L`/`1` modes).
-fn is_grayscale_image(image: &DynamicImage) -> bool {
+pub(crate) fn is_grayscale_image(image: &DynamicImage) -> bool {
     matches!(
         image,
         DynamicImage::ImageLuma8(_) | DynamicImage::ImageLuma16(_)

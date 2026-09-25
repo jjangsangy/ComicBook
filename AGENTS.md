@@ -421,8 +421,10 @@ encoder with `--jpeg-quality`.
 `quantette = "0.6"` (`default-features = false, features = ["image", "threads"]`) and
 `png = "0.18"`. `imageproc`'s default features are disabled so it does not turn on `image`'s
 default codecs (avif/exr/…); `quantette`'s `kmeans` default is disabled because only its
-`CustomPalette` path is used. Not yet added (Phase 3/6): `rustfft` for the moiré eraser and
-`ab_glyph` for cover text.
+`CustomPalette` path is used.
+
+**Added in Phase 3.** `rustfft = "6"` (MIT/Apache-2.0, pure Rust) for the `--erase-rainbow`
+moiré eraser. Not yet added (Phase 6): `ab_glyph` for cover text.
 
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
@@ -750,6 +752,50 @@ smaller ones (§13.3). The rest remain open (§13.2).
    extension/media type and `OrderClass::Normal` (no splitting), since processing is skipped
    wholesale in KCC too.
 
+### 13.6 Phase 3 decisions
+
+1. **Cropping runs in `prepare_page`, before the splitter.** KCC crops in
+   `ComicPageParser.__init__`, i.e. before `splitCheck`, on the original page; the port
+   mirrors that so the splitter and encoder see the cropped page. Cropping lives in the new
+   `processing::prepare_page` (which also owns `fillCheck`) rather than inside
+   `page::process_page`, so the Phase 2 unit tests that call `process_page` directly are
+   unaffected. End-to-end behaviour is pinned by `tests/ebook_crop_tests.rs`.
+2. **Cropping is skipped in webtoon mode and for a colour first page.** KCC wraps the whole
+   crop block in `if is_first_page and colorCheck(...): pass else: …`, which is what keeps a
+   colour cover intact. `prepare_page` reproduces that decision via `color::color_check`
+   (reusing `page::is_grayscale_image` for the `L`/`1` shortcut); the first page is the first
+   page of the first non-empty chapter in reading order.
+3. **Pillow primitives are reproduced, not approximated.** Crop parity hinges on four Pillow
+   behaviours, each verified against the installed library and locked down by unit tests:
+   `ImageOps.autocontrast(cutoff=1)` drops 1 % of the histogram per end and stretches through
+   a *truncated* linear LUT; `ImageFilter.BoxBlur(1)` is a horizontal then vertical 3-tap
+   average, **each pass rounded**, with edge replication (it is *not* a single 3x3 average);
+   `Image.crop` rounds with `round()` (half-to-even) and zero-fills out-of-bounds pixels; and
+   `getbbox` uses the non-zero extent.
+4. **KCC's `group_close_values` value drop is preserved.** When a group closes, the value that
+   opens the next group is discarded rather than re-added, so `[1,2,3,10,11]` groups to
+   `[(1,3),(11,11)]`. Reproduced exactly (and asserted in a test); "fixing" it would move
+   detected boxes.
+5. **KCC's height/width mix-up in the inter-panel gutter finder is preserved.** The vertical
+   (column) pass compares a column section's bounds against the page *height*, not its width,
+   which changes which side margins are eligible. Per §5.2 this observable behaviour is
+   reproduced, not corrected.
+6. **The moiré eraser uses a full complex 2D FFT, not `rfft2`.** The attenuation mask is
+   symmetric under `f -> -f` (the four target angles are pairwise 180° apart), so filtering
+   the full spectrum is equivalent to filtering `numpy.fft.rfft2`'s half-spectrum. Exact bytes
+   cannot match numpy's FFT bit-for-bit, so the tests assert *behaviour*: the 135°/45° bands
+   above 0.30 cycles/pixel are attenuated, while axis-aligned and low-frequency content is
+   preserved (§5.2 "structure and semantics").
+7. **`--wallpaper` / `--stretch` / `--upscale` / `--maximize-strips` were delivered in Phase 2.**
+   Phase 3 adds only the three processing passes (margin/page-number crop, inter-panel crop,
+   moiré eraser); §13.5.7 records the `--wallpaper` deviation.
+8. **Crop fixtures are generated from KCC and compared exactly.** `tests/fixtures/crop/` holds
+   four synthetic black/white pages plus a `README.md` recording the boxes KCC returned for
+   them (derived with the throwaway Python environment of §20.4). The pages are pure
+   black/white so grayscale/autocontrast/blur/threshold are bit-exact across Pillow and Rust,
+   which lets the port assert the crop boxes *exactly* (`tests/ebook_crop_tests.rs`) instead of
+   with a tolerance.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -838,10 +884,29 @@ Tests: unit tests in each module plus `tests/ebook_processing_tests.rs` (fixture
 snapshot: order classes, media types, dimensions, flags, and byte-exact `--no-processing`).
 Decisions recorded in §13.5.
 
-### Phase 3 — Cropping & enhancement
+### Phase 3 — Cropping & enhancement (complete)
 - Margin/page-number crop, inter-panel crop, preserve-margin/minimum, moiré eraser,
   `--wallpaper`/`--stretch`/`--upscale`, `--maximize-strips`.
 - **Exit:** crop bboxes match reference values on committed fixtures.
+
+**Delivered.** `src/ebook/processing/`:
+- `crop.rs` — `threshold_from_power`, `group_close_values`, `merge_boxes`, the four-edge
+  `ignore_pixels_near_edge` guard, and the Pillow primitives they rest on
+  (`autocontrast_cutoff`, `box_blur_1`, `binarize`, `bbox_nonzero`, rounded/padded crops).
+  Exposes `margin_bbox` / `page_number_bbox` plus the `crop_margin` / `crop_page_number`
+  entry points that apply the 10 % clamp, `--preserve-margin` and `--cropping-minimum`.
+- `interpanel.rs` — `crop_empty_inter_panel` (rows, columns or both) with the 4 % gutter
+  retention, operating on the typed buffer so grayscale pages stay grayscale.
+- `rainbow.rs` — `erase_rainbow_artifacts`: a `rustfft` 2D FFT of the luminance, attenuating
+  the 135°/45° diagonal bands above 0.30 cycles/pixel by 0.10, on the YUV or grayscale path.
+- `mod.rs` — `prepare_page` runs `fillCheck`, the crop, and the inter-panel pass before the
+  splitter, skipping a colour first page and webtoon mode as KCC does.
+
+`page.rs` applies the moiré eraser after the resize, matching KCC's `optimizeForDisplay` order.
+Tests: unit tests in each module (Pillow-primitive parity, grouping/merging quirks, black
+backgrounds, crop caps) and `tests/ebook_crop_tests.rs` (9 tests) which asserts KCC's own boxes
+and row/column removals on committed fixtures, plus end-to-end `process_tree` checks for the
+page-number crop, the inter-panel pass and `--erase-rainbow`. Decisions recorded in §13.6.
 
 ### Phase 4 — Metadata & naming
 - ComicInfo parse → title/authors/series/volume/number/summary/bookmarks; `--metadata-title`;
@@ -900,7 +965,12 @@ Decisions recorded in §13.5.
 - **Fixture/golden tests** (like `kindling`'s approach): commit small CBZ/CBR/CB7/CBT inputs
   and assert output structure by parsing it back (mimetype first + stored; OPF spine;
   XHTML image refs; image byte dimensions). Optionally commit KCC-generated reference EPUBs
-  (from our own content) for structural diffing (pending §13.2 item 8).
+  (from our own content) for structural diffing (pending §13.2 item 8). Phase 3 already
+  commits KCC-derived crop fixtures (`tests/fixtures/crop/`, §13.6.8), which pin the computed
+  crop boxes exactly.
+- **Reference values from KCC.** Where an algorithm has to match KCC exactly, run KCC's own
+  function in a throwaway Python environment, then commit the inputs and the returned values
+  as fixtures — see §20.4.
 - **Round-trip tests:** CBZ→CBZ, EPUB→input→EPUB where applicable.
 - **EPUB conformance:** opt-in `epubcheck` job (JVM), marked `#[ignore]` by default.
 - **AZW3/MOBI:** structural readback; if feasible, decode with a reader or compare against a
@@ -989,3 +1059,57 @@ Deliberately avoided: `pdfium-render`/`mupdf` (pull platform binaries — violat
 **Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
 EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our
 OPF metadata intact before committing to the §9 plan.
+
+### 20.4 Running Python tooling in a throwaway environment
+
+Several phases need KCC's *actual output* to pin the port, not just its documented behaviour.
+The inputs and the values we compare against are committed fixtures (§13.6.8); the KCC checkout
+itself is not. To (re)derive those values, run KCC's own functions in a disposable Python
+environment — a KCC tree is expected at `kcc/`, which is gitignored (`.gitignore`).
+
+Use [`uv`](https://docs.astral.sh/uv/) with an interpreter **it manages**, and keep every
+artefact inside the already-gitignored `target/` directory — the virtualenv, the downloaded
+interpreter and the package cache — so nothing can leak into a commit. KCC's own CI builds on
+Python 3.11, so pin that:
+
+```sh
+# 1. A uv-managed CPython 3.11 plus a virtualenv, both inside target/.
+#    UV_PYTHON_INSTALL_DIR keeps the interpreter in the repo and UV_CACHE_DIR does the
+#    same for the cache; their defaults may live outside it and be unwritable.
+UV_CACHE_DIR=target/uv-cache UV_PYTHON_INSTALL_DIR=target/uv-python \
+    uv venv --python 3.11 target/kcc-ref
+
+# 2. Install only what the reference modules import.
+UV_CACHE_DIR=target/uv-cache UV_PYTHON_INSTALL_DIR=target/uv-python \
+    uv pip install --python target/kcc-ref/bin/python numpy Pillow
+
+# 3. Run your derivation script, from the repository root. Keep it in target/
+#    (e.g. target/kcc-ref/gen.py) so it is never committed.
+target/kcc-ref/bin/python target/kcc-ref/gen.py
+```
+
+Notes:
+
+- `UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR` are **environment variables, not flags**, and must
+  accompany every `uv` invocation (`uv venv` *and* `uv pip …`). Their defaults may point at a
+  shared location outside the repo that is not writable; without the override the downloaded
+  interpreter lands outside the tree.
+- Use a `uv`-managed interpreter, **not** the platform's system Python: macOS's
+  `/usr/bin/python3` is an old, unsupported build. `uv venv --python 3.11` fetches a managed
+  CPython (3.11.16 at the time of writing) on first use, and 3.11 is the version KCC's own CI
+  builds on.
+- Keep the derivation script itself **inside `target/`**, never in `tests/` or anywhere else in
+  the repo: nothing outside the throwaway directory should import the `kcc/` tree. Only the
+  inputs and the resulting values (e.g. `tests/fixtures/crop/`) are committed.
+- Put `kcc/` on `sys.path` and import the KCC submodule directly, e.g.
+  `from kindlecomicconverter.page_number_crop_alg import get_bbox_crop_margin`. The package's
+  `__init__.py` holds only version metadata, so no PySide6 import is triggered, and `numpy`
+  plus `Pillow` are the only dependencies the crop/eraser/inter-panel modules need.
+- KCC's `requirements.txt` lists much more (PySide6, PyMuPDF, …). Install only what the module
+  being ported actually imports; a venv with just `numpy` and `Pillow` is enough for the
+  Phase 3 work.
+- **Licence.** The modules behind the crop/inter-panel/rainbow tests are ISC, but `image.py`
+  and `dualmetafix.py` are GPL-3. You may *run* the whole tree to produce reference output,
+  but never copy code, comments or identifiers from those two files into this repo (§5.4).
+- The environment is disposable: `rm -rf target/kcc-ref target/uv-python target/uv-cache`
+  (or `cargo clean`) removes it, and it is never exercised by CI.

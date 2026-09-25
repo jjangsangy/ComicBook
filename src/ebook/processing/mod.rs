@@ -1,11 +1,9 @@
 //! Per-page image processing pipeline (AGENTS.md §11).
 //!
 //! [`process_tree`] is the Rust counterpart of KCC's `imgDirectoryProcessing`: it
-//! detects each page's background, runs the per-page transform/encode pipeline in
-//! parallel with `rayon`, and returns the encoded pages in reading order.
-//!
-//! Cropping and the moiré eraser are Phase 3; their modules exist as documented
-//! skeletons so the later phase can slot them into [`page::process_page`].
+//! detects each page's background, applies the configured cropping, runs the
+//! per-page transform/encode pipeline in parallel with `rayon`, and returns the
+//! encoded pages in reading order.
 
 pub mod color;
 pub mod cover;
@@ -19,11 +17,15 @@ pub mod webtoon;
 pub use page::process_page;
 
 use anyhow::Result;
+use image::DynamicImage;
 use rayon::prelude::*;
 
-use crate::ebook::model::{ComicTree, EncodedPage};
+use crate::ebook::model::{ComicTree, EncodedPage, Page};
 use crate::ebook::options::Options;
 use crate::ebook::progress;
+
+/// Fraction of each inter-panel gutter KCC retains after cropping.
+const INTER_PANEL_KEEP: f64 = 0.04;
 
 /// The encoded pages of one chapter, in reading order.
 #[derive(Debug, Clone)]
@@ -53,13 +55,20 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
     let bar = progress::bar(tree.page_count() as u64, "Processing images");
 
     let mut chapters = Vec::with_capacity(tree.chapters.len());
-    for chapter in &mut tree.chapters {
+    let first_chapter = tree
+        .chapters
+        .iter()
+        .position(|chapter| !chapter.pages.is_empty());
+
+    for (chapter_index, chapter) in tree.chapters.iter_mut().enumerate() {
         let encoded = chapter
             .pages
             .par_iter_mut()
-            .map(|page| {
+            .enumerate()
+            .map(|(page_index, page)| {
                 if !options.no_processing {
-                    page.background = fill::fill_check(&page.image);
+                    let is_first_page = first_chapter == Some(chapter_index) && page_index == 0;
+                    prepare_page(page, options, is_first_page);
                 }
                 let result = page::process_page(page, options, size);
                 bar.inc(1);
@@ -81,4 +90,61 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
         cover: None,
         page_count,
     })
+}
+
+/// Detect the background and crop a page before it is split and encoded.
+///
+/// This mirrors KCC's `ComicPageParser.__init__`: the fill is detected first, the
+/// page-number/margin crop runs (from the *detected* background, not the border
+/// override), then the inter-panel crop. A colour first page (the cover) is left
+/// untouched, and webtoon mode skips the margin/page-number crops but still runs
+/// the inter-panel pass, exactly as the reference does.
+fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) {
+    page.background = fill::fill_check(&page.image);
+    let background = page.background;
+
+    if is_first_page && is_colour_page(&page.image, options) {
+        return;
+    }
+
+    let power = f64::from(options.cropping_power);
+    let minimum = f64::from(options.cropping_minimum);
+    if !options.webtoon {
+        match options.cropping {
+            2 => crop::crop_page_number(
+                &mut page.image,
+                power,
+                minimum,
+                options.preserve_margin,
+                background,
+            ),
+            1 => crop::crop_margin(
+                &mut page.image,
+                power,
+                minimum,
+                options.preserve_margin,
+                background,
+            ),
+            _ => {}
+        }
+    }
+
+    if options.inter_panel_crop > 0 {
+        let direction = if options.inter_panel_crop == 1 {
+            interpanel::Direction::Horizontal
+        } else {
+            interpanel::Direction::Both
+        };
+        page.image = interpanel::crop_empty_inter_panel(
+            &page.image,
+            direction,
+            INTER_PANEL_KEEP,
+            background,
+        );
+    }
+}
+
+/// Whether a page is detected as colour, for the first-page crop exemption.
+fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
+    color::color_check(&image.to_rgb8(), page::is_grayscale_image(image), options)
 }
