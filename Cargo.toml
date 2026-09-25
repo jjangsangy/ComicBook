@@ -49,6 +49,13 @@ slug = "0.1"
 # Phase 4: KCC's two number-padding substitutions in `slugify`. Already in the
 # tree transitively via `unrar`; promoted to a direct dependency.
 regex = "1"
+# Phase 5: the EPUB `dc:identifier`/`dtb:uid` (`urn:uuid:<v4>`) and the
+# `dcterms:modified` timestamp (AGENTS.md §7/§12.2). MIT/Apache-2.0, pure Rust.
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros"] }
 
 [dev-dependencies]
 libc = "0.2"
+# Reading the EPUB container back in the Phase 5 structural tests; already a runtime
+# dependency, re-declared here because integration tests cannot name it directly.
+zip = { version = "2.2", default-features = false, features = ["deflate"] }

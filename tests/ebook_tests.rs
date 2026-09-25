@@ -256,6 +256,29 @@ fn custom_geometry_replaces_the_profile() {
 }
 
 #[test]
+fn the_other_profile_needs_an_explicit_size() {
+    // `OTHER` has no screen geometry of its own (AGENTS.md §12.1), so it is only
+    // usable with a custom resolution.
+    let err = resolve_err(&["book.cbz", "-p", "OTHER"]);
+    assert!(
+        err.to_string().contains("has no screen size"),
+        "unexpected error: {err}"
+    );
+
+    let options = resolve(&[
+        "book.cbz",
+        "-p",
+        "OTHER",
+        "--custom-width",
+        "1200",
+        "--custom-height",
+        "1600",
+    ]);
+    assert_eq!(options.profile_data.width, 1200);
+    assert_eq!(options.profile_data.height, 1600);
+}
+
+#[test]
 fn webtoon_mandates_its_option_set() {
     let options = resolve(&["book.cbz", "-w", "-m", "-u", "-q"]);
     assert!(!options.panel_view);

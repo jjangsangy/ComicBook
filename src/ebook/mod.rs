@@ -5,8 +5,11 @@
 //! resolution and progress scaffolding; Phase 1 adds the input adapters
 //! ([`input`]) that decode archives/folders into a [`ComicTree`]; Phase 2 adds the
 //! per-page image pipeline ([`processing`]) that turns a tree into encoded pages;
-//! Phase 4 adds metadata resolution ([`metadata`]) and page/chapter naming
-//! ([`naming`]). The output builders are added by the phases that follow.
+//! Phase 3 adds cropping and enhancement; Phase 4 adds metadata resolution
+//! ([`metadata`]) and page/chapter naming ([`naming`]); Phase 5 adds the output
+//! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable. Later output
+//! formats (CBZ, PDF, Kindle) and features (chunking, fusion, webtoon) land in the
+//! phases that follow.
 //!
 //! # Exit codes
 //!
@@ -71,18 +74,51 @@ pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
 pub fn run_ebook(args: EbookArgs) -> Result<()> {
     let options = Options::resolve(&args)?;
 
-    // Phases 0-4 are in place (CLI, option resolution, input adapters, image
-    // processing, metadata and naming); the output builders land in later phases
-    // (AGENTS.md §15).
-    bail!(
-        "`comic-book ebook` is not implemented yet: parsing, option resolution, source \
-         loading, image processing, metadata and page naming are in place, but the output \
-         builders land in later phases.\n\
-         Parsed {} input(s); profile {} [{}x{}]; format {:?}.",
-        options.inputs.len(),
-        options.profile_data.name,
-        options.profile_data.width,
-        options.profile_data.height,
-        options.format,
-    )
+    // Features that change the pipeline wholesale and land in later phases
+    // (AGENTS.md §15). Bailing beats silently ignoring the flag.
+    if options.file_fusion {
+        bail!("--file-fusion is not implemented yet (AGENTS.md §15, Phase 9)");
+    }
+    if options.webtoon {
+        bail!("--webtoon is not implemented yet (AGENTS.md §15, Phase 10)");
+    }
+    if options.light_novel {
+        bail!("--light-novel is not implemented yet (AGENTS.md §15, Phase 7)");
+    }
+
+    for source in options.inputs.clone() {
+        let written = convert_source(&source, &options)?;
+        for path in &written {
+            println!("Created {}", path.display());
+        }
+
+        if options.delete {
+            delete_source(&source)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Run the full pipeline for one source, returning the output paths.
+///
+/// This is KCC's `makeBook` without the per-source loop: load, resolve metadata,
+/// sanitize names, process the images, build the cover and write the output.
+pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
+    let mut prepared = prepare_book(source, options)?;
+    let mut processed = processing::process_tree(&mut prepared.tree, options)?;
+    // Phase 5's cover placeholder; Phase 6's `Cover::process` replaces it.
+    processed.cover =
+        processing::cover::make_cover(&prepared.tree, prepared.cover_override.as_deref(), options)?;
+    output::write_book(&processed, &prepared, source, options)
+}
+
+/// Remove a source after a successful conversion (`-d/--delete`).
+fn delete_source(source: &Path) -> Result<()> {
+    if source.is_dir() {
+        crate::clamp::remove_dir_all_force(source)?;
+    } else if source.is_file() {
+        std::fs::remove_file(source)?;
+    }
+    Ok(())
 }

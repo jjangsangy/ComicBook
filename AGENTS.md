@@ -471,6 +471,12 @@ substitutions and its `\W+` Kobo filename rule. No crate reproduces `python-slug
 option set, so `slug` supplies the transliteration/collapse step and the KCC-specific
 padding is layered on top (§13.8.1).
 
+**Added in Phase 5.** `uuid = { version = "1", features = ["v4"] }` (MIT/Apache-2.0) for the
+EPUB `dc:identifier`/`dtb:uid` and `time = { version = "0.3", features = ["formatting",
+"macros"] }` (MIT/Apache-2.0, pure Rust) for `dcterms:modified`, both from §7's candidate
+table (§13.9.5). `zip` was re-declared as a dev-dependency so the Phase 5 tests can read the
+EPUB container back.
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -791,8 +797,9 @@ smaller ones (§13.3). The rest remain open (§13.2).
    wallpaper mode currently leaves the page unsized. We implement the documented intent (crop
    to fill the screen). Flagged as a deliberate, tested deviation from the reference code.
 8. **`kfx` resize is deferred.** KCC's KFX branch resizes to the inputs' most common
-   resolution, which requires scanning sources in `checkOptions`; that lands with Phase 5's
-   KFX preset. Until then `--format kfx` falls through the normal resize chain.
+   resolution, which requires scanning sources in `checkOptions`; Phase 5 implemented the KFX
+   *preset* (EPUB with `region-mag=false`) but not the resolution override, which is still
+   open — see §13.9.6. Until then `--format kfx` falls through the normal resize chain.
 9. **`--no-processing` media types are preserved.** Pages are emitted with their source
    extension/media type and `OrderClass::Normal` (no splitting), since processing is skipped
    wholesale in KCC too.
@@ -914,8 +921,54 @@ the safety net the swaps rely on.
    no override. `--file-fusion`'s `fusion_cover_path` (Phase 9) is not wired yet.
 7. **`prepare_book` is the Phase 4 seam.** `ebook::prepare_book` composes
    `input::load_tree` → `metadata::resolve` → `naming::sanitize_tree` → `naming::select_cover`
-   into the `PreparedBook` the output builders will consume in Phase 5 (KCC's `makeBook`
-   pre-output half). `run_ebook` still stops at the "output not implemented" error.
+   into the `PreparedBook` the output builders consume (KCC's `makeBook` pre-output half).
+
+### 13.9 Phase 5 decisions
+
+1. **The OEBPS tree is built in memory and streamed into the zip.** §5.1.3's goal: the
+   builders produce the XHTML/NCX/NAV/OPF and the image payloads as an ordered entry list,
+   and `output/epub/package.rs` writes `mimetype` first (stored) followed by every other
+   entry, also stored — matching KCC, whose payloads are already-compressed images. No temp
+   directory and no second copy of the book.
+2. **`build_epub` keeps KCC's document semantics verbatim** (§5.2): the per-page XHTML
+   (`viewport`/`img` sizing, the `--hq` ÷1.5 frame, the Kindle `display:none` spacer, the
+   `PV-*` Panel View block), the OPF (Dublin Core, Kindle fixed-layout metas, the
+   `page-spread-*` algorithm with its backward fix-up pass, `--spread-shift`,
+   `--one-page-landscape`, `--invert-direction`, the PDF/EPUB opening-side flip), the NCX/NAV
+   and `container.xml`. KCC's `/Images/`→`/Text/` path derivation is re-expressed from the
+   chapter name rather than by substring replacement, so a chapter directory literally named
+   `Images` does not corrupt the hrefs.
+3. **Phase 6 features that live *inside* these functions were implemented now.** The spread
+   algorithm cannot be split from `--spread-shift`/`--one-page-landscape`/`--invert-direction`,
+   and Panel View markup cannot be split from `buildHTML`, so `buildOPF`/`buildHTML` are
+   complete. Phase 6's remaining scope is `Cover::process` (+ smart crop, fit, tome label),
+   the Scribe `-above`/`-below` two-image page (the OPF/buildHTML hooks for it are already
+   present), and hardening the panel-view variants.
+4. **The cover is a Phase 5 placeholder.** `processing::cover::make_cover` selects the cover
+   image (sibling `Covers/` override, else the first page) and encodes it as the `cover.jpg`
+   the OPF advertises as `image/jpeg`; it does **not** apply KCC's `Cover` pipeline
+   (autocontrast, grayscale, smart crop, fit-to-profile, `N/M` tome label). That pipeline is
+   Phase 6 and replaces this function without changing the packaging plumbing.
+5. **Timestamps and identifiers use crates, not hand-rolled code** (§5.3): `uuid` (v4) for
+   `dc:identifier`/`dtb:uid` and `time` for `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`), both
+   MIT/Apache-2.0 and pure Rust.
+6. **KFX resolution is still deferred.** §13.5.8 promised the KFX preset (which resizes to
+   the inputs' most common resolution) for Phase 5; it is not in Phase 5's stated deliverables
+   and would require threading a computed geometry back into the processing stage, so it is
+   postponed. `-f kfx` currently produces the EPUB preset with `region-mag=false` and the
+   profile resolution; the KFX resize and `kfx_resolution` OPF meta remain open.
+7. **Unimplemented formats/features fail loudly.** `output::write_book` reports CBZ/PDF
+   (Phase 7) and AZW3/MOBI (Phase 8) as not implemented, and `run_ebook` rejects
+   `--file-fusion` (Phase 9), `--webtoon` (Phase 10), `--light-novel` (Phase 7) and
+   size-capped/batch-split output (Phase 9) rather than silently ignoring them.
+8. **`convert_source` is the Phase 5 seam.** `ebook::convert_source` runs
+   `prepare_book` → `process_tree` → `cover::make_cover` → `output::write_book` for one source
+   and returns the output paths; `run_ebook` loops over the inputs, prints the paths and
+   applies `--delete`. Tests drive `convert_source` directly.
+9. **The `OTHER` profile is validated at resolution time.** It carries no screen geometry of
+   its own (§12.1), so `Options::resolve` now rejects it without `--custom-width`/
+   `--custom-height` instead of feeding a zero target into the resizer (KCC divides by the
+   zero width there and raises). This path only became reachable with a shippable `-f epub`.
 
 ## 14. Performance & memory goals
 
@@ -978,11 +1031,11 @@ resolution across profiles). Decisions recorded in §13.3.
 - `epub.rs`/`pdf.rs` — clearly-tagged Phase 11 stubs that fail with a "not implemented yet"
   error rather than silently mis-handling the input.
 
-`model.rs` gained `ComicTree::comicinfo` (§13.4). `run_ebook` still returns a clear "not
-implemented" error until Phase 5, but the message now reflects that parsing, option
-resolution and source loading are in place. Tests: `tests/ebook_input_tests.rs` (12 tests —
-CBZ/CBR/CB7/CBT/folder parity, natural order, root/nested chapters, archive flattening,
-ComicInfo capture, junk filtering, and error paths). Decisions recorded in §13.4.
+`model.rs` gained `ComicTree::comicinfo` (§13.4). At this point `run_ebook` still returned a
+clear "not implemented" error until Phase 5, but the message already reflected that parsing,
+option resolution and source loading were in place. Tests: `tests/ebook_input_tests.rs` (12
+tests — CBZ/CBR/CB7/CBT/folder parity, natural order, root/nested chapters, archive
+flattening, ComicInfo capture, junk filtering, and error paths). Decisions recorded in §13.4.
 
 ### Phase 2 — Core image pipeline (B/W + color, no crop) (complete)
 - `colorCheck`, `fillCheck`, `splitCheck`, gamma, autocontrast, autolevel, grayscale,
@@ -1058,13 +1111,39 @@ chapter/page renaming, zero-padding per format, slug collisions, archive/folder 
 filename resolution across formats/flags/collisions/covers) and a `--no-processing` naming
 check in `tests/ebook_processing_tests.rs`. Decisions recorded in §13.8.
 
-### Phase 5 — EPUB/KEPUB (first shippable output)
+### Phase 5 — EPUB/KEPUB (first shippable output) (complete)
 - XHTML, NCX, NAV, OPF (incl. spread algorithm), container, style, panel-view markup, zip
   packaging (mimetype first/stored).
 - **Exit:** fixture book converts to a structurally valid EPUB (parse back and assert
   container → OPF → spine → XHTML → image references); optional `epubcheck` job (ignored by
   default).
 - **Milestone: `comic-book ebook -f epub <cbz>` usable.**
+
+**Delivered.** `src/ebook/output/`:
+- `epub/xhtml.rs` — `buildHTML`: the page frame, `--hq` viewport halving, the black-background
+  body style, the Kindle `display:none` spacer, and the `PV-*`/`PV-P` Panel View block
+  (`--two-panel`, `--hq`, rotated-page ordering, right-to-left mirroring).
+- `epub/opf.rs` — `buildOPF`: Dublin Core metadata, the Kindle fixed-layout metas, series
+  `belongs-to-collection`, the manifest, and the two-pass `page-spread-*` spine algorithm
+  (forward alternation with `-kcc-a`…`-kcc-d` specials, backward fix-up, `--spread-shift`,
+  `--one-page-landscape`, `--invert-direction`, the PDF/EPUB source flip), plus
+  `container.xml` and `style.css`.
+- `epub/nav.rs` — `buildNCX`/`buildNAV`, including the `ComicInfo.xml` bookmark chapter list.
+- `epub/package.rs` — the EPUB zip writer (`mimetype` first and stored, everything else
+  stored, as KCC writes it).
+- `epub/mod.rs` — `build_epub`, the in-memory orchestrator (`buildEPUB`), plus `uuid`/`time`
+  handling for `dc:identifier` and `dcterms:modified`.
+- `processing/cover.rs` — `make_cover`, the Phase 5 cover placeholder (§13.9.4).
+- `output/mod.rs` — format dispatch and filename resolution; `output/kepub.rs` documents the
+  KePub differences (extension + `rendition:page-spread-*`), which the shared EPUB builder
+  already applies.
+- `ebook/mod.rs` — `convert_source` and a live `run_ebook`.
+
+Tests: `tests/ebook_epub_tests.rs` (7 tests — structural container→OPF→spine→XHTML→image
+validation, Kindle fixed-layout + Panel View, KePub extension/properties, RTL progression,
+`--no-processing` byte parity, `ComicInfo` bookmark navigation, unimplemented-format errors)
+plus unit tests for the spread algorithm, `html_escape`, `stem_of` and `panel_offset`.
+Decisions recorded in §13.9.
 
 ### Phase 6 — Cover, panel view, Scribe strips, spread options
 - `Cover::process` + smart crop + tome label; panel-view variants
@@ -1184,8 +1263,11 @@ first (§5.3). Concretely:
   `\W+`→`_` Kobo rule, both of which are reproduced. `python-slugify`'s custom `_`/`.` class
   is the one documented deviation (§13.8.1).
 - `metadata.rs` (Phase 4) ComicInfo XML → **done**: `quick-xml`.
-- `output/epub/*` (Phase 5) → evaluate the `epub` crate before hand-writing OPF/NCX/NAV; if it
-  cannot emit KCC's fixed layout (§5.2), fall back to `zip` + `quick-xml` as §5.3 says.
+- `output/epub/*` (Phase 5) → the `epub` crate was evaluated and **not** taken: it cannot
+  emit KCC's fixed layout (§5.2). As §5.3 sanctions for exactly this case, the writer is
+  hand-written but delegates the container to `zip` and the document strings to plain
+  formatting; `tests/ebook_epub_tests.rs` pins the container→OPF→spine→XHTML→image
+  structure. Revisit only if a crate gains fixed-layout control.
 - `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `lopdf` / `pdf-render` (§7).
 
 - **Exit:** every swap/consolidation is a separate no-behaviour-change commit that keeps
@@ -1305,6 +1387,10 @@ helpers in `clamp.rs`/`archive::path` and deliberately **not** added (§13.7.3).
 **Adopted in Phase 4.** `quick-xml = "0.37"` (MIT) for ComicInfo parsing; `slug = "0.1"` (MIT,
 + `deunicode`) for chapter slugification; `regex = "1"` (MIT, already transitive via `unrar`)
 for the KCC number-padding and `\W+` rules. See §7 and §13.8.1.
+
+**Adopted in Phase 5.** `uuid = "1"` (v4, MIT/Apache-2.0) for the EPUB
+`dc:identifier`/`dtb:uid`; `time = "0.3"` (`formatting` + `macros`, MIT/Apache-2.0) for
+`dcterms:modified`. Both come straight from the §7 candidate table (§13.9.5).
 
 **Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
 EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our

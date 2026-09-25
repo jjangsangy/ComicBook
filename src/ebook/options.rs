@@ -307,6 +307,16 @@ impl Options {
             profile_data.gamma = 1.0;
         }
 
+        // The `OTHER` profile carries no screen geometry of its own (AGENTS.md §12.1),
+        // so resizing against it produces nothing; it is only meaningful with an
+        // explicit custom resolution. KCC divides by the zero width and crashes here.
+        if !custom_profile && (profile_data.width == 0 || profile_data.height == 0) {
+            bail!(
+                "profile {} has no screen size; set --custom-width and --custom-height",
+                profile.code()
+            );
+        }
+
         let jpeg_quality = args.processing.jpeg_quality.unwrap_or_else(|| {
             if profile.is_scribe() || profile == Profile::Kcs {
                 90

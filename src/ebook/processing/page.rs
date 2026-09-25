@@ -794,7 +794,7 @@ fn quantized_to_luma(quantized: &Quantized) -> GrayImage {
     })
 }
 
-fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
+pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     let image = encodable(image);
     let image = image.as_ref();
     let mut buffer = Vec::new();
