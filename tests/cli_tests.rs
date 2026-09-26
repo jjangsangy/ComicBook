@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use clap::Parser;
 use clap_complete::Shell;
 use comic_book::clamp::Approach;
@@ -5,71 +6,68 @@ use comic_book::cli::{generate_completions, Cli, Commands};
 use std::path::PathBuf;
 
 #[test]
-fn test_cli_convert_parsing() {
+fn test_cli_convert_parsing() -> Result<()> {
     let args = vec!["comic-book", "convert", "dir1", "dir2", "--to", "cbz"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Convert { directories, to } => {
-            assert_eq!(
-                directories,
-                vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
-            );
-            assert_eq!(to, "cbz");
-        }
-        _ => panic!("Expected Convert command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Convert { directories, to } = cli.command else {
+        bail!("Expected Convert command");
+    };
+    assert_eq!(
+        directories,
+        vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
+    );
+    assert_eq!(to, "cbz");
+    Ok(())
 }
 
 #[test]
-fn test_cli_convert_file_parsing() {
+fn test_cli_convert_file_parsing() -> Result<()> {
     let args = vec!["comic-book", "convert", "issue1.cbz", "--to", "cbr"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Convert { directories, to } => {
-            assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
-            assert_eq!(to, "cbr");
-        }
-        _ => panic!("Expected Convert command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Convert { directories, to } = cli.command else {
+        bail!("Expected Convert command");
+    };
+    assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
+    assert_eq!(to, "cbr");
+    Ok(())
 }
 
 #[test]
-fn test_cli_convert_to_dir_parsing() {
+fn test_cli_convert_to_dir_parsing() -> Result<()> {
     let args = vec!["comic-book", "convert", "issue1.cbz", "--to", "dir"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Convert { directories, to } => {
-            assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
-            assert_eq!(to, "dir");
-        }
-        _ => panic!("Expected Convert command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Convert { directories, to } = cli.command else {
+        bail!("Expected Convert command");
+    };
+    assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
+    assert_eq!(to, "dir");
+    Ok(())
 }
 
 #[test]
-fn test_cli_clamp_parsing_defaults() {
+fn test_cli_clamp_parsing_defaults() -> Result<()> {
     let args = vec!["comic-book", "clamp", "my_comics"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Clamp {
-            input_dir,
-            output_dir,
-            size_threshold,
-            approach,
-            workers,
-        } => {
-            assert_eq!(input_dir, PathBuf::from("my_comics"));
-            assert_eq!(output_dir, PathBuf::from("Results"));
-            assert_eq!(size_threshold, 5_000_000);
-            assert_eq!(approach, Approach::Split);
-            assert!(workers >= 1);
-        }
-        _ => panic!("Expected Clamp command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Clamp {
+        input_dir,
+        output_dir,
+        size_threshold,
+        approach,
+        workers,
+    } = cli.command
+    else {
+        bail!("Expected Clamp command");
+    };
+    assert_eq!(input_dir, PathBuf::from("my_comics"));
+    assert_eq!(output_dir, PathBuf::from("Results"));
+    assert_eq!(size_threshold, 5_000_000);
+    assert_eq!(approach, Approach::Split);
+    assert!(workers >= 1);
+    Ok(())
 }
 
 #[test]
-fn test_cli_clamp_parsing_custom_options() {
+fn test_cli_clamp_parsing_custom_options() -> Result<()> {
     let args = vec![
         "comic-book",
         "clamp",
@@ -83,38 +81,39 @@ fn test_cli_clamp_parsing_custom_options() {
         "-w",
         "4",
     ];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Clamp {
-            input_dir,
-            output_dir,
-            size_threshold,
-            approach,
-            workers,
-        } => {
-            assert_eq!(input_dir, PathBuf::from("chapter.cbz"));
-            assert_eq!(output_dir, PathBuf::from("CustomOut"));
-            assert_eq!(size_threshold, 800);
-            assert_eq!(approach, Approach::MaxWidth);
-            assert_eq!(workers, 4);
-        }
-        _ => panic!("Expected Clamp command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Clamp {
+        input_dir,
+        output_dir,
+        size_threshold,
+        approach,
+        workers,
+    } = cli.command
+    else {
+        bail!("Expected Clamp command");
+    };
+    assert_eq!(input_dir, PathBuf::from("chapter.cbz"));
+    assert_eq!(output_dir, PathBuf::from("CustomOut"));
+    assert_eq!(size_threshold, 800);
+    assert_eq!(approach, Approach::MaxWidth);
+    assert_eq!(workers, 4);
+    Ok(())
 }
 
 #[test]
-fn test_cli_clamp_parses_each_approach() {
+fn test_cli_clamp_parses_each_approach() -> Result<()> {
     for (value, expected) in [
         ("split", Approach::Split),
         ("resize", Approach::Resize),
         ("max-width", Approach::MaxWidth),
     ] {
-        let cli = Cli::try_parse_from(["comic-book", "clamp", "in", "-a", value]).unwrap();
-        match cli.command {
-            Commands::Clamp { approach, .. } => assert_eq!(approach, expected),
-            _ => panic!("Expected Clamp command"),
-        }
+        let cli = Cli::try_parse_from(["comic-book", "clamp", "in", "-a", value])?;
+        let Commands::Clamp { approach, .. } = cli.command else {
+            bail!("Expected Clamp command");
+        };
+        assert_eq!(approach, expected);
     }
+    Ok(())
 }
 
 #[test]
@@ -145,57 +144,50 @@ fn test_cli_invalid_arguments() {
 }
 
 #[test]
-fn test_cli_completions_parsing() {
+fn test_cli_completions_parsing() -> Result<()> {
     // Positional argument
     let args = vec!["comic-book", "completions", "bash"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Completions { shell, shell_flag } => {
-            assert_eq!(shell, Some(Shell::Bash));
-            assert_eq!(shell_flag, None);
-        }
-        _ => panic!("Expected Completions command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Completions { shell, shell_flag } = cli.command else {
+        bail!("Expected Completions command");
+    };
+    assert_eq!(shell, Some(Shell::Bash));
+    assert_eq!(shell_flag, None);
 
     // Subcommand alias "completion"
     let args = vec!["comic-book", "completion", "zsh"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Completions { shell, shell_flag } => {
-            assert_eq!(shell, Some(Shell::Zsh));
-            assert_eq!(shell_flag, None);
-        }
-        _ => panic!("Expected Completions command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Completions { shell, shell_flag } = cli.command else {
+        bail!("Expected Completions command");
+    };
+    assert_eq!(shell, Some(Shell::Zsh));
+    assert_eq!(shell_flag, None);
 
     // Flag option `-s` / `--shell`
     let args = vec!["comic-book", "completions", "--shell", "fish"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Completions { shell, shell_flag } => {
-            assert_eq!(shell, None);
-            assert_eq!(shell_flag, Some(Shell::Fish));
-        }
-        _ => panic!("Expected Completions command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Completions { shell, shell_flag } = cli.command else {
+        bail!("Expected Completions command");
+    };
+    assert_eq!(shell, None);
+    assert_eq!(shell_flag, Some(Shell::Fish));
 
     // Without arguments (for auto-detection)
     let args = vec!["comic-book", "completions"];
-    let cli = Cli::try_parse_from(args).unwrap();
-    match cli.command {
-        Commands::Completions { shell, shell_flag } => {
-            assert_eq!(shell, None);
-            assert_eq!(shell_flag, None);
-        }
-        _ => panic!("Expected Completions command"),
-    }
+    let cli = Cli::try_parse_from(args)?;
+    let Commands::Completions { shell, shell_flag } = cli.command else {
+        bail!("Expected Completions command");
+    };
+    assert_eq!(shell, None);
+    assert_eq!(shell_flag, None);
 
     // Invalid shell
     assert!(Cli::try_parse_from(vec!["comic-book", "completions", "invalid_shell"]).is_err());
+    Ok(())
 }
 
 #[test]
-fn test_generate_completions() {
+fn test_generate_completions() -> Result<()> {
     for shell in [
         Shell::Bash,
         Shell::Elvish,
@@ -205,7 +197,7 @@ fn test_generate_completions() {
     ] {
         let mut buf = Vec::new();
         generate_completions(shell, &mut buf);
-        let output = String::from_utf8(buf).expect("Completions output should be valid UTF-8");
+        let output = String::from_utf8(buf)?;
         assert!(!output.is_empty());
         assert!(
             output.contains("comic-book"),
@@ -213,4 +205,5 @@ fn test_generate_completions() {
             shell
         );
     }
+    Ok(())
 }

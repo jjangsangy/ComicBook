@@ -13,6 +13,8 @@
 
 use askama::Template;
 
+use anyhow::Result;
+
 use super::html_escape;
 use super::templates::{PageXhtml, PanelBox};
 use super::PageRef;
@@ -25,7 +27,7 @@ use crate::ebook::options::Options;
 /// file name and its extension-less stem (the `<title>` and the XHTML file name
 /// come from the stem), plus the optional second image of a Kindle Scribe tall-page
 /// split, laid out under the first at `top: 1920px`.
-pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Vec<u8> {
+pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u8>> {
     let PageRef {
         image_dir,
         file,
@@ -110,9 +112,9 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Vec<u8> {
     };
     // askama drops a single trailing newline from every template; KCC's page
     // XHTML is newline terminated (AGENTS.md §5.2).
-    let mut out = view.render().expect("page.xhtml is a static template");
+    let mut out = view.render()?;
     out.push('\n');
-    out.into_bytes()
+    Ok(out.into_bytes())
 }
 
 /// The Kindle virtual Panel View grid (`buildHTML`'s `PV-*` block).

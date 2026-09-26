@@ -100,7 +100,7 @@ where
             out.extend_from_slice(&raw[y * stride..(y + 1) * stride]);
         }
         ImageBuffer::from_raw(width as u32, kept.len() as u32, out)
-            .expect("an in-memory buffer is a valid image")
+            .unwrap_or_else(|| source.clone())
     } else {
         let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
         let out_width = kept.len();
@@ -113,7 +113,7 @@ where
             }
         }
         ImageBuffer::from_raw(out_width as u32, height as u32, out)
-            .expect("an in-memory buffer is a valid image")
+            .unwrap_or_else(|| source.clone())
     }
 }
 

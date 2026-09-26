@@ -545,11 +545,15 @@ pub struct ProfileData {
 
 impl Profile {
     /// The table row describing this profile.
+    ///
+    /// `ALL_PROFILES` and `PROFILE_TABLE` are kept in lock-step (see the
+    /// `profiles` unit test), so the lookup always succeeds; fall back to the first
+    /// row rather than panicking if that invariant is ever broken.
     pub fn entry(self) -> &'static ProfileEntry {
-        PROFILE_TABLE
-            .iter()
-            .find(|entry| entry.profile == self)
-            .expect("every Profile has a PROFILE_TABLE row")
+        match ALL_PROFILES.iter().position(|&profile| profile == self) {
+            Some(index) => &PROFILE_TABLE[index],
+            None => &PROFILE_TABLE[0],
+        }
     }
 
     /// Canonical KCC profile code (e.g. `KV`).

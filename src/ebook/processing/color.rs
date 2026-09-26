@@ -167,17 +167,18 @@ fn clamp_u8(value: f64) -> u8 {
 mod tests {
     use super::*;
     use crate::ebook::options::Options;
+    use anyhow::{bail, Result};
     use clap::Parser;
     use image::Rgb;
 
     /// Resolve options from a `comic-book ebook` command line.
-    fn options(args: &[&str]) -> Options {
+    fn options(args: &[&str]) -> Result<Options> {
         let mut full = vec!["comic-book", "ebook", "book.cbz"];
         full.extend_from_slice(args);
-        let cli = crate::cli::Cli::try_parse_from(full).expect("CLI parses");
+        let cli = crate::cli::Cli::try_parse_from(full)?;
         match cli.command {
-            crate::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-            _ => unreachable!(),
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
         }
     }
 
@@ -198,21 +199,23 @@ mod tests {
     }
 
     #[test]
-    fn grayscale_sources_are_never_colour() {
+    fn grayscale_sources_are_never_colour() -> Result<()> {
         let image = solid(8, 8, [0, 128, 255]);
-        assert!(!color_check(&image, true, &options(&[])));
-        assert!(!color_check(&image, true, &options(&["--force-color"])));
+        assert!(!color_check(&image, true, &options(&[])?));
+        assert!(!color_check(&image, true, &options(&["--force-color"])?));
+        Ok(())
     }
 
     #[test]
-    fn grayscale_pixels_are_not_colour() {
+    fn grayscale_pixels_are_not_colour() -> Result<()> {
         // Cb == Cr == 128 everywhere, so the spread test bails out.
         let image = half_black(16, 16);
-        assert!(!color_check(&image, false, &options(&[])));
+        assert!(!color_check(&image, false, &options(&[])?));
+        Ok(())
     }
 
     #[test]
-    fn saturated_colours_are_detected() {
+    fn saturated_colours_are_detected() -> Result<()> {
         // Two very different hues: the chroma histograms spread far past the
         // neutral band, which is what KCC measures.
         let image = RgbImage::from_fn(16, 16, |x, _| {
@@ -222,21 +225,24 @@ mod tests {
                 Rgb([0, 0, 255])
             }
         });
-        assert!(color_check(&image, false, &options(&[])));
+        assert!(color_check(&image, false, &options(&[])?));
+        Ok(())
     }
 
     #[test]
-    fn a_solid_colour_has_no_chroma_spread() {
+    fn a_solid_colour_has_no_chroma_spread() -> Result<()> {
         // A single flat colour is treated as a (coloured) background, not as a
         // colourful page: KCC requires chroma variation.
         let image = solid(8, 8, [255, 0, 0]);
-        assert!(!color_check(&image, false, &options(&[])));
+        assert!(!color_check(&image, false, &options(&[])?));
+        Ok(())
     }
 
     #[test]
-    fn webtoon_forces_colour() {
+    fn webtoon_forces_colour() -> Result<()> {
         let image = half_black(16, 16);
-        assert!(color_check(&image, false, &options(&["--webtoon"])));
+        assert!(color_check(&image, false, &options(&["--webtoon"])?));
+        Ok(())
     }
 
     #[test]

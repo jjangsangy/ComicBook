@@ -204,39 +204,35 @@ mod tests {
     use image::{ImageEncoder, Luma, Rgb, RgbImage};
 
     #[test]
-    fn jpeg_components_reads_the_header() {
+    fn jpeg_components_reads_the_header() -> Result<()> {
         let mut rgb = Vec::new();
         let mut gray = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new(&mut rgb)
-            .write_image(
-                RgbImage::from_pixel(4, 6, Rgb([1, 2, 3])).as_raw(),
-                4,
-                6,
-                image::ExtendedColorType::Rgb8,
-            )
-            .unwrap();
-        image::codecs::jpeg::JpegEncoder::new(&mut gray)
-            .write_image(
-                image::GrayImage::from_pixel(4, 6, Luma([9])).as_raw(),
-                4,
-                6,
-                image::ExtendedColorType::L8,
-            )
-            .unwrap();
+        image::codecs::jpeg::JpegEncoder::new(&mut rgb).write_image(
+            RgbImage::from_pixel(4, 6, Rgb([1, 2, 3])).as_raw(),
+            4,
+            6,
+            image::ExtendedColorType::Rgb8,
+        )?;
+        image::codecs::jpeg::JpegEncoder::new(&mut gray).write_image(
+            image::GrayImage::from_pixel(4, 6, Luma([9])).as_raw(),
+            4,
+            6,
+            image::ExtendedColorType::L8,
+        )?;
 
         assert_eq!(jpeg_components(&rgb), Some(3));
         assert_eq!(jpeg_components(&gray), Some(1));
         assert_eq!(jpeg_components(b"not a jpeg"), None);
+        Ok(())
     }
 
     #[test]
-    fn raw_pdf_pixels_keep_their_channel_count() {
+    fn raw_pdf_pixels_keep_their_channel_count() -> Result<()> {
         let gray = raw_image(&DynamicImage::ImageLuma8(image::GrayImage::from_pixel(
             2,
             2,
             Luma([7]),
-        )))
-        .unwrap();
+        )))?;
         assert!(gray.gray);
         assert!(!gray.data.is_empty());
 
@@ -244,8 +240,8 @@ mod tests {
             2,
             2,
             Rgb([1, 2, 3]),
-        )))
-        .unwrap();
+        )))?;
         assert!(!rgb.gray);
+        Ok(())
     }
 }

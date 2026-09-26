@@ -14,6 +14,7 @@
 
 use std::path::Path;
 
+use anyhow::Result;
 use askama::Template;
 
 use super::templates::{Opf, OpfItem, SpineItem, StyleCss};
@@ -45,7 +46,7 @@ pub(crate) fn build_opf(
     uuid: &str,
     modified: &str,
     options: &Options,
-) -> String {
+) -> Result<String> {
     let device = (options.profile_data.width, options.profile_data.height);
 
     // `--vertical-4-panel` writes top-to-bottom; `--invert-direction` swaps the
@@ -137,9 +138,9 @@ pub(crate) fn build_opf(
     };
     // askama drops a single trailing newline from every template; KCC's OPF is
     // newline terminated (AGENTS.md §5.2).
-    let mut out = view.render().expect("content.opf is a static template");
+    let mut out = view.render()?;
     out.push('\n');
-    out
+    Ok(out)
 }
 
 /// The OPF manifest: a page item and an image item per page, plus the `-below`
@@ -181,12 +182,12 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
 }
 
 /// The shared `style.css`.
-pub(crate) fn style_css(options: &Options) -> String {
+pub(crate) fn style_css(options: &Options) -> Result<String> {
     let view = StyleCss {
         scribe: options.kindle_scribe_azw3,
         panel: options.is_kindle && options.panel_view,
     };
-    view.render().expect("style.css is a static template")
+    Ok(view.render()?)
 }
 
 /// The `page-spread-*` property for each spine item (KCC's two-pass algorithm).

@@ -342,6 +342,7 @@ fn zfill(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::bail;
     use clap::Parser;
 
     use crate::cli::{Cli, Commands};
@@ -359,13 +360,13 @@ mod tests {
   <Page Image="5" Bookmark="Chapter 2"/>
 </ComicInfo>"#;
 
-    fn options(args: &[&str]) -> Options {
+    fn options(args: &[&str]) -> Result<Options> {
         let mut full = vec!["comic-book", "ebook", "book.cbz"];
         full.extend_from_slice(args);
-        let cli = Cli::try_parse_from(full).expect("CLI parses");
+        let cli = Cli::try_parse_from(full)?;
         match cli.command {
-            Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-            _ => unreachable!(),
+            Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
         }
     }
 
@@ -376,8 +377,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_every_field() {
-        let info = ComicInfo::parse(SAMPLE.as_bytes()).unwrap();
+    fn parses_every_field() -> Result<()> {
+        let info = ComicInfo::parse(SAMPLE.as_bytes())?;
         assert_eq!(info.series, "Berserk");
         assert_eq!(info.volume, "3");
         assert_eq!(info.number, "7");
@@ -389,19 +390,22 @@ mod tests {
             info.bookmarks,
             vec![(0, "Chapter 1".to_string()), (5, "Chapter 2".to_string())]
         );
+        Ok(())
     }
 
     #[test]
-    fn people_are_deduplicated_and_sorted() {
+    fn people_are_deduplicated_and_sorted() -> Result<()> {
         let xml = "<ComicInfo><Writer>B, A, B</Writer></ComicInfo>";
-        let info = ComicInfo::parse(xml.as_bytes()).unwrap();
+        let info = ComicInfo::parse(xml.as_bytes())?;
         assert_eq!(info.writers, vec!["A", "B"]);
+        Ok(())
     }
 
     #[test]
-    fn self_closing_fields_are_treated_as_empty() {
-        let info = ComicInfo::parse(b"<ComicInfo><Series/></ComicInfo>").unwrap();
+    fn self_closing_fields_are_treated_as_empty() -> Result<()> {
+        let info = ComicInfo::parse(b"<ComicInfo><Series/></ComicInfo>")?;
         assert_eq!(info.series, "");
+        Ok(())
     }
 
     #[test]
@@ -411,18 +415,19 @@ mod tests {
     }
 
     #[test]
-    fn malformed_xml_is_ignored_by_resolve() {
-        let options = options(&[]);
+    fn malformed_xml_is_ignored_by_resolve() -> Result<()> {
+        let options = options(&[])?;
         let broken = r#"<ComicInfo><Page Image="x" Bookmark="c"/></ComicInfo>"#;
         let metadata = resolve(&tree(broken), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "Book");
         assert_eq!(metadata.authors, vec!["KCC"]);
         assert!(metadata.bookmarks.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn default_title_combines_series_volume_and_number() {
-        let options = options(&[]);
+    fn default_title_combines_series_volume_and_number() -> Result<()> {
+        let options = options(&[])?;
         let metadata = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "Berserk Vol. 03 #007");
         assert_eq!(metadata.volume, "3");
@@ -430,53 +435,59 @@ mod tests {
         assert_eq!(metadata.series, "Berserk");
         assert_eq!(metadata.summary, "A summary & more");
         assert_eq!(metadata.bookmarks.len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn metadata_title_one_appends_the_title() {
-        let options = options(&["--metadata-title", "1"]);
+    fn metadata_title_one_appends_the_title() -> Result<()> {
+        let options = options(&["--metadata-title", "1"])?;
         let metadata = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "Berserk Vol. 03 #007: The Golden Age");
+        Ok(())
     }
 
     #[test]
-    fn metadata_title_two_uses_the_title_only() {
-        let options = options(&["--metadata-title", "2"]);
+    fn metadata_title_two_uses_the_title_only() -> Result<()> {
+        let options = options(&["--metadata-title", "2"])?;
         let metadata = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "The Golden Age");
+        Ok(())
     }
 
     #[test]
-    fn explicit_title_is_not_overridden() {
-        let options = options(&["-t", "Custom"]);
+    fn explicit_title_is_not_overridden() -> Result<()> {
+        let options = options(&["-t", "Custom"])?;
         let metadata = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "Custom");
         assert_eq!(metadata.series, "Berserk", "series is still lifted");
+        Ok(())
     }
 
     #[test]
-    fn comicinfo_authors_replace_the_default_author() {
-        let defaults = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options(&[]));
+    fn comicinfo_authors_replace_the_default_author() -> Result<()> {
+        let defaults = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options(&[])?);
         assert_eq!(defaults.authors, vec!["Kentaro Miura", "Someone Else"]);
 
         let explicit = resolve(
             &tree(SAMPLE),
             Path::new("/tmp/Book.cbz"),
-            &options(&["-a", "Me"]),
+            &options(&["-a", "Me"])?,
         );
         assert_eq!(explicit.authors, vec!["Me"]);
+        Ok(())
     }
 
     #[test]
-    fn keep_comicinfo_retains_the_document_for_cbz() {
-        let cbz = options(&["-p", "KDX", "--keep-comicinfo"]);
+    fn keep_comicinfo_retains_the_document_for_cbz() -> Result<()> {
+        let cbz = options(&["-p", "KDX", "--keep-comicinfo"])?;
         assert_eq!(cbz.format, Format::Cbz);
         let kept = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &cbz);
         assert_eq!(kept.comicinfo_xml.as_deref(), Some(SAMPLE.as_bytes()));
 
         // Without the flag, the document is not retained.
-        let without = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options(&[]));
+        let without = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &options(&[])?);
         assert_eq!(without.comicinfo_xml, None);
+        Ok(())
     }
 
     #[test]

@@ -21,16 +21,21 @@ pub fn bar(len: u64, message: impl Into<String>) -> ProgressBar {
         return ProgressBar::hidden();
     }
     let bar = ProgressBar::new(len);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
-            )
-            .expect("valid template")
-            .progress_chars("#>-"),
-    );
+    bar.set_style(bar_style());
     bar.set_message(message.into());
     bar
+}
+
+/// The primary bar style. The template is a constant we know parses; on the
+/// (impossible) template error, fall back to indicatif's default style rather
+/// than panicking.
+fn bar_style() -> ProgressStyle {
+    match ProgressStyle::default_bar().template(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
+    ) {
+        Ok(style) => style.progress_chars("#->"),
+        Err(_) => ProgressStyle::default_bar(),
+    }
 }
 
 /// A spinner (indeterminate) progress bar, or a hidden bar when not interactive.
@@ -39,13 +44,17 @@ pub fn spinner(message: impl Into<String>) -> ProgressBar {
         return ProgressBar::hidden();
     }
     let bar = ProgressBar::new_spinner();
-    bar.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .expect("valid template"),
-    );
+    bar.set_style(spinner_style());
     bar.set_message(message.into());
     bar
+}
+
+/// The spinner style, with the same constant-template fallback as [`bar_style`].
+fn spinner_style() -> ProgressStyle {
+    match ProgressStyle::default_spinner().template("{spinner:.green} {msg}") {
+        Ok(style) => style,
+        Err(_) => ProgressStyle::default_spinner(),
+    }
 }
 
 /// A [`ProgressBar`] that never draws, for headless callers.

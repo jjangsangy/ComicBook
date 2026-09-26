@@ -105,6 +105,7 @@ fn source_name(source: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::{bail, Result};
     use clap::Parser;
 
     #[test]
@@ -114,18 +115,17 @@ mod tests {
     }
 
     #[test]
-    fn fusion_needs_at_least_two_sources() {
-        let cli = crate::cli::Cli::try_parse_from(["comic-book", "ebook", "book.cbz"])
-            .expect("CLI parses");
+    fn fusion_needs_at_least_two_sources() -> Result<()> {
+        let cli = crate::cli::Cli::try_parse_from(["comic-book", "ebook", "book.cbz"])?;
         let options = match cli.command {
-            crate::cli::Commands::Ebook(args) => {
-                crate::ebook::options::Options::resolve(&args).expect("resolves")
-            }
-            _ => unreachable!(),
+            crate::cli::Commands::Ebook(args) => crate::ebook::options::Options::resolve(&args)?,
+            _ => bail!("expected the ebook subcommand"),
         };
-        let error = build(&[PathBuf::from("only.cbz")], &options)
-            .unwrap_err()
-            .to_string();
+        let error = match build(&[PathBuf::from("only.cbz")], &options) {
+            Ok(_) => bail!("fusion accepted a single source"),
+            Err(error) => error.to_string(),
+        };
         assert!(error.contains("at least 2"), "unexpected error: {error}");
+        Ok(())
     }
 }

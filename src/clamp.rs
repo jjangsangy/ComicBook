@@ -269,25 +269,30 @@ fn process_chapter(
 
 fn overall_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}")
-            .expect("valid template")
-            .progress_chars("#>-"),
-    );
+    bar.set_style(progress_style(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
+        "#->",
+    ));
     bar.set_message("Overall Progress");
     bar
 }
 
 fn chapter_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("  -> {msg} [{bar:30.cyan/blue}] {pos}/{len}")
-            .expect("valid template")
-            .progress_chars("=>-"),
-    );
+    bar.set_style(progress_style(
+        "  -> {msg} [{bar:30.cyan/blue}] {pos}/{len}",
+        "=>-",
+    ));
     bar
+}
+
+/// Build a bar style from a constant template, falling back to indicatif's
+/// default style on the (impossible) template error rather than panicking.
+fn progress_style(template: &str, chars: &str) -> ProgressStyle {
+    match ProgressStyle::default_bar().template(template) {
+        Ok(style) => style.progress_chars(chars),
+        Err(_) => ProgressStyle::default_bar(),
+    }
 }
 
 pub fn run_clamp(

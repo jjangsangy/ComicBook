@@ -252,7 +252,7 @@ fn encode_payload(
         fill,
         color,
         color_output,
-    );
+    )?;
 
     let flags = |above: bool, below: bool| PageFlags {
         order_class: payload.order,
@@ -331,19 +331,19 @@ fn prepare_image(
     fill: Background,
     color: bool,
     color_output: bool,
-) -> DynamicImage {
+) -> Result<DynamicImage> {
     gamma_correct(&mut image, options, color);
     if !color_output {
         image = DynamicImage::ImageLuma8(to_luma601(&image));
     }
     autocontrast_image(&mut image, options, color);
-    resize_image(&mut image, options, size, order, fill);
+    resize_image(&mut image, options, size, order, fill)?;
     // The moiré eraser runs on the resized plane, after autocontrast and before
     // quantization (KCC's `optimizeForDisplay`).
     if options.erase_rainbow && image.width() > 1 && image.height() > 1 {
         image = super::rainbow::erase_rainbow_artifacts(&image, color_output);
     }
-    image
+    Ok(image)
 }
 
 /// Whether a decoded image came from a grayscale source (KCC's `L`/`1` modes).
@@ -517,19 +517,19 @@ fn resize_image(
     size: (u32, u32),
     order: OrderClass,
     fill: Background,
-) {
+) -> Result<()> {
     let (width, height) = image.dimensions();
     let method = resize_method(image, size);
 
     if options.stretch {
-        *image = resize_to(image, size.0, size.1, method);
-        return;
+        *image = resize_to(image, size.0, size.1, method)?;
+        return Ok(());
     }
     if options.wallpaper {
         // KCC 9.x leaves this branch unreachable (a bare `pass`); we implement the
         // documented intent. See AGENTS.md §13.5.
-        *image = fit(image, size, method);
-        return;
+        *image = fit(image, size, method)?;
+        return Ok(());
     }
     if options.no_rotate
         && matches!(order, OrderClass::RotateFirst | OrderClass::RotateLast)
@@ -540,15 +540,15 @@ fn resize_image(
                 image,
                 (SCRIBE_MAX_DIMENSION, SCRIBE_MAX_DIMENSION),
                 Method::Lanczos,
-            );
+            )?;
         } else if width > size.0 * 2 || height > size.1 {
-            *image = contain(image, (size.0 * 2, size.1), Method::Lanczos);
+            *image = contain(image, (size.0 * 2, size.1), Method::Lanczos)?;
         }
-        return;
+        return Ok(());
     }
     if method == Method::Bicubic && !options.upscale {
         // The page already fits the profile and upscaling is off.
-        return;
+        return Ok(());
     }
 
     let ratio_device = f64::from(size.1) / f64::from(size.0);
@@ -559,12 +559,13 @@ fn resize_image(
     if kdx && (ratio_image - ratio_device).abs() < AUTO_CROP_THRESHOLD * 3.0
         || (ratio_image - ratio_device).abs() < AUTO_CROP_THRESHOLD
     {
-        *image = fit(image, size, method);
+        *image = fit(image, size, method)?;
     } else if matches!(options.format, Format::Cbz | Format::Pdf) && !white_borders {
-        *image = pad(image, size, method, fill);
+        *image = pad(image, size, method, fill)?;
     } else {
-        *image = contain(image, size, method);
+        *image = contain(image, size, method)?;
     }
+    Ok(())
 }
 
 /// The resampling filter KCC picks: bicubic when the page already fits the
@@ -596,23 +597,28 @@ fn resize_method(image: &DynamicImage, size: (u32, u32)) -> Method {
 }
 
 /// Resize the whole image to an exact size (Pillow's `resize`).
-fn resize_to(image: &DynamicImage, width: u32, height: u32, method: Method) -> DynamicImage {
+fn resize_to(
+    image: &DynamicImage,
+    width: u32,
+    height: u32,
+    method: Method,
+) -> Result<DynamicImage> {
     let alg = ResizeAlg::Convolution(method.filter());
-    match image {
+    Ok(match image {
         DynamicImage::ImageLuma8(buffer) => {
-            DynamicImage::ImageLuma8(resize_buffer(buffer, width, height, alg, PixelType::U8))
+            DynamicImage::ImageLuma8(resize_buffer(buffer, width, height, alg, PixelType::U8)?)
         }
         DynamicImage::ImageRgb8(buffer) => {
-            DynamicImage::ImageRgb8(resize_buffer(buffer, width, height, alg, PixelType::U8x3))
+            DynamicImage::ImageRgb8(resize_buffer(buffer, width, height, alg, PixelType::U8x3)?)
         }
         DynamicImage::ImageRgba8(buffer) => {
-            DynamicImage::ImageRgba8(resize_buffer(buffer, width, height, alg, PixelType::U8x4))
+            DynamicImage::ImageRgba8(resize_buffer(buffer, width, height, alg, PixelType::U8x4)?)
         }
         other => {
             let rgb = other.to_rgb8();
-            DynamicImage::ImageRgb8(resize_buffer(&rgb, width, height, alg, PixelType::U8x3))
+            DynamicImage::ImageRgb8(resize_buffer(&rgb, width, height, alg, PixelType::U8x3)?)
         }
-    }
+    })
 }
 
 /// Resize an 8-bit L8/Rgb8/Rgba8 buffer with `fast_image_resize`, preserving the type.
@@ -622,24 +628,22 @@ fn resize_buffer<P>(
     height: u32,
     alg: ResizeAlg,
     pixel_type: PixelType,
-) -> ImageBuffer<P, Vec<u8>>
+) -> Result<ImageBuffer<P, Vec<u8>>>
 where
     P: Pixel<Subpixel = u8> + 'static,
 {
     let (src_w, src_h) = source.dimensions();
-    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), pixel_type)
-        .expect("valid source image");
+    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), pixel_type)?;
     let mut dst = FastImage::new(width, height, pixel_type);
     let options = ResizeOptions::new().resize_alg(alg);
-    Resizer::new()
-        .resize(&src, &mut dst, &options)
-        .expect("resize succeeds");
-    ImageBuffer::from_raw(width, height, dst.into_vec()).expect("valid destination image")
+    Resizer::new().resize(&src, &mut dst, &options)?;
+    ImageBuffer::from_raw(width, height, dst.into_vec())
+        .context("resized image buffer has an unexpected length")
 }
 
 /// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly
 /// (kept bespoke, §5.3 — Pillow's half-to-even rounding is pinned).
-pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     let image_ratio = f64::from(width) / f64::from(height);
     let box_ratio = f64::from(size.0) / f64::from(size.1);
@@ -662,7 +666,11 @@ pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> Dyn
 }
 
 /// Pillow's `ImageOps.contain`: scale to fit within `size`, preserving aspect.
-pub(crate) fn contain(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+pub(crate) fn contain(
+    image: &DynamicImage,
+    size: (u32, u32),
+    method: Method,
+) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     let (target_w, target_h) = contain_size(width, height, size);
     resize_to(image, target_w, target_h, method)
@@ -670,10 +678,14 @@ pub(crate) fn contain(image: &DynamicImage, size: (u32, u32), method: Method) ->
 
 /// Pillow's `Image.thumbnail`: shrink to fit `size`, preserving aspect, never
 /// enlarging (a no-op when the image already fits). Used for the cover.
-pub(crate) fn thumbnail(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+pub(crate) fn thumbnail(
+    image: &DynamicImage,
+    size: (u32, u32),
+    method: Method,
+) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     if width <= size.0 && height <= size.1 {
-        return image.clone();
+        return Ok(image.clone());
     }
     let (target_w, target_h) = contain_size(width, height, size);
     resize_to(image, target_w, target_h, method)
@@ -704,8 +716,13 @@ fn contain_size(width: u32, height: u32, size: (u32, u32)) -> (u32, u32) {
 }
 
 /// Pillow's `ImageOps.pad`: contain, then centre on a fill-coloured canvas.
-fn pad(image: &DynamicImage, size: (u32, u32), method: Method, fill: Background) -> DynamicImage {
-    let contained = contain(image, size, method);
+fn pad(
+    image: &DynamicImage,
+    size: (u32, u32),
+    method: Method,
+    fill: Background,
+) -> Result<DynamicImage> {
+    let contained = contain(image, size, method)?;
     let (width, height) = contained.dimensions();
     let mut canvas = filled_like(&contained, size.0, size.1, fill_value(fill));
 
@@ -723,7 +740,7 @@ fn pad(image: &DynamicImage, size: (u32, u32), method: Method, fill: Background)
         }
         _ => {}
     }
-    canvas
+    Ok(canvas)
 }
 
 /// The fill value for a background colour.
@@ -1088,13 +1105,13 @@ mod tests {
     use clap::Parser;
 
     /// Resolve options from a `comic-book ebook` command line.
-    fn options(args: &[&str]) -> Options {
+    fn options(args: &[&str]) -> Result<Options> {
         let mut full = vec!["comic-book", "ebook", "book.cbz"];
         full.extend_from_slice(args);
-        let cli = crate::cli::Cli::try_parse_from(full).expect("CLI parses");
+        let cli = crate::cli::Cli::try_parse_from(full)?;
         match cli.command {
-            crate::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-            _ => unreachable!(),
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
         }
     }
 
@@ -1116,18 +1133,19 @@ mod tests {
     }
 
     #[test]
-    fn normal_page_is_passed_through() {
+    fn normal_page_is_passed_through() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(100, 150));
-        let payloads = split_check(&image, &options(&[]), (1072, 1448));
+        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
+        Ok(())
     }
 
     #[test]
-    fn wide_spread_below_bisect_is_split() {
+    fn wide_spread_below_bisect_is_split() -> Result<()> {
         // 1.5:1 landscape against a portrait profile sits between the split and
         // bisect thresholds, so it is bisected rather than rotated.
         let image = DynamicImage::ImageRgb8(RgbImage::new(300, 200));
-        let payloads = split_check(&image, &options(&[]), (1072, 1448));
+        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
         assert_eq!(
             order_of(&payloads),
             vec![OrderClass::SplitLeft, OrderClass::SplitRight]
@@ -1135,38 +1153,42 @@ mod tests {
         // Both halves are half as wide.
         assert_eq!(payloads[0].image.width(), 150);
         assert_eq!(payloads[1].image.width(), 150);
+        Ok(())
     }
 
     #[test]
-    fn wide_spread_at_bisect_is_rotated() {
+    fn wide_spread_at_bisect_is_rotated() -> Result<()> {
         // 2.5:1 exceeds BISECT_THRESHOLD, so the spread only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&[]), (1072, 1448));
+        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(payloads[0].rotated);
         // Rotated 90°: dimensions swap.
         assert_eq!(payloads[0].image.dimensions(), (200, 500));
+        Ok(())
     }
 
     #[test]
-    fn rotate_first_puts_the_rotated_spread_first() {
+    fn rotate_first_puts_the_rotated_spread_first() -> Result<()> {
         // 2.5:1 exceeds the bisect threshold, so it only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&["--rotate-first"]), (1072, 1448));
+        let payloads = split_check(&image, &options(&["--rotate-first"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateFirst]);
+        Ok(())
     }
 
     #[test]
-    fn no_rotate_keeps_the_spread_upright() {
+    fn no_rotate_keeps_the_spread_upright() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&["--no-rotate"]), (1072, 1448));
+        let payloads = split_check(&image, &options(&["--no-rotate"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(!payloads[0].rotated);
         assert_eq!(payloads[0].image.dimensions(), (500, 200));
+        Ok(())
     }
 
     #[test]
-    fn right_to_left_swaps_the_split_halves() {
+    fn right_to_left_swaps_the_split_halves() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::from_fn(300, 200, |x, _| {
             if x < 150 {
                 Rgb([0, 0, 0])
@@ -1174,97 +1196,107 @@ mod tests {
                 Rgb([255, 0, 0])
             }
         }));
-        let ltr = split_check(&image, &options(&[]), (1072, 1448));
-        let rtl = split_check(&image, &options(&["--manga"]), (1072, 1448));
+        let ltr = split_check(&image, &options(&[])?, (1072, 1448));
+        let rtl = split_check(&image, &options(&["--manga"])?, (1072, 1448));
         // Left-to-right reads left half first; right-to-left reads right half.
         assert_eq!(ltr[0].image.get_pixel(0, 0)[0], 0);
         assert_eq!(rtl[0].image.get_pixel(0, 0)[0], 255);
+        Ok(())
     }
 
     #[test]
-    fn maximize_strips_stacks_the_halves() {
+    fn maximize_strips_stacks_the_halves() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(400, 100));
-        let payloads = split_check(&image, &options(&["--maximize-strips"]), (1072, 1448));
+        let payloads = split_check(&image, &options(&["--maximize-strips"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
         assert_eq!(payloads[0].image.dimensions(), (200, 200));
+        Ok(())
     }
 
     #[test]
-    fn contains_scales_down_to_fit() {
+    fn contains_scales_down_to_fit() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(2000, 1000));
-        let contained = contain(&image, (1000, 1000), Method::Lanczos);
+        let contained = contain(&image, (1000, 1000), Method::Lanczos)?;
         assert_eq!(contained.dimensions(), (1000, 500));
+        Ok(())
     }
 
     #[test]
-    fn pad_fills_to_the_exact_profile_size() {
+    fn pad_fills_to_the_exact_profile_size() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(2000, 1000));
-        let padded = pad(&image, (1000, 1000), Method::Lanczos, Background::White);
+        let padded = pad(&image, (1000, 1000), Method::Lanczos, Background::White)?;
         assert_eq!(padded.dimensions(), (1000, 1000));
         // The letterbox is white.
         assert_eq!(padded.to_rgb8().get_pixel(500, 0)[0], 255);
+        Ok(())
     }
 
     #[test]
-    fn fit_crops_then_scales() {
+    fn fit_crops_then_scales() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
-        let fitted = fit(&image, (500, 1000), Method::Lanczos);
+        let fitted = fit(&image, (500, 1000), Method::Lanczos)?;
         assert_eq!(fitted.dimensions(), (500, 1000));
+        Ok(())
     }
 
     #[test]
-    fn grayscale_pages_encode_as_jpeg_by_default() {
+    fn grayscale_pages_encode_as_jpeg_by_default() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
-        let options = options(&[]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&[])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
         assert_eq!(encoded[0].name, "page-kcc-x.jpg");
         assert_eq!((encoded[0].width, encoded[0].height), (40, 40));
+        Ok(())
     }
 
     #[test]
-    fn force_png_emits_an_indexed_png() {
+    fn force_png_emits_an_indexed_png() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
-        let options = options(&["-p", "KoE", "--force-png"]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&["-p", "KoE", "--force-png"])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
         // Palette PNG signature + IHDR bit depth 4 (16-colour palette).
         assert_eq!(&encoded[0].bytes[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(encoded[0].bytes[24], 4, "IHDR bit depth");
+        Ok(())
     }
 
     #[test]
-    fn png_legacy_emits_grayscale_png() {
+    fn png_legacy_emits_grayscale_png() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
-        let options = options(&["-p", "KoE", "--force-png", "--png-legacy"]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&["-p", "KoE", "--force-png", "--png-legacy"])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
         // IHDR colour type 0 (grayscale).
         assert_eq!(encoded[0].bytes[25], 0, "IHDR colour type");
+        Ok(())
     }
 
     #[test]
-    fn force_png_on_kindle_emits_gif() {
+    fn force_png_on_kindle_emits_gif() -> Result<()> {
         // Kindle output replaces monochrome PNGs with GIFs (KCC's AZW3 path).
         let source = page(40, 40, [10, 10, 10]);
-        let options = options(&["--force-png"]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&["--force-png"])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded[0].media_type, MediaType::Gif);
         assert!(encoded[0].bytes.starts_with(b"GIF"));
+        Ok(())
     }
 
     #[test]
-    fn force_color_keeps_a_colour_page_as_jpeg() {
+    fn force_color_keeps_a_colour_page_as_jpeg() -> Result<()> {
         let source = page(40, 40, [255, 0, 0]);
-        let options = options(&["--force-color", "--force-png"]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&["--force-color", "--force-png"])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         // A colour page stays JPEG unless `--force-png-rgb` is given.
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
+        Ok(())
     }
 
     #[test]
-    fn force_png_rgb_keeps_a_colour_page_as_png() {
+    fn force_png_rgb_keeps_a_colour_page_as_png() -> Result<()> {
         let source = page(40, 40, [255, 0, 0]);
         let options = options(&[
             "-p",
@@ -1272,65 +1304,72 @@ mod tests {
             "--force-color",
             "--force-png",
             "--force-png-rgb",
-        ]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        ])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
+        Ok(())
     }
 
     #[test]
-    fn no_processing_copies_the_source_bytes() {
+    fn no_processing_copies_the_source_bytes() -> Result<()> {
         let mut source = page(10, 10, [1, 2, 3]);
         source.raw = Some(vec![1, 2, 3, 4]);
-        let options = options(&["--no-processing"]);
-        let encoded = process_page(&source, &options, profile_size(&options)).unwrap();
+        let options = options(&["--no-processing"])?;
+        let encoded = process_page(&source, &options, profile_size(&options))?;
         assert_eq!(encoded[0].bytes, vec![1, 2, 3, 4]);
         assert_eq!(encoded[0].media_type, MediaType::Png);
         assert_eq!(encoded[0].order_class, OrderClass::Normal);
+        Ok(())
     }
 
     #[test]
-    fn gamma_correction_darkens_midtones() {
+    fn gamma_correction_darkens_midtones() -> Result<()> {
         let mut image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([128, 128, 128])));
-        gamma_correct(&mut image, &options(&["--gamma", "2.0"]), false);
+        gamma_correct(&mut image, &options(&["--gamma", "2.0"])?, false);
         let value = image.to_rgb8().get_pixel(0, 0)[0];
         // 255 * (128/255)^2 ≈ 64 (KCC rounds to 64).
         assert_eq!(value, 64);
+        Ok(())
     }
 
     #[test]
-    fn autocontrast_stretches_a_full_range_image() {
+    fn autocontrast_stretches_a_full_range_image() -> Result<()> {
         // A high-contrast ramp (range 220 > 159) is stretched to [0, 255].
         let mut image = DynamicImage::ImageLuma8(GrayImage::from_fn(256, 1, |x, _| {
             Luma([(10 + x * 220 / 255) as u8])
         }));
-        autocontrast_image(&mut image, &options(&[]), false);
+        autocontrast_image(&mut image, &options(&[])?, false);
         let gray = to_luma601(&image);
         assert_eq!(gray.get_pixel(0, 0)[0], 0);
         assert_eq!(gray.get_pixel(255, 0)[0], 255);
+        Ok(())
     }
 
     #[test]
-    fn autocontrast_leaves_a_low_contrast_image_alone() {
+    fn autocontrast_leaves_a_low_contrast_image_alone() -> Result<()> {
         // Range 100 < 159: probably intentional, so it is left untouched.
         let mut image = DynamicImage::ImageLuma8(GrayImage::from_fn(16, 1, |x, _| {
             Luma([(x as u8).saturating_add(100)])
         }));
         let before = image.clone();
-        autocontrast_image(&mut image, &options(&[]), false);
+        autocontrast_image(&mut image, &options(&[])?, false);
         assert_eq!(image.to_luma8(), before.to_luma8());
+        Ok(())
     }
 
     #[test]
-    fn autolevel_raises_the_black_point() {
+    fn autolevel_raises_the_black_point() -> Result<()> {
         // Most dark pixels sit at 30, so everything below 30 is clamped up.
         let mut values = vec![0u8; 40];
         values.extend(std::iter::repeat_n(30u8, 200));
         values.extend(std::iter::repeat_n(200u8, 16));
-        let mut image = DynamicImage::ImageLuma8(GrayImage::from_raw(1, 256, values).unwrap());
+        let mut image =
+            DynamicImage::ImageLuma8(GrayImage::from_raw(1, 256, values).context("1x256 buffer")?);
         autolevel_image(&mut image, false);
         let gray = image.to_luma8();
         assert!(gray.pixels().all(|pixel| pixel[0] >= 30));
         assert_eq!(gray.get_pixel(0, 0)[0], 30);
+        Ok(())
     }
 
     #[test]
@@ -1398,13 +1437,13 @@ mod tests {
     }
 
     #[test]
-    fn a_tall_scribe_page_splits_at_1920_into_above_and_below() {
+    fn a_tall_scribe_page_splits_at_1920_into_above_and_below() -> Result<()> {
         // A page larger than the KS profile: it is contain-resized to 2480 tall,
         // then split into a 1920-row top and a 560-row bottom.
         let tall = page(2000, 3000, [10, 10, 10]);
-        let options = options(&["-f", "epub", "-p", "KS"]);
+        let options = options(&["-f", "epub", "-p", "KS"])?;
         let size = profile_size(&options);
-        let encoded = process_page(&tall, &options, size).expect("processes");
+        let encoded = process_page(&tall, &options, size)?;
 
         assert_eq!(encoded.len(), 2);
         assert_eq!(encoded[0].name, "page-kcc-x-above.jpg");
@@ -1416,17 +1455,19 @@ mod tests {
         assert_eq!((encoded[1].width, encoded[1].height), (1653, 560));
         assert!(encoded[0].flags.above && !encoded[0].flags.below);
         assert!(!encoded[1].flags.above && encoded[1].flags.below);
+        Ok(())
     }
 
     #[test]
-    fn a_scribe_page_that_fits_is_named_whole() {
+    fn a_scribe_page_that_fits_is_named_whole() -> Result<()> {
         let small = page(100, 150, [10, 10, 10]);
-        let options = options(&["-f", "epub", "-p", "KS"]);
+        let options = options(&["-f", "epub", "-p", "KS"])?;
         let size = profile_size(&options);
-        let encoded = process_page(&small, &options, size).expect("processes");
+        let encoded = process_page(&small, &options, size)?;
 
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].name, "page-kcc-x-whole.jpg");
         assert!(!encoded[0].flags.above && !encoded[0].flags.below);
+        Ok(())
     }
 }

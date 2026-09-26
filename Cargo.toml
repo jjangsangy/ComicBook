@@ -94,3 +94,11 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 # Parsing the generated PDF back in the Phase 7 round-trip tests (AGENTS.md §15,
 # Phase 7 exit criterion). MIT, pure Rust; dev-only, so it never ships.
 lopdf = { version = "0.45", default-features = false }
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

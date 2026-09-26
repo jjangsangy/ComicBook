@@ -653,6 +653,7 @@ pub fn crop_page_number(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::{Context, Result};
     use image::{GenericImageView, GrayImage, Luma, Rgb, RgbImage};
 
     fn gray(width: u32, height: u32, value: u8) -> GrayImage {
@@ -733,12 +734,12 @@ mod tests {
     }
 
     #[test]
-    fn autocontrast_with_cutoff_stretches_the_surviving_range() {
+    fn autocontrast_with_cutoff_stretches_the_surviving_range() -> Result<()> {
         // The lone 1 is dropped by the 1 % cutoff, leaving 200..201 to stretch.
         let mut values = vec![1u8];
         values.extend(std::iter::repeat_n(200u8, 1000));
         values.extend(std::iter::repeat_n(201u8, 1000));
-        let image = GrayImage::from_raw(1, values.len() as u32, values).unwrap();
+        let image = GrayImage::from_raw(1, values.len() as u32, values).context("1xN buffer")?;
 
         let stretched = autocontrast_cutoff(&image, 1.0);
         assert_eq!(stretched.get_pixel(0, 0)[0], 0, "the 1 is clamped to black");
@@ -748,6 +749,7 @@ mod tests {
             255,
             "201 becomes white"
         );
+        Ok(())
     }
 
     #[test]
@@ -857,11 +859,12 @@ mod tests {
     }
 
     #[test]
-    fn crop_is_capped_at_ten_percent_per_side() {
+    fn crop_is_capped_at_ten_percent_per_side() -> Result<()> {
         // Ink only in the very centre: the clamp keeps 10 % borders.
         let page = framed(200, 300, (90, 140, 110, 160));
-        let bbox = margin_bbox(&page, 1.0, Background::White).unwrap();
+        let bbox = margin_bbox(&page, 1.0, Background::White).context("ink is found")?;
         assert_eq!(clamp_bbox(bbox, 200, 300), (20.0, 30.0, 180.0, 270.0));
+        Ok(())
     }
 
     #[test]
@@ -925,12 +928,15 @@ mod tests {
     }
 
     #[test]
-    fn out_of_bounds_crops_are_zero_filled() {
-        let image = DynamicImage::ImageLuma8(GrayImage::from_raw(2, 2, vec![1, 2, 3, 4]).unwrap());
+    fn out_of_bounds_crops_are_zero_filled() -> Result<()> {
+        let image = DynamicImage::ImageLuma8(
+            GrayImage::from_raw(2, 2, vec![1, 2, 3, 4]).context("2x2 buffer")?,
+        );
         let cropped = crop_padded(&image, 0, -1, 2, 1);
         assert_eq!(cropped.dimensions(), (2, 2));
         let gray = cropped.to_luma8();
         assert_eq!(gray.get_pixel(0, 0)[0], 0);
         assert_eq!(gray.get_pixel(0, 1)[0], 1);
+        Ok(())
     }
 }

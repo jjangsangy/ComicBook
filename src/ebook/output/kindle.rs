@@ -36,7 +36,7 @@ pub fn build_kindle(
     title: &str,
     drop_bookmarks: bool,
 ) -> Result<()> {
-    let entries = epub::build_entries(book, prepared, source, options, title, drop_bookmarks);
+    let entries = epub::build_entries(book, prepared, source, options, title, drop_bookmarks)?;
 
     if options.keep_epub {
         epub::package::write_epub(epub_dest, &entries)?;

@@ -67,9 +67,9 @@ pub fn process(
 
     let size = cover_size(options);
     let image = if options.cover_fill && !options.kindle_scribe_azw3 {
-        page::fit(&image, size, Method::Lanczos)
+        page::fit(&image, size, Method::Lanczos)?
     } else {
-        page::thumbnail(&image, size, Method::Lanczos)
+        page::thumbnail(&image, size, Method::Lanczos)?
     };
 
     // The OPF advertises the cover as `image/jpeg`, so it is always JPEG whatever
@@ -282,17 +282,18 @@ fn first_page_image(tree: &ComicTree) -> Option<DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::bail;
     use clap::Parser;
     use image::{Rgb, RgbImage};
 
     /// Resolve options from a `comic-book ebook` command line.
-    fn options(args: &[&str]) -> Options {
+    fn options(args: &[&str]) -> Result<Options> {
         let mut full = vec!["comic-book", "ebook", "book.cbz"];
         full.extend_from_slice(args);
-        let cli = crate::cli::Cli::try_parse_from(full).expect("CLI parses");
+        let cli = crate::cli::Cli::try_parse_from(full)?;
         match cli.command {
-            crate::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-            _ => unreachable!(),
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
         }
     }
 
@@ -321,98 +322,98 @@ mod tests {
     }
 
     #[test]
-    fn cover_is_capped_to_the_profile_and_named_cover_jpg() {
+    fn cover_is_capped_to_the_profile_and_named_cover_jpg() -> Result<()> {
         let tree = tree_with_page(2000, 3000, [255, 255, 255]);
-        let cover = process(&tree, None, &options(&["-f", "epub", "-p", "KoE"]))
-            .unwrap()
-            .unwrap();
+        let cover = process(&tree, None, &options(&["-f", "epub", "-p", "KoE"])?)?
+            .context("a cover is produced")?;
         assert_eq!(cover.page.name, "cover.jpg");
         assert_eq!(cover.page.media_type, MediaType::Jpeg);
         // The Kobo Elipsa is 1404x1872, so the 2000x3000 page is thumbnailed to fit.
         assert!(cover.page.width <= 1404 && cover.page.height <= 1872);
         assert!(!cover.smart_cropped);
+        Ok(())
     }
 
     #[test]
-    fn smart_cover_crop_takes_the_right_half_of_a_wide_spread() {
+    fn smart_cover_crop_takes_the_right_half_of_a_wide_spread() -> Result<()> {
         let tree = tree_with_page(2000, 1000, [255, 255, 255]);
         let cover = process(
             &tree,
             None,
-            &options(&["-f", "epub", "-p", "KoE", "--smart-cover-crop"]),
-        )
-        .unwrap()
-        .unwrap();
+            &options(&["-f", "epub", "-p", "KoE", "--smart-cover-crop"])?,
+        )?
+        .context("a cover is produced")?;
         assert!(cover.smart_cropped);
         // A 2:1 spread (> 1.83 ratio) keeps the right 42.5%–81% band, so the
         // cropped source is 770x1000 before the 1404x1872 thumbnail.
         assert!(cover.page.width < cover.page.height);
+        Ok(())
     }
 
     #[test]
-    fn smart_cover_crop_is_a_no_op_on_a_page_shaped_cover() {
+    fn smart_cover_crop_is_a_no_op_on_a_page_shaped_cover() -> Result<()> {
         let tree = tree_with_page(600, 900, [10, 10, 10]);
         let cover = process(
             &tree,
             None,
-            &options(&["-f", "epub", "-p", "KoE", "--smart-cover-crop"]),
-        )
-        .unwrap()
-        .unwrap();
+            &options(&["-f", "epub", "-p", "KoE", "--smart-cover-crop"])?,
+        )?
+        .context("a cover is produced")?;
         assert!(!cover.smart_cropped);
+        Ok(())
     }
 
     #[test]
-    fn cover_fill_crops_to_the_exact_profile_size() {
+    fn cover_fill_crops_to_the_exact_profile_size() -> Result<()> {
         // A portrait page against a landscape profile: thumbnail would leave the
         // height short, `--cover-fill` fills it exactly.
         let tree = tree_with_page(600, 900, [128, 128, 128]);
         let cover = process(
             &tree,
             None,
-            &options(&["-f", "epub", "-p", "KoE", "--cover-fill"]),
-        )
-        .unwrap()
-        .unwrap();
+            &options(&["-f", "epub", "-p", "KoE", "--cover-fill"])?,
+        )?
+        .context("a cover is produced")?;
         assert_eq!((cover.page.width, cover.page.height), (1404, 1872));
+        Ok(())
     }
 
     #[test]
-    fn force_color_keeps_the_cover_colourful() {
+    fn force_color_keeps_the_cover_colourful() -> Result<()> {
         let tree = tree_with_page(100, 150, [200, 30, 30]);
         let cover = process(
             &tree,
             None,
-            &options(&["-f", "epub", "-p", "KoE", "--force-color"]),
-        )
-        .unwrap()
-        .unwrap();
-        let decoded = image::load_from_memory(&cover.page.bytes).unwrap();
+            &options(&["-f", "epub", "-p", "KoE", "--force-color"])?,
+        )?
+        .context("a cover is produced")?;
+        let decoded = image::load_from_memory(&cover.page.bytes)?;
         assert!(matches!(decoded, DynamicImage::ImageRgb8(_)));
+        Ok(())
     }
 
     #[test]
-    fn tome_label_changes_the_cover_bytes_and_stays_grey() {
+    fn tome_label_changes_the_cover_bytes_and_stays_grey() -> Result<()> {
         // A dark cover so the white label is actually visible in the pixels.
         let tree = tree_with_page(600, 900, [20, 20, 20]);
-        let cover = process(&tree, None, &options(&["-f", "epub", "-p", "KoE"]))
-            .unwrap()
-            .unwrap()
+        let cover = process(&tree, None, &options(&["-f", "epub", "-p", "KoE"])?)?
+            .context("a cover is produced")?
             .page;
 
-        let plain = labelled(&cover, 0, 1, 85).unwrap();
+        let plain = labelled(&cover, 0, 1, 85)?;
         assert_eq!(plain.bytes, cover.bytes, "a single tome is left untouched");
 
-        let first = labelled(&cover, 1, 3, 85).unwrap();
-        let second = labelled(&cover, 2, 3, 85).unwrap();
+        let first = labelled(&cover, 1, 3, 85)?;
+        let second = labelled(&cover, 2, 3, 85)?;
         assert_ne!(first.bytes, cover.bytes, "the label re-encodes the cover");
         assert_ne!(first.bytes, second.bytes, "each tome gets its own number");
         assert!(matches!(
-            image::load_from_memory(&first.bytes).unwrap(),
+            image::load_from_memory(&first.bytes)?,
             DynamicImage::ImageLuma8(_)
         ));
         // A bright label pixel appears where the cover was uniformly dark.
-        let decoded = image::load_from_memory(&first.bytes).unwrap().to_luma8();
+        let decoded = image::load_from_memory(&first.bytes)?.to_luma8();
         assert!(decoded.pixels().any(|pixel| pixel[0] == 255));
+        Ok(())
     }
 }

@@ -93,7 +93,7 @@ fn merge_chapter(pages: &[Page]) -> Result<DynamicImage> {
                 &DynamicImage::ImageRgb8(rgb),
                 (target_width, height),
                 Method::Bicubic,
-            )
+            )?
         } else {
             DynamicImage::ImageRgb8(rgb)
         };
@@ -374,13 +374,13 @@ mod tests {
     use image::RgbImage;
 
     /// Resolve options from a `comic-book ebook` command line.
-    fn options(args: &[&str]) -> Options {
+    fn options(args: &[&str]) -> Result<Options> {
         let mut full = vec!["comic-book", "ebook", "book.cbz"];
         full.extend_from_slice(args);
-        let cli = crate::cli::Cli::try_parse_from(full).expect("CLI parses");
+        let cli = crate::cli::Cli::try_parse_from(full)?;
         match cli.command {
-            crate::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-            _ => unreachable!(),
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
         }
     }
 
@@ -443,36 +443,38 @@ mod tests {
     ];
 
     #[test]
-    fn short_strip_is_one_page() {
+    fn short_strip_is_one_page() -> Result<()> {
         let page = strip_page(
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
         );
-        let merged = merge_chapter(&[page]).unwrap();
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])).unwrap();
+        let merged = merge_chapter(&[page])?;
+        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 500)]);
         assert_eq!(pages[0].source_name, "kcc-0001.png");
+        Ok(())
     }
 
     #[test]
-    fn three_panels_pack_into_two_virtual_pages() {
+    fn three_panels_pack_into_two_virtual_pages() -> Result<()> {
         let page = strip_page("kcc-0001.png", checker_strip(800, SEGMENTS_A));
-        let merged = merge_chapter(&[page]).unwrap();
+        let merged = merge_chapter(&[page])?;
         assert_eq!(merged.dimensions(), (800, 2150));
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])).unwrap();
+        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 780), (800, 525)]);
         assert_eq!(pages[0].source_name, "kcc-0001-0001.png");
         assert_eq!(pages[1].source_name, "kcc-0001-0002.png");
+        Ok(())
     }
 
     #[test]
-    fn a_super_long_panel_splits_with_overlap() {
+    fn a_super_long_panel_splits_with_overlap() -> Result<()> {
         let page = strip_page(
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
-        let merged = merge_chapter(&[page]).unwrap();
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])).unwrap();
+        let merged = merge_chapter(&[page])?;
+        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         // The KV profile (1072x1448) gives a virtual height of 1080, so the 2500px
         // panel becomes three 1080px parts.
         assert_eq!(
@@ -480,30 +482,32 @@ mod tests {
             vec![(800, 1080), (800, 1080), (800, 1080)]
         );
         assert_eq!(pages.len(), 3);
+        Ok(())
     }
 
     #[test]
-    fn wider_devices_use_the_1072_cap_for_the_virtual_height() {
+    fn wider_devices_use_the_1072_cap_for_the_virtual_height() -> Result<()> {
         let page = strip_page(
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
-        let merged = merge_chapter(&[page]).unwrap();
+        let merged = merge_chapter(&[page])?;
         // KO is 1264px wide, so the virtual height is 1680 / 1072 * 800 = 1253.
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KO"])).unwrap();
+        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KO"])?)?;
         assert_eq!(
             split_sizes(&pages),
             vec![(800, 1253), (800, 1253), (800, 1253)]
         );
 
-        let ko = options(&["-p", "KO"]);
+        let ko = options(&["-p", "KO"])?;
         assert_eq!(virtual_height(800, &ko), 1253);
-        let kv = options(&["-p", "KV"]);
+        let kv = options(&["-p", "KV"])?;
         assert_eq!(virtual_height(800, &kv), 1080);
+        Ok(())
     }
 
     #[test]
-    fn mixed_widths_are_fitted_to_the_most_common_width() {
+    fn mixed_widths_are_fitted_to_the_most_common_width() -> Result<()> {
         // 800, 600, 800: the middle page is widened to 800, but the canvas is sized
         // from the original heights, so the last page is clipped (KCC's `mergeDirectory`).
         let pages = [
@@ -520,12 +524,13 @@ mod tests {
                 checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
             ),
         ];
-        let merged = merge_chapter(&pages).unwrap();
+        let merged = merge_chapter(&pages)?;
         assert_eq!(merged.dimensions(), (800, 1500));
+        Ok(())
     }
 
     #[test]
-    fn transform_replaces_each_chapter_with_merged_pages() {
+    fn transform_replaces_each_chapter_with_merged_pages() -> Result<()> {
         use crate::ebook::model::Chapter;
 
         let tree = ComicTree {
@@ -550,7 +555,7 @@ mod tests {
         };
 
         let mut tree = tree;
-        transform(&mut tree, &options(&["-p", "KV"])).unwrap();
+        transform(&mut tree, &options(&["-p", "KV"])?)?;
         assert!(tree.chapters[0].pages.is_empty());
         assert_eq!(tree.chapters[1].name, "Chapter 1");
         // The merge joins both pages (2150 + 500 = 2650px tall), then the panels are
@@ -568,5 +573,6 @@ mod tests {
             names,
             vec!["Chapter 1/kcc-0001-0001.png", "Chapter 1/kcc-0001-0002.png",]
         );
+        Ok(())
     }
 }

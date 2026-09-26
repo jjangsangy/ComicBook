@@ -58,7 +58,7 @@ pub fn build_epub(
     title: &str,
     drop_bookmarks: bool,
 ) -> Result<()> {
-    let entries = build_entries(book, prepared, source, options, title, drop_bookmarks);
+    let entries = build_entries(book, prepared, source, options, title, drop_bookmarks)?;
     package::write_epub(dest, &entries)
 }
 
@@ -74,7 +74,7 @@ pub(crate) fn build_entries(
     options: &Options,
     title: &str,
     drop_bookmarks: bool,
-) -> Vec<(String, Vec<u8>)> {
+) -> Result<Vec<(String, Vec<u8>)>> {
     let uuid = Uuid::new_v4().to_string();
     let modified = modified_timestamp();
 
@@ -140,7 +140,7 @@ pub(crate) fn build_entries(
     ));
     zip_entries.push((
         "OEBPS/Text/style.css".to_string(),
-        opf::style_css(options).into_bytes(),
+        opf::style_css(options)?.into_bytes(),
     ));
     if let Some(bytes) = cover {
         zip_entries.push(("OEBPS/Images/cover.jpg".to_string(), bytes.to_vec()));
@@ -158,7 +158,7 @@ pub(crate) fn build_entries(
         }
     }
     for page in &filelist {
-        let bytes = xhtml::build_xhtml(page, options);
+        let bytes = xhtml::build_xhtml(page, options)?;
         zip_entries.push((
             format!("OEBPS/{}/{}.xhtml", text_dir(page.image_dir), page.stem),
             bytes,
@@ -175,7 +175,7 @@ pub(crate) fn build_entries(
             &page_titles,
             &options.language,
             &uuid,
-        )
+        )?
         .into_bytes(),
     ));
     zip_entries.push((
@@ -186,7 +186,7 @@ pub(crate) fn build_entries(
             &filelist,
             &prepared.sanitized.chapter_titles,
             &page_titles,
-        )
+        )?
         .into_bytes(),
     ));
     zip_entries.push((
@@ -201,11 +201,11 @@ pub(crate) fn build_entries(
             &uuid,
             &modified,
             options,
-        )
+        )?
         .into_bytes(),
     ));
 
-    zip_entries
+    Ok(zip_entries)
 }
 
 /// The current UTC time as KCC's `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`).

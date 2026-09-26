@@ -171,12 +171,14 @@ fn page_units(pages: impl IntoIterator<Item = EncodedPage>) -> Vec<Vec<EncodedPa
     let mut units = Vec::new();
     let mut pages = pages.into_iter().peekable();
     while let Some(page) = pages.next() {
-        let grouped = page.flags.above && pages.peek().is_some_and(|next| next.flags.below);
-        if grouped {
-            let below = pages.next().expect("peeked a below page");
-            units.push(vec![page, below]);
+        let below = if page.flags.above && pages.peek().is_some_and(|next| next.flags.below) {
+            pages.next()
         } else {
-            units.push(vec![page]);
+            None
+        };
+        match below {
+            Some(below) => units.push(vec![page, below]),
+            None => units.push(vec![page]),
         }
     }
     units
@@ -238,10 +240,9 @@ fn per_top_level(chapters: Vec<ProcessedChapter>) -> Vec<Vec<ProcessedChapter>> 
             tomes.push(Vec::new());
             current = Some(top);
         }
-        tomes
-            .last_mut()
-            .expect("a tome was just pushed")
-            .push(chapter);
+        if let Some(tome) = tomes.last_mut() {
+            tome.push(chapter);
+        }
     }
     if tomes.is_empty() {
         tomes.push(Vec::new());

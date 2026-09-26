@@ -1,6 +1,7 @@
 //! Tests for the EPUB (spine-ordered) and PDF (embedded-image/rasterised) input
 //! adapters (AGENTS.md §15, Phase 11).
 
+use anyhow::{bail, Result};
 use clap::Parser;
 use comic_book::archive::{compress_archive, read_archive_entries, ArchiveKind};
 use comic_book::cli::Cli;
@@ -14,33 +15,34 @@ use std::path::Path;
 use tempfile::tempdir;
 
 /// Resolve options from a `comic-book ebook` command line.
-fn options(args: &[&str]) -> Options {
+fn options(args: &[&str]) -> Result<Options> {
     let mut full = vec!["comic-book", "ebook", "book.cbz"];
     full.extend_from_slice(args);
-    let cli = Cli::try_parse_from(full).expect("CLI parses");
+    let cli = Cli::try_parse_from(full)?;
     match cli.command {
-        comic_book::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
-        _ => unreachable!(),
+        comic_book::cli::Commands::Ebook(args) => Options::resolve(&args),
+        _ => bail!("expected the ebook subcommand"),
     }
 }
 
 /// Write a solid-colour PNG, creating parent directories.
-fn write_png(path: &Path, width: u32, height: u32, rgb: [u8; 3]) {
+fn write_png(path: &Path, width: u32, height: u32, rgb: [u8; 3]) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).unwrap();
+        fs::create_dir_all(parent)?;
     }
-    DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(rgb)))
-        .save(path)
-        .unwrap();
+    DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(rgb))).save(path)?;
+    Ok(())
 }
 
 /// Encode an in-memory RGB image as a JPEG.
-fn jpeg_bytes(width: u32, height: u32) -> Vec<u8> {
+fn jpeg_bytes(width: u32, height: u32) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new(&mut out)
-        .encode_image(&RgbImage::from_pixel(width, height, Rgb([200, 100, 50])))
-        .unwrap();
-    out
+    image::codecs::jpeg::JpegEncoder::new(&mut out).encode_image(&RgbImage::from_pixel(
+        width,
+        height,
+        Rgb([200, 100, 50]),
+    ))?;
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -52,11 +54,11 @@ fn jpeg_bytes(width: u32, height: u32) -> Vec<u8> {
 /// Page 2 comes first in the spine and references two images (`small.png` and
 /// `large.png`) so the "largest image per page" rule is exercised; page 1
 /// references `a.png`.
-fn build_epub(root: &Path) -> std::path::PathBuf {
+fn build_epub(root: &Path) -> Result<std::path::PathBuf> {
     let epub = root.join("book.epub");
     let src = root.join("epub-src");
-    fs::create_dir_all(src.join("META-INF")).unwrap();
-    fs::create_dir_all(src.join("OEBPS/Text")).unwrap();
+    fs::create_dir_all(src.join("META-INF"))?;
+    fs::create_dir_all(src.join("OEBPS/Text"))?;
     fs::write(
         src.join("META-INF/container.xml"),
         br#"<?xml version="1.0"?>
@@ -65,8 +67,7 @@ fn build_epub(root: &Path) -> std::path::PathBuf {
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/content.opf"),
         br#"<?xml version="1.0" encoding="utf-8"?>
@@ -83,35 +84,32 @@ fn build_epub(root: &Path) -> std::path::PathBuf {
     <itemref idref="p1"/>
   </spine>
 </package>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/Text/page1.xhtml"),
         br#"<html xmlns="http://www.w3.org/1999/xhtml"><body>
 <img src="../Images/a.png"/></body></html>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/Text/page2.xhtml"),
         br#"<html xmlns="http://www.w3.org/1999/xhtml"><body>
 <img src="../Images/small.png"/><img src="../Images/large.png"/></body></html>"#,
-    )
-    .unwrap();
+    )?;
 
-    write_png(&src.join("OEBPS/Images/a.png"), 40, 50, [10, 20, 30]);
-    write_png(&src.join("OEBPS/Images/small.png"), 5, 5, [1, 1, 1]);
-    write_png(&src.join("OEBPS/Images/large.png"), 60, 70, [2, 2, 2]);
+    write_png(&src.join("OEBPS/Images/a.png"), 40, 50, [10, 20, 30])?;
+    write_png(&src.join("OEBPS/Images/small.png"), 5, 5, [1, 1, 1])?;
+    write_png(&src.join("OEBPS/Images/large.png"), 60, 70, [2, 2, 2])?;
 
-    compress_archive(ArchiveKind::Cbz, &src, &epub).unwrap();
-    epub
+    compress_archive(ArchiveKind::Cbz, &src, &epub)?;
+    Ok(epub)
 }
 
 #[test]
-fn epub_loads_spine_in_order_and_picks_the_largest_image() {
-    let tmp = tempdir().unwrap();
-    let epub = build_epub(tmp.path());
+fn epub_loads_spine_in_order_and_picks_the_largest_image() -> Result<()> {
+    let tmp = tempdir()?;
+    let epub = build_epub(tmp.path())?;
 
-    let tree = load_tree(&epub, &options(&[])).unwrap();
+    let tree = load_tree(&epub, &options(&[])?)?;
     assert_eq!(tree.page_count(), 2);
 
     // Flat chapter, spine order: page2 (largest of small/large) then page1.
@@ -129,90 +127,87 @@ fn epub_loads_spine_in_order_and_picks_the_largest_image() {
         Some(comic_book::ebook::model::MediaType::Png)
     );
     assert!(pages[0].raw.is_some());
+    Ok(())
 }
 
 #[test]
-fn epub_without_a_resolvable_spine_falls_back_to_the_archive() {
+fn epub_without_a_resolvable_spine_falls_back_to_the_archive() -> Result<()> {
     // A container/OPF whose spine names no usable page: KCC's `if not
     // ordered_image_paths: return workdir` loads the raw extracted tree instead.
-    let tmp = tempdir().unwrap();
+    let tmp = tempdir()?;
     let src = tmp.path().join("src");
-    fs::create_dir_all(src.join("META-INF")).unwrap();
-    fs::create_dir_all(src.join("OEBPS")).unwrap();
+    fs::create_dir_all(src.join("META-INF"))?;
+    fs::create_dir_all(src.join("OEBPS"))?;
     fs::write(
         src.join("META-INF/container.xml"),
         br#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/content.opf"),
         br#"<package><manifest/><spine><itemref idref="missing"/></spine></package>"#,
-    )
-    .unwrap();
-    write_png(&src.join("OEBPS/Images/page1.png"), 10, 10, [0, 0, 0]);
-    write_png(&src.join("OEBPS/Images/page2.png"), 20, 20, [0, 0, 0]);
+    )?;
+    write_png(&src.join("OEBPS/Images/page1.png"), 10, 10, [0, 0, 0])?;
+    write_png(&src.join("OEBPS/Images/page2.png"), 20, 20, [0, 0, 0])?;
 
     let epub = tmp.path().join("plain.epub");
-    compress_archive(ArchiveKind::Cbz, &src, &epub).unwrap();
+    compress_archive(ArchiveKind::Cbz, &src, &epub)?;
 
-    let tree = load_tree(&epub, &options(&[])).unwrap();
+    let tree = load_tree(&epub, &options(&[])?)?;
     let names: Vec<&str> = tree.chapters[0]
         .pages
         .iter()
         .map(|page| page.rel_path.as_str())
         .collect();
     assert_eq!(names, vec!["page1.png", "page2.png"]);
+    Ok(())
 }
 
 #[test]
-fn epub_ignores_a_referenced_non_image() {
+fn epub_ignores_a_referenced_non_image() -> Result<()> {
     // KCC copies whatever the page references and only later drops non-image
     // extensions, so a page whose only image is unsupported yields nothing while
     // the rest of the spine still loads.
-    let tmp = tempdir().unwrap();
+    let tmp = tempdir()?;
     let src = tmp.path().join("src");
-    fs::create_dir_all(src.join("META-INF")).unwrap();
-    fs::create_dir_all(src.join("OEBPS/Text")).unwrap();
+    fs::create_dir_all(src.join("META-INF"))?;
+    fs::create_dir_all(src.join("OEBPS/Text"))?;
     fs::write(
         src.join("META-INF/container.xml"),
         br#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/content.opf"),
         br#"<package><manifest>
 <item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
 <item id="p2" href="Text/p2.xhtml" media-type="application/xhtml+xml"/>
 </manifest><spine><itemref idref="p1"/><itemref idref="p2"/></spine></package>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/Text/p1.xhtml"),
         br#"<html><body><img src="../Images/big.jxl"/></body></html>"#,
-    )
-    .unwrap();
+    )?;
     fs::write(
         src.join("OEBPS/Text/p2.xhtml"),
         br#"<html><body><img src="../Images/small.png"/></body></html>"#,
-    )
-    .unwrap();
-    write_png(&src.join("OEBPS/Images/small.png"), 6, 6, [0, 0, 0]);
-    fs::write(src.join("OEBPS/Images/big.jxl"), vec![0u8; 5000]).unwrap();
+    )?;
+    write_png(&src.join("OEBPS/Images/small.png"), 6, 6, [0, 0, 0])?;
+    fs::write(src.join("OEBPS/Images/big.jxl"), vec![0u8; 5000])?;
 
     let epub = tmp.path().join("book.epub");
-    compress_archive(ArchiveKind::Cbz, &src, &epub).unwrap();
+    compress_archive(ArchiveKind::Cbz, &src, &epub)?;
 
-    let tree = load_tree(&epub, &options(&[])).unwrap();
+    let tree = load_tree(&epub, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
     assert_eq!(tree.chapters[0].pages[0].image.dimensions(), (6, 6));
+    Ok(())
 }
 
 #[test]
-fn legacy_extract_loads_an_epub_as_a_plain_archive() {
-    let tmp = tempdir().unwrap();
-    let epub = build_epub(tmp.path());
+fn legacy_extract_loads_an_epub_as_a_plain_archive() -> Result<()> {
+    let tmp = tempdir()?;
+    let epub = build_epub(tmp.path())?;
 
-    let tree = load_tree(&epub, &options(&["--legacy-extract"])).unwrap();
+    let tree = load_tree(&epub, &options(&["--legacy-extract"])?)?;
     // Every image in the container, in natural order, rather than spine order.
     assert_eq!(tree.page_count(), 3);
     let names: Vec<&str> = tree.chapters[0]
@@ -221,14 +216,15 @@ fn legacy_extract_loads_an_epub_as_a_plain_archive() {
         .map(|page| page.rel_path.as_str())
         .collect();
     assert!(names.contains(&"a.png"), "{names:?}");
+    Ok(())
 }
 
 #[test]
-fn epub_source_converts_end_to_end() {
-    let tmp = tempdir().unwrap();
-    let epub = build_epub(tmp.path());
+fn epub_source_converts_end_to_end() -> Result<()> {
+    let tmp = tempdir()?;
+    let epub = build_epub(tmp.path())?;
 
-    let written = convert_source(&epub, &options(&["-f", "cbz"])).unwrap();
+    let written = convert_source(&epub, &options(&["-f", "cbz"])?)?;
     assert_eq!(written.len(), 1);
 
     let mut images = Vec::new();
@@ -237,9 +233,9 @@ fn epub_source_converts_end_to_end() {
             images.push(name.to_string());
         }
         Ok(())
-    })
-    .unwrap();
+    })?;
     assert_eq!(images.len(), 2, "unexpected entries: {images:?}");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +243,7 @@ fn epub_source_converts_end_to_end() {
 // ---------------------------------------------------------------------------
 
 /// A one-page PDF whose content fills the page with a solid black rectangle.
-fn build_vector_pdf(path: &Path) {
+fn build_vector_pdf(path: &Path) -> Result<()> {
     use pdf_writer::{Content, Pdf, Rect, Ref};
     let mut pdf = Pdf::new();
     let (catalog, pages, page, content_id) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4));
@@ -266,19 +262,20 @@ fn build_vector_pdf(path: &Path) {
         page_writer.contents(content_id);
     }
     pdf.pages(pages).kids([page]).count(1);
-    fs::write(path, pdf.finish()).unwrap();
+    fs::write(path, pdf.finish())?;
+    Ok(())
 }
 
 /// A one-page PDF whose only content is a single embedded RGB image.
-fn build_image_pdf(path: &Path, width: u32, height: u32) {
+fn build_image_pdf(path: &Path, width: u32, height: u32) -> Result<()> {
     use flate2::write::ZlibEncoder;
     use flate2::Compression;
     use pdf_writer::{Content, Filter, Name, Pdf, Rect, Ref};
 
     let raw = vec![200u8; (width * height * 3) as usize];
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(&raw).unwrap();
-    let data = encoder.finish().unwrap();
+    encoder.write_all(&raw)?;
+    let data = encoder.finish()?;
 
     let mut pdf = Pdf::new();
     let (catalog, pages, page, content_id, image_id) = (
@@ -314,16 +311,17 @@ fn build_image_pdf(path: &Path, width: u32, height: u32) {
         page_writer.contents(content_id);
     }
     pdf.pages(pages).kids([page]).count(1);
-    fs::write(path, pdf.finish()).unwrap();
+    fs::write(path, pdf.finish())?;
+    Ok(())
 }
 
 #[test]
-fn pdf_with_one_image_extracts_it_at_native_size() {
-    let tmp = tempdir().unwrap();
+fn pdf_with_one_image_extracts_it_at_native_size() -> Result<()> {
+    let tmp = tempdir()?;
     let pdf = tmp.path().join("book.pdf");
-    build_image_pdf(&pdf, 40, 30);
+    build_image_pdf(&pdf, 40, 30)?;
 
-    let tree = load_tree(&pdf, &options(&[])).unwrap();
+    let tree = load_tree(&pdf, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
     let page = &tree.chapters[0].pages[0];
     assert_eq!(page.image.dimensions(), (40, 30));
@@ -332,16 +330,17 @@ fn pdf_with_one_image_extracts_it_at_native_size() {
         page.source_media_type,
         Some(comic_book::ebook::model::MediaType::Png)
     );
+    Ok(())
 }
 
 #[test]
-fn vector_pdf_pages_are_rasterised_to_the_device_target() {
-    let tmp = tempdir().unwrap();
+fn vector_pdf_pages_are_rasterised_to_the_device_target() -> Result<()> {
+    let tmp = tempdir()?;
     let pdf = tmp.path().join("book.pdf");
-    build_vector_pdf(&pdf);
+    build_vector_pdf(&pdf)?;
 
     // Default KV profile, `--cropping 2`: target 1072*1.25 x 1448*1.25.
-    let tree = load_tree(&pdf, &options(&[])).unwrap();
+    let tree = load_tree(&pdf, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
     let page = &tree.chapters[0].pages[0];
     let (width, height) = page.image.dimensions();
@@ -351,38 +350,40 @@ fn vector_pdf_pages_are_rasterised_to_the_device_target() {
     // The rendered page carries the drawn black fill, not a blank white page.
     let center = page.image.to_rgb8().get_pixel(width / 2, height / 2).0;
     assert!(center[0] < 10, "center pixel was {center:?}");
+    Ok(())
 }
 
 #[test]
-fn legacy_extract_scans_embedded_jpegs() {
-    let tmp = tempdir().unwrap();
+fn legacy_extract_scans_embedded_jpegs() -> Result<()> {
+    let tmp = tempdir()?;
     let pdf = tmp.path().join("book.pdf");
 
     // The legacy scanner never parses the PDF, so a minimal wrapper around a JPEG
     // stream is enough (KCC's `pdfjpgextract`).
-    let jpeg = jpeg_bytes(200, 150);
+    let jpeg = jpeg_bytes(200, 150)?;
     let mut blob = Vec::new();
     blob.extend_from_slice(b"%PDF-1.4\n1 0 obj\n<<>>\nstream\n");
     blob.extend_from_slice(&jpeg);
     blob.extend_from_slice(b"\nendstream\nendobj\n%%EOF");
-    fs::write(&pdf, blob).unwrap();
+    fs::write(&pdf, blob)?;
 
-    let tree = load_tree(&pdf, &options(&["--legacy-extract"])).unwrap();
+    let tree = load_tree(&pdf, &options(&["--legacy-extract"])?)?;
     assert_eq!(tree.page_count(), 1);
     assert_eq!(tree.chapters[0].pages[0].image.dimensions(), (200, 150));
 
     // Without the flag the stub is not a parseable PDF.
-    assert!(load_tree(&pdf, &options(&[])).is_err());
+    assert!(load_tree(&pdf, &options(&[])?).is_err());
+    Ok(())
 }
 
 #[test]
-fn pdf_source_converts_end_to_end() {
-    let tmp = tempdir().unwrap();
+fn pdf_source_converts_end_to_end() -> Result<()> {
+    let tmp = tempdir()?;
     let pdf = tmp.path().join("book.pdf");
     // Portrait so the spread splitter leaves it whole.
-    build_image_pdf(&pdf, 30, 40);
+    build_image_pdf(&pdf, 30, 40)?;
 
-    let written = convert_source(&pdf, &options(&["-f", "cbz"])).unwrap();
+    let written = convert_source(&pdf, &options(&["-f", "cbz"])?)?;
     assert_eq!(written.len(), 1);
 
     let mut images = 0;
@@ -391,7 +392,7 @@ fn pdf_source_converts_end_to_end() {
             images += 1;
         }
         Ok(())
-    })
-    .unwrap();
+    })?;
     assert_eq!(images, 1);
+    Ok(())
 }

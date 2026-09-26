@@ -92,7 +92,7 @@ fn resize_page(page: &Page, bounds: (u32, u32), options: &Options) -> Result<Vec
     if !options.force_color {
         image = grayscale(image);
     }
-    let image = page::contain(&image, bounds, Method::Bicubic);
+    let image = page::contain(&image, bounds, Method::Bicubic)?;
     let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
     page::encode_dynamic(&image, media_type, options.jpeg_quality)
 }

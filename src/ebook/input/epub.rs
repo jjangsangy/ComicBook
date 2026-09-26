@@ -137,12 +137,10 @@ fn spine_images(files: &HashMap<String, Vec<u8>>) -> Result<Option<OrderedImages
             // non-image extensions (`removeNonImages`); mirror that so an
             // unsupported reference leaves the page without an image.
             if super::archive::is_ebook_image(&image_path) {
-                let data = files
-                    .get(&image_path)
-                    .expect("chosen image was found above")
-                    .clone();
-                let ext = extension_of(&image_path);
-                ordered.push((format!("{}{}", ordered.len(), ext), data));
+                if let Some(data) = files.get(&image_path) {
+                    let ext = extension_of(&image_path);
+                    ordered.push((format!("{}{}", ordered.len(), ext), data.clone()));
+                }
             }
         }
     }
@@ -268,15 +266,19 @@ mod tests {
     }
 
     #[test]
-    fn element_scan_is_namespace_insensitive() {
+    fn element_scan_is_namespace_insensitive() -> Result<()> {
         let xml = br#"<package xmlns="http://x"><manifest><item id="a" href="p.xhtml" media-type="application/xhtml+xml"/></manifest></package>"#;
         let elements = scan_elements(xml);
-        let item = elements.iter().find(|el| el.local == "item").unwrap();
+        let item = elements
+            .iter()
+            .find(|el| el.local == "item")
+            .context("manifest item present")?;
         assert_eq!(attr(item, "id").as_deref(), Some("a"));
         assert_eq!(
             attr(item, "media-type").as_deref(),
             Some("application/xhtml+xml")
         );
+        Ok(())
     }
 
     #[test]

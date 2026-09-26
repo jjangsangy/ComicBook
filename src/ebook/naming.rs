@@ -64,10 +64,13 @@ pub fn slugify(value: &str, format: Format, is_natural_sorted: bool) -> String {
 /// rule). The reference applies `re.sub(r'([0-9]+)', r'0000\1', value, count=2)`
 /// and then strips the surplus zeros with `re.sub(r'0*([0-9]{4,})', r'\1', …)`.
 fn pad_numbers(value: &str) -> String {
-    static INNER: OnceLock<Regex> = OnceLock::new();
-    static OUTER: OnceLock<Regex> = OnceLock::new();
-    let inner = INNER.get_or_init(|| Regex::new(r"([0-9]+)").expect("valid regex"));
-    let outer = OUTER.get_or_init(|| Regex::new(r"0*([0-9]{4,})").expect("valid regex"));
+    static INNER: OnceLock<Option<Regex>> = OnceLock::new();
+    static OUTER: OnceLock<Option<Regex>> = OnceLock::new();
+    let inner = INNER.get_or_init(|| Regex::new(r"([0-9]+)").ok());
+    let outer = OUTER.get_or_init(|| Regex::new(r"0*([0-9]{4,})").ok());
+    let (Some(inner), Some(outer)) = (inner, outer) else {
+        return value.to_string();
+    };
     let padded = inner.replacen(value, 2, "0000${1}");
     outer.replace_all(&padded, "${1}").into_owned()
 }
@@ -348,8 +351,10 @@ pub fn first_cover(parent: &Path) -> Option<PathBuf> {
 /// The prefix keeps the fused sources in the user's order; `makeBook` removes it
 /// from the navigation titles so the reader shows the source names.
 pub fn strip_fusion_prefix(value: &str) -> String {
-    static PREFIX: OnceLock<Regex> = OnceLock::new();
-    let pattern = PREFIX.get_or_init(|| Regex::new(r"^fusion_\d{4}_").expect("valid regex"));
+    static PREFIX: OnceLock<Option<Regex>> = OnceLock::new();
+    let Some(pattern) = PREFIX.get_or_init(|| Regex::new(r"^fusion_\d{4}_").ok()) else {
+        return value.to_string();
+    };
     pattern.replace(value, "").into_owned()
 }
 
@@ -394,8 +399,10 @@ fn page_extension(page: &Page) -> String {
 
 /// KCC's `re.sub(r'\W+', '_', name)` for Kobo-brand output names.
 fn kobo_name(name: &str) -> String {
-    static NON_WORD: OnceLock<Regex> = OnceLock::new();
-    let pattern = NON_WORD.get_or_init(|| Regex::new(r"\W+").expect("valid regex"));
+    static NON_WORD: OnceLock<Option<Regex>> = OnceLock::new();
+    let Some(pattern) = NON_WORD.get_or_init(|| Regex::new(r"\W+").ok()) else {
+        return name.to_string();
+    };
     pattern.replace_all(name, "_").into_owned()
 }
 

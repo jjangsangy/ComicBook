@@ -50,19 +50,21 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
         // else (vector art, multiple images) is rendered instead.
         let images = extract_page_images(&doc, &page)
             .with_context(|| format!("Failed to extract images from PDF page {index}"))?;
-        let pixmap = if images.len() == 1 {
-            images.into_iter().next().expect("length checked")
-        } else {
-            let (page_width, page_height) = page.size();
-            let zoom = render_zoom(
-                options.pdf_width,
-                target_width,
-                target_height,
-                page_width,
-                page_height,
-            );
-            render_page(&doc, &page, zoom)
-                .with_context(|| format!("Failed to render PDF page {index}"))?
+        let mut extracted = images.into_iter();
+        let pixmap = match (extracted.next(), extracted.next()) {
+            (Some(pixmap), None) => pixmap,
+            _ => {
+                let (page_width, page_height) = page.size();
+                let zoom = render_zoom(
+                    options.pdf_width,
+                    target_width,
+                    target_height,
+                    page_width,
+                    page_height,
+                );
+                render_page(&doc, &page, zoom)
+                    .with_context(|| format!("Failed to render PDF page {index}"))?
+            }
         };
 
         // Render always names the payload `p-<i>.png`; extraction follows the

@@ -33,22 +33,31 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
 }
 
 /// Resize an image using high-quality SIMD-accelerated Lanczos3 convolution.
+///
+/// The internal `fast_image_resize` steps only fail on a buffer/dimension
+/// mismatch that the dimensions taken from the source make impossible; fall back
+/// to the original image on that error rather than panicking.
 pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicImage {
     let rgb = img.to_rgb8();
     let (w, h) = (rgb.width(), rgb.height());
-    let src_image =
-        FastImage::from_vec_u8(w, h, rgb.into_raw(), PixelType::U8x3).expect("valid src image");
+    let Ok(src_image) = FastImage::from_vec_u8(w, h, rgb.into_raw(), PixelType::U8x3) else {
+        return img.clone();
+    };
     let mut dst_image = FastImage::new(new_w, new_h, PixelType::U8x3);
 
     let mut resizer = Resizer::new();
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
-    resizer
+    if resizer
         .resize(&src_image, &mut dst_image, &options)
-        .expect("resize failed");
+        .is_err()
+    {
+        return img.clone();
+    }
 
-    let dst_raw = dst_image.into_vec();
-    let rgb_buf = RgbImage::from_raw(new_w, new_h, dst_raw).expect("valid dst image");
-    DynamicImage::ImageRgb8(rgb_buf)
+    match RgbImage::from_raw(new_w, new_h, dst_image.into_vec()) {
+        Some(buffer) => DynamicImage::ImageRgb8(buffer),
+        None => img.clone(),
+    }
 }
 
 /// Iteratively split an image horizontally until all segments have total pixels < size_threshold.

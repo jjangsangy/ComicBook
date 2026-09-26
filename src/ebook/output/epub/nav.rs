@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use anyhow::Result;
 use askama::Template;
 
 use super::html_escape;
@@ -84,7 +85,7 @@ pub(crate) fn build_ncx(
     page_titles: &HashMap<String, String>,
     language: &str,
     uuid: &str,
-) -> String {
+) -> Result<String> {
     let navpoints = nav_entries(entries, filelist, title, chapter_titles, page_titles);
     let escaped_title = html_escape(title);
     let view = Ncx {
@@ -93,7 +94,7 @@ pub(crate) fn build_ncx(
         uuid,
         navpoints: &navpoints,
     };
-    view.render().expect("toc.ncx is a static template")
+    Ok(view.render()?)
 }
 
 /// Build `OEBPS/nav.xhtml`.
@@ -103,12 +104,12 @@ pub(crate) fn build_nav(
     filelist: &[PageRef<'_>],
     chapter_titles: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
-) -> String {
+) -> Result<String> {
     let entries = nav_entries(entries, filelist, title, chapter_titles, page_titles);
     let escaped_title = html_escape(title);
     let view = Nav {
         title: &escaped_title,
         entries: &entries,
     };
-    view.render().expect("nav.xhtml is a static template")
+    Ok(view.render()?)
 }

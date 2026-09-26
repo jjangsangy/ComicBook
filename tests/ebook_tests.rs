@@ -1,6 +1,7 @@
 //! Phase 0 tests for the `comic-book ebook` scaffolding: CLI parsing, option
 //! resolution and the device profile tables (AGENTS.md §15).
 
+use anyhow::{bail, Result};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use comic_book::cli::{Cli, Commands};
@@ -8,23 +9,27 @@ use comic_book::ebook::options::{DocType, Format, Options};
 use comic_book::ebook::profiles::{DeviceKind, Profile, ALL_PROFILES, PROFILE_TABLE};
 
 /// Parse `comic-book ebook <args>` and resolve it.
-fn resolve(args: &[&str]) -> Options {
-    let args = ebook_args(args);
-    Options::resolve(&args).expect("option resolution should succeed")
+fn resolve(args: &[&str]) -> Result<Options> {
+    let args = ebook_args(args)?;
+    Options::resolve(&args)
 }
 
 /// Parse `comic-book ebook <args>`, expecting option resolution to fail.
-fn resolve_err(args: &[&str]) -> anyhow::Error {
-    let args = ebook_args(args);
-    Options::resolve(&args).expect_err("option resolution should fail")
+fn resolve_err(args: &[&str]) -> Result<anyhow::Error> {
+    let args = ebook_args(args)?;
+    match Options::resolve(&args) {
+        Ok(_) => bail!("option resolution should fail"),
+        Err(error) => Ok(error),
+    }
 }
 
-fn ebook_args(args: &[&str]) -> comic_book::ebook::EbookArgs {
+fn ebook_args(args: &[&str]) -> Result<comic_book::ebook::EbookArgs> {
     let mut full = vec!["comic-book", "ebook"];
     full.extend_from_slice(args);
-    match Cli::try_parse_from(full).expect("CLI should parse").command {
-        Commands::Ebook(args) => args,
-        other => panic!("expected the ebook subcommand, got {other:?}"),
+    let cli = Cli::try_parse_from(full)?;
+    match cli.command {
+        Commands::Ebook(args) => Ok(args),
+        other => bail!("expected the ebook subcommand, got {other:?}"),
     }
 }
 
@@ -34,16 +39,21 @@ fn cli_definition_is_valid() {
 }
 
 #[test]
-fn help_and_version_are_available_on_the_subcommand() {
-    let help = Cli::try_parse_from(["comic-book", "ebook", "--help"]).unwrap_err();
+fn help_and_version_are_available_on_the_subcommand() -> Result<()> {
+    let Err(help) = Cli::try_parse_from(["comic-book", "ebook", "--help"]) else {
+        bail!("--help should be handled by clap");
+    };
     assert_eq!(help.kind(), ErrorKind::DisplayHelp);
 
-    let version = Cli::try_parse_from(["comic-book", "ebook", "--version"]).unwrap_err();
+    let Err(version) = Cli::try_parse_from(["comic-book", "ebook", "--version"]) else {
+        bail!("--version should be handled by clap");
+    };
     assert_eq!(version.kind(), ErrorKind::DisplayVersion);
+    Ok(())
 }
 
 #[test]
-fn every_documented_format_parses() {
+fn every_documented_format_parses() -> Result<()> {
     for (value, expected) in [
         ("auto", Format::Auto),
         ("epub", Format::Epub),
@@ -59,25 +69,26 @@ fn every_documented_format_parses() {
         ("mobi+epub-200mb", Format::MobiEpub200mb),
     ] {
         assert_eq!(
-            ebook_args(&["book.cbz", "-f", value]).output.format,
+            ebook_args(&["book.cbz", "-f", value])?.output.format,
             expected
         );
     }
 
     // Unknown formats are rejected by clap.
     assert!(Cli::try_parse_from(["comic-book", "ebook", "book.cbz", "-f", "djvu"]).is_err());
+    Ok(())
 }
 
 #[test]
-fn every_profile_code_parses_and_is_case_insensitive() {
+fn every_profile_code_parses_and_is_case_insensitive() -> Result<()> {
     for profile in ALL_PROFILES {
-        let parsed = ebook_args(&["book.cbz", "-p", profile.code()])
+        let parsed = ebook_args(&["book.cbz", "-p", profile.code()])?
             .device
             .profile;
         assert_eq!(parsed, profile);
 
         let lowercase = profile.code().to_lowercase();
-        let lower = ebook_args(&["book.cbz", "-p", lowercase.as_str()])
+        let lower = ebook_args(&["book.cbz", "-p", lowercase.as_str()])?
             .device
             .profile;
         assert_eq!(
@@ -87,6 +98,7 @@ fn every_profile_code_parses_and_is_case_insensitive() {
     }
 
     assert!(Cli::try_parse_from(["comic-book", "ebook", "book.cbz", "-p", "NOPE"]).is_err());
+    Ok(())
 }
 
 #[test]
@@ -125,8 +137,8 @@ fn profile_table_is_consistent_with_the_variant_list() {
 }
 
 #[test]
-fn defaults_resolve_to_kindle_mobi() {
-    let options = resolve(&["book.cbz"]);
+fn defaults_resolve_to_kindle_mobi() -> Result<()> {
+    let options = resolve(&["book.cbz"])?;
     assert_eq!(options.profile, Profile::Kv);
     assert!(options.is_kindle);
     assert!(!options.is_kobo);
@@ -136,114 +148,125 @@ fn defaults_resolve_to_kindle_mobi() {
     assert_eq!(options.batch_split, 1, "MOBI output always splits");
     assert!(options.kindle_azw3);
     assert!(!options.kepub);
+    Ok(())
 }
 
 #[test]
-fn kobo_epub_resolves_to_kepub() {
-    let options = resolve(&["book.cbz", "-p", "KoE", "-f", "epub"]);
+fn kobo_epub_resolves_to_kepub() -> Result<()> {
+    let options = resolve(&["book.cbz", "-p", "KoE", "-f", "epub"])?;
     assert!(!options.is_kindle);
     assert!(options.is_kobo);
     assert_eq!(options.format, Format::Epub);
     assert!(options.kepub, "Kobo brand + EPUB defaults to .kepub.epub");
     assert!(!options.panel_view, "Kobo disables panel view");
+    Ok(())
 }
 
 #[test]
-fn kobo_epub_with_no_kepub_stays_plain_epub() {
-    let options = resolve(&["book.cbz", "-p", "KoE", "-f", "epub", "--no-kepub"]);
+fn kobo_epub_with_no_kepub_stays_plain_epub() -> Result<()> {
+    let options = resolve(&["book.cbz", "-p", "KoE", "-f", "epub", "--no-kepub"])?;
     assert!(!options.kepub);
+    Ok(())
 }
 
 #[test]
-fn explicit_kepub_format_sets_the_flag() {
-    let options = resolve(&["book.cbz", "-f", "kepub"]);
+fn explicit_kepub_format_sets_the_flag() -> Result<()> {
+    let options = resolve(&["book.cbz", "-f", "kepub"])?;
     assert_eq!(options.format, Format::Epub);
     assert!(options.kepub);
+    Ok(())
 }
 
 #[test]
-fn auto_resolves_by_profile() {
-    assert_eq!(resolve(&["book.cbz", "-p", "KDX"]).format, Format::Cbz);
-    assert_eq!(resolve(&["book.cbz", "-p", "KV"]).format, Format::Mobi);
-    assert_eq!(resolve(&["book.cbz", "-p", "KoE"]).format, Format::Epub);
-    assert_eq!(resolve(&["book.cbz", "-p", "Rmk2"]).format, Format::Pdf);
+fn auto_resolves_by_profile() -> Result<()> {
+    assert_eq!(resolve(&["book.cbz", "-p", "KDX"])?.format, Format::Cbz);
+    assert_eq!(resolve(&["book.cbz", "-p", "KV"])?.format, Format::Mobi);
+    assert_eq!(resolve(&["book.cbz", "-p", "KoE"])?.format, Format::Epub);
+    assert_eq!(resolve(&["book.cbz", "-p", "Rmk2"])?.format, Format::Pdf);
+    Ok(())
 }
 
 #[test]
-fn remarkable_gets_a_default_target_size() {
-    let options = resolve(&["book.cbz", "-p", "Rmk2"]);
+fn remarkable_gets_a_default_target_size() -> Result<()> {
+    let options = resolve(&["book.cbz", "-p", "Rmk2"])?;
     assert_eq!(options.target_size, Some(95));
+    Ok(())
 }
 
 #[test]
-fn mobi_output_is_rejected_for_non_kindle_profiles() {
-    let err = resolve_err(&["book.cbz", "-p", "KoE", "-f", "mobi"]);
+fn mobi_output_is_rejected_for_non_kindle_profiles() -> Result<()> {
+    let err = resolve_err(&["book.cbz", "-p", "KoE", "-f", "mobi"])?;
     assert!(err
         .to_string()
         .contains("not supported for non-Kindle profiles"));
 
-    let err = resolve_err(&["book.cbz", "-p", "Rmk2", "-f", "azw3"]);
+    let err = resolve_err(&["book.cbz", "-p", "Rmk2", "-f", "azw3"])?;
     assert!(err
         .to_string()
         .contains("not supported for non-Kindle profiles"));
+    Ok(())
 }
 
 #[test]
-fn mobi_epub_keeps_the_intermediate_epub() {
-    let options = resolve(&["book.cbz", "-f", "mobi+epub"]);
+fn mobi_epub_keeps_the_intermediate_epub() -> Result<()> {
+    let options = resolve(&["book.cbz", "-f", "mobi+epub"])?;
     assert_eq!(options.format, Format::Mobi);
     assert!(options.keep_epub);
+    Ok(())
 }
 
 #[test]
-fn two_hundred_megabyte_presets_expand() {
-    let epub = resolve(&["book.cbz", "-f", "epub-200mb"]);
+fn two_hundred_megabyte_presets_expand() -> Result<()> {
+    let epub = resolve(&["book.cbz", "-f", "epub-200mb"])?;
     assert_eq!(epub.format, Format::Epub);
     assert_eq!(epub.target_size, Some(195));
     assert_eq!(epub.batch_split, 1);
 
-    let pdf = resolve(&["book.cbz", "-f", "pdf-200mb"]);
+    let pdf = resolve(&["book.cbz", "-f", "pdf-200mb"])?;
     assert_eq!(pdf.format, Format::Pdf);
     assert_eq!(pdf.target_size, Some(195));
 
-    let mobi = resolve(&["book.cbz", "-f", "mobi+epub-200mb"]);
+    let mobi = resolve(&["book.cbz", "-f", "mobi+epub-200mb"])?;
     assert_eq!(mobi.format, Format::Mobi);
     assert!(mobi.keep_epub);
     assert_eq!(mobi.target_size, Some(195));
+    Ok(())
 }
 
 #[test]
-fn kfx_is_an_epub_preset_with_disabled_panel_view() {
-    let options = resolve(&["book.cbz", "-f", "kfx"]);
+fn kfx_is_an_epub_preset_with_disabled_panel_view() -> Result<()> {
+    let options = resolve(&["book.cbz", "-f", "kfx"])?;
     assert_eq!(options.format, Format::Epub);
     assert!(options.kfx);
     assert_eq!(options.target_size, Some(195));
     assert!(!options.panel_view);
+    Ok(())
 }
 
 #[test]
-fn jpeg_quality_defaults_by_device_and_honours_overrides() {
-    assert_eq!(resolve(&["book.cbz", "-p", "KV"]).jpeg_quality, 85);
-    assert_eq!(resolve(&["book.cbz", "-p", "KS"]).jpeg_quality, 90);
-    assert_eq!(resolve(&["book.cbz", "-p", "KCS"]).jpeg_quality, 90);
+fn jpeg_quality_defaults_by_device_and_honours_overrides() -> Result<()> {
+    assert_eq!(resolve(&["book.cbz", "-p", "KV"])?.jpeg_quality, 85);
+    assert_eq!(resolve(&["book.cbz", "-p", "KS"])?.jpeg_quality, 90);
+    assert_eq!(resolve(&["book.cbz", "-p", "KCS"])?.jpeg_quality, 90);
     assert_eq!(
-        resolve(&["book.cbz", "-p", "KV", "--jpeg-quality", "70"]).jpeg_quality,
+        resolve(&["book.cbz", "-p", "KV", "--jpeg-quality", "70"])?.jpeg_quality,
         70
     );
     assert!(
         Cli::try_parse_from(["comic-book", "ebook", "book.cbz", "--jpeg-quality", "99"]).is_err()
     );
+    Ok(())
 }
 
 #[test]
-fn custom_geometry_replaces_the_profile() {
+fn custom_geometry_replaces_the_profile() -> Result<()> {
     let options = resolve(&[
         "book.cbz",
         "--custom-width",
         "1000",
         "--custom-height",
         "1500",
-    ]);
+    ])?;
     assert!(options.custom_profile);
     assert_eq!(options.profile_data.name, "Custom");
     assert_eq!(options.profile_data.width, 1000);
@@ -253,13 +276,14 @@ fn custom_geometry_replaces_the_profile() {
         Profile::Kv,
         "the named profile is retained"
     );
+    Ok(())
 }
 
 #[test]
-fn the_other_profile_needs_an_explicit_size() {
+fn the_other_profile_needs_an_explicit_size() -> Result<()> {
     // `OTHER` has no screen geometry of its own (AGENTS.md §12.1), so it is only
     // usable with a custom resolution.
-    let err = resolve_err(&["book.cbz", "-p", "OTHER"]);
+    let err = resolve_err(&["book.cbz", "-p", "OTHER"])?;
     assert!(
         err.to_string().contains("has no screen size"),
         "unexpected error: {err}"
@@ -273,14 +297,15 @@ fn the_other_profile_needs_an_explicit_size() {
         "1200",
         "--custom-height",
         "1600",
-    ]);
+    ])?;
     assert_eq!(options.profile_data.width, 1200);
     assert_eq!(options.profile_data.height, 1600);
+    Ok(())
 }
 
 #[test]
-fn webtoon_mandates_its_option_set() {
-    let options = resolve(&["book.cbz", "-w", "-m", "-u", "-q"]);
+fn webtoon_mandates_its_option_set() -> Result<()> {
+    let options = resolve(&["book.cbz", "-w", "-m", "-u", "-q"])?;
     assert!(!options.panel_view);
     assert!(!options.right_to_left);
     assert!(!options.upscale);
@@ -289,75 +314,84 @@ fn webtoon_mandates_its_option_set() {
         options.borders_color,
         Some(comic_book::ebook::BorderColor::White)
     );
+    Ok(())
 }
 
 #[test]
-fn legacy_kindles_disable_panel_view_and_hq() {
+fn legacy_kindles_disable_panel_view_and_hq() -> Result<()> {
     for profile in ["K1", "K2", "K34", "KDX"] {
-        let options = resolve(&["book.cbz", "-p", profile, "-q", "--two-panel"]);
+        let options = resolve(&["book.cbz", "-p", profile, "-q", "--two-panel"])?;
         assert!(!options.panel_view, "{profile} has no panel view");
         assert!(!options.hq, "{profile} has no HQ mode");
     }
+    Ok(())
 }
 
 #[test]
-fn panel_view_requires_hq_or_panel_flags() {
-    let plain = resolve(&["book.cbz", "-p", "KV"]);
+fn panel_view_requires_hq_or_panel_flags() -> Result<()> {
+    let plain = resolve(&["book.cbz", "-p", "KV"])?;
     assert!(!plain.panel_view, "panel view is off unless requested");
 
-    let with_hq = resolve(&["book.cbz", "-p", "KV", "-q"]);
+    let with_hq = resolve(&["book.cbz", "-p", "KV", "-q"])?;
     assert!(with_hq.panel_view);
 
-    let with_two_panel = resolve(&["book.cbz", "-p", "KV", "-2"]);
+    let with_two_panel = resolve(&["book.cbz", "-p", "KV", "-2"])?;
     assert!(with_two_panel.panel_view);
+    Ok(())
 }
 
 #[test]
-fn kdx_cbz_raises_the_height() {
-    let options = resolve(&["book.cbz", "-p", "KDX"]);
+fn kdx_cbz_raises_the_height() -> Result<()> {
+    let options = resolve(&["book.cbz", "-p", "KDX"])?;
     assert_eq!(options.format, Format::Cbz);
     assert_eq!(options.profile_data.height, 1200);
+    Ok(())
 }
 
 #[test]
-fn scribe_azw3_caps_the_width() {
+fn scribe_azw3_caps_the_width() -> Result<()> {
     // KS is already narrower than the cap; KS3 exceeds it.
-    let scribe = resolve(&["book.cbz", "-p", "KS"]);
+    let scribe = resolve(&["book.cbz", "-p", "KS"])?;
     assert!(scribe.kindle_scribe_azw3);
     assert_eq!(scribe.profile_data.width, 1860);
 
-    let scribe3 = resolve(&["book.cbz", "-p", "KS3"]);
+    let scribe3 = resolve(&["book.cbz", "-p", "KS3"])?;
     assert!(scribe3.kindle_scribe_azw3);
     assert_eq!(scribe3.profile_data.width, 1920);
+    Ok(())
 }
 
 #[test]
-fn doc_type_defaults_to_none_and_parses() {
-    assert_eq!(resolve(&["book.cbz"]).doc_type, DocType::None);
+fn doc_type_defaults_to_none_and_parses() -> Result<()> {
+    assert_eq!(resolve(&["book.cbz"])?.doc_type, DocType::None);
     assert_eq!(
-        resolve(&["book.cbz", "--doc-type", "ebok"]).doc_type,
+        resolve(&["book.cbz", "--doc-type", "ebok"])?.doc_type,
         DocType::Ebok
     );
     assert_eq!(
-        resolve(&["book.cbz", "--doc-type", "pdoc"]).doc_type,
+        resolve(&["book.cbz", "--doc-type", "pdoc"])?.doc_type,
         DocType::Pdoc
     );
     assert!(Cli::try_parse_from(["comic-book", "ebook", "book.cbz", "--doc-type", "x"]).is_err());
+    Ok(())
 }
 
 #[test]
-fn mozjpeg_is_rejected_with_a_clear_message() {
-    let err = resolve_err(&["book.cbz", "--mozjpeg"]);
+fn mozjpeg_is_rejected_with_a_clear_message() -> Result<()> {
+    let err = resolve_err(&["book.cbz", "--mozjpeg"])?;
     assert!(err.to_string().contains("--mozjpeg is not supported"));
+    Ok(())
 }
 
 #[test]
-fn ebook_is_registered_in_completions_with_its_input_flags() {
+fn ebook_is_registered_in_completions_with_its_input_flags() -> Result<()> {
     let command = Cli::command();
-    let ebook = command
+    let Some(ebook) = command
         .get_subcommands()
         .find(|sub| sub.get_name() == "ebook")
-        .expect("the ebook subcommand is registered");
+    else {
+        bail!("the ebook subcommand is registered");
+    };
     let flags: Vec<String> = ebook
         .get_arguments()
         .map(|arg| arg.get_id().to_string())
@@ -365,4 +399,5 @@ fn ebook_is_registered_in_completions_with_its_input_flags() {
     for expected in ["legacy_extract", "pdf_width", "profile", "format"] {
         assert!(flags.contains(&expected.to_string()), "missing {expected}");
     }
+    Ok(())
 }
