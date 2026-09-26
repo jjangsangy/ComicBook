@@ -9,8 +9,11 @@
 //! The selection itself — a sibling `Covers/` override, else the first page — is
 //! Phase 4's [`crate::ebook::naming::select_cover`].
 //!
-//! The tome `N/M` label KCC draws on split covers is deferred to Phase 9 with
-//! chunking, the only path that produces more than one tome (AGENTS.md §13.11).
+//! [`labelled`] adds the tome `N/M` label KCC draws on a split book's cover
+//! (`Cover.save_to_folder`, Phase 9). The glyphs come from the MIT `font8x8`
+//! bitmap font rather than Pillow's built-in face, so the label's *position, size
+//! and colours* match the reference while the exact glyph shapes do not
+//! (AGENTS.md §13.14).
 
 use anyhow::{Context, Result};
 use image::DynamicImage;
@@ -99,6 +102,122 @@ fn cover_size(options: &Options) -> (u32, u32) {
         )
     } else {
         (width, height)
+    }
+}
+
+/// KCC's `Cover.save_to_folder` tome label: re-encode `cover` with the `N/M` tome
+/// number drawn near the bottom (AGENTS.md §11.8, §13.14).
+///
+/// KCC increments its `tomeid` before saving as soon as there is more than one
+/// tome, so *every* tome of a split book is labelled (including the first). A
+/// single-tome book has no label and keeps its cover bytes untouched.
+pub fn labelled(
+    cover: &EncodedPage,
+    tome: usize,
+    total: usize,
+    quality: u8,
+) -> Result<EncodedPage> {
+    // KCC's `tomeid == 0` branch saves the cover unlabelled; its caller only
+    // increments `tomeid` once a book splits into more than one tome.
+    if total <= 1 || tome == 0 {
+        return Ok(cover.clone());
+    }
+    let decoded = image::load_from_memory(&cover.bytes)
+        .context("Failed to decode the cover for the tome label")?;
+    // `Cover.process` leaves the cover as 8-bit grey (or RGB under `--force-color`),
+    // so keep whichever of the two the JPEG carried.
+    let mut image = match decoded {
+        DynamicImage::ImageLuma8(_) => decoded,
+        other => DynamicImage::ImageRgb8(other.to_rgb8()),
+    };
+    draw_label(&mut image, &format!("{tome}/{total}"));
+    let (width, height) = (image.width(), image.height());
+    let bytes = page::encode_jpeg(&image, quality)?;
+
+    Ok(EncodedPage {
+        name: cover.name.clone(),
+        order_class: cover.order_class,
+        media_type: MediaType::Jpeg,
+        bytes,
+        width,
+        height,
+        flags: cover.flags,
+    })
+}
+
+/// Pillow's `stroke_width` for the tome label (`Cover.save_to_folder`).
+const LABEL_STROKE: i64 = 25;
+
+/// Draw the label the way `ImageDraw.text(..., anchor='ms')` places it: centred
+/// horizontally, its baseline at `h * 0.85`, sized `h // 7`, in white with a black
+/// outline.
+fn draw_label(image: &mut DynamicImage, text: &str) {
+    let height = image.height();
+    let font_size = height / 7;
+    let scale = (font_size / 8).max(1);
+    let glyph = 8 * scale;
+    let text_width = glyph * text.chars().count() as u32;
+    let x = (i64::from(image.width()) - i64::from(text_width)) / 2;
+    let baseline = (f64::from(height) * 0.85) as i64;
+    let y = baseline - i64::from(glyph);
+
+    // A thick outline is approximated by stamping the glyphs in black around the
+    // white text, matching the reference's `stroke_fill=0, stroke_width=25`.
+    for dx in [-LABEL_STROKE, 0, LABEL_STROKE] {
+        for dy in [-LABEL_STROKE, 0, LABEL_STROKE] {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            draw_text(image, text, scale, x + dx, y + dy, [0, 0, 0]);
+        }
+    }
+    draw_text(image, text, scale, x, y, [255, 255, 255]);
+}
+
+/// Stamp `text` at `(x, y)`, each 8x8 glyph scaled by `scale`.
+fn draw_text(image: &mut DynamicImage, text: &str, scale: u32, x: i64, y: i64, color: [u8; 3]) {
+    use font8x8::{UnicodeFonts, BASIC_FONTS};
+
+    let scale = i64::from(scale);
+    for (index, ch) in text.chars().enumerate() {
+        let Some(rows) = BASIC_FONTS.get(ch) else {
+            continue;
+        };
+        let gx = x + index as i64 * 8 * scale;
+        for (row, bits) in rows.iter().enumerate() {
+            for col in 0..8u32 {
+                if bits & (1 << col) == 0 {
+                    continue;
+                }
+                fill_block(
+                    image,
+                    gx + i64::from(col) * scale,
+                    y + row as i64 * scale,
+                    scale as u32,
+                    color,
+                );
+            }
+        }
+    }
+}
+
+/// Fill a `size`x`size` square, clipped to the image bounds.
+fn fill_block(image: &mut DynamicImage, x: i64, y: i64, size: u32, color: [u8; 3]) {
+    let (width, height) = (i64::from(image.width()), i64::from(image.height()));
+    let size = i64::from(size);
+    for py in y.max(0)..(y + size).min(height) {
+        for px in x.max(0)..(x + size).min(width) {
+            put_pixel(image, px as u32, py as u32, color);
+        }
+    }
+}
+
+/// Write one pixel into a grey or RGB cover.
+fn put_pixel(image: &mut DynamicImage, x: u32, y: u32, color: [u8; 3]) {
+    match image {
+        DynamicImage::ImageLuma8(buffer) => buffer.put_pixel(x, y, image::Luma([color[0]])),
+        DynamicImage::ImageRgb8(buffer) => buffer.put_pixel(x, y, image::Rgb(color)),
+        _ => {}
     }
 }
 
@@ -270,5 +389,30 @@ mod tests {
         .unwrap();
         let decoded = image::load_from_memory(&cover.page.bytes).unwrap();
         assert!(matches!(decoded, DynamicImage::ImageRgb8(_)));
+    }
+
+    #[test]
+    fn tome_label_changes_the_cover_bytes_and_stays_grey() {
+        // A dark cover so the white label is actually visible in the pixels.
+        let tree = tree_with_page(600, 900, [20, 20, 20]);
+        let cover = process(&tree, None, &options(&["-f", "epub", "-p", "KoE"]))
+            .unwrap()
+            .unwrap()
+            .page;
+
+        let plain = labelled(&cover, 0, 1, 85).unwrap();
+        assert_eq!(plain.bytes, cover.bytes, "a single tome is left untouched");
+
+        let first = labelled(&cover, 1, 3, 85).unwrap();
+        let second = labelled(&cover, 2, 3, 85).unwrap();
+        assert_ne!(first.bytes, cover.bytes, "the label re-encodes the cover");
+        assert_ne!(first.bytes, second.bytes, "each tome gets its own number");
+        assert!(matches!(
+            image::load_from_memory(&first.bytes).unwrap(),
+            DynamicImage::ImageLuma8(_)
+        ));
+        // A bright label pixel appears where the cover was uniformly dark.
+        let decoded = image::load_from_memory(&first.bytes).unwrap().to_luma8();
+        assert!(decoded.pixels().any(|pixel| pixel[0] == 255));
     }
 }

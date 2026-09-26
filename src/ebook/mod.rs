@@ -10,8 +10,9 @@
 //! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable; Phase 6 completes
 //! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
 //! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`; Phase 8
-//! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`). Chunking/fusion
-//! (Phase 9) and webtoon (Phase 10) follow.
+//! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`); Phase 9 adds
+//! tome chunking ([`chunk`]), `--file-fusion` and `--delete`. Webtoon (Phase 10)
+//! follows.
 //!
 //! # Exit codes
 //!
@@ -60,29 +61,23 @@ pub struct PreparedBook {
 
 /// Load a source, resolve its metadata and sanitize its chapter/page names.
 pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
-    let mut tree = input::load_tree(source)?;
-    let metadata = metadata::resolve(&tree, source, options);
-    let sanitized = naming::sanitize_tree(&mut tree, options);
+    let tree = input::load_tree(source)?;
     let cover_override = naming::select_cover(source);
-    Ok(PreparedBook {
-        tree,
-        metadata,
-        cover_override,
-        sanitized,
-    })
+    Ok(assemble(tree, cover_override, source, options, None, false))
 }
 
 /// Run the `ebook` subcommand.
 pub fn run_ebook(args: EbookArgs) -> Result<()> {
     let options = Options::resolve(&args)?;
 
-    // Features that change the pipeline wholesale and land in later phases
+    // Webtoon mode changes the pipeline wholesale and lands in Phase 10
     // (AGENTS.md §15). Bailing beats silently ignoring the flag.
-    if options.file_fusion {
-        bail!("--file-fusion is not implemented yet (AGENTS.md §15, Phase 9)");
-    }
     if options.webtoon {
         bail!("--webtoon is not implemented yet (AGENTS.md §15, Phase 10)");
+    }
+
+    if options.file_fusion {
+        return run_fusion(&options);
     }
 
     for source in options.inputs.clone() {
@@ -94,6 +89,38 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
         if options.delete {
             delete_source(&source)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Convert all inputs as one fused book (`--file-fusion`).
+///
+/// KCC merges the inputs into a temp directory and converts that once; the port
+/// merges them into a [`ComicTree`] ([`input::fusion`]) and runs the same shared
+/// pipeline. `--delete` is not honoured here, matching the reference, whose fused
+/// run deletes only its own scratch tree, never the user's sources.
+fn run_fusion(options: &Options) -> Result<()> {
+    let fused = input::fusion::build(&options.inputs)?;
+
+    // KCC defaults a fused run's output directory to the first source's directory
+    // (`options.output = fusion_source_parent`).
+    let mut fusion_options = options.clone();
+    if fusion_options.output.is_none() {
+        fusion_options.output = Some(fused.output_dir.clone());
+    }
+
+    let prepared = assemble(
+        fused.tree,
+        fused.cover,
+        &fused.source,
+        &fusion_options,
+        Some(&fused.title),
+        true,
+    );
+    let written = convert_prepared(prepared, &fused.source, &fusion_options)?;
+    for path in &written {
+        println!("Created {}", path.display());
     }
 
     Ok(())
@@ -111,9 +138,49 @@ pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> 
         return output::lightnovel::convert(source, options);
     }
 
-    let mut prepared = prepare_book(source, options)?;
-    // The cover is processed from the source before the per-page pass mutates the
-    // first page (cropping), exactly as `makeBook` builds the `Cover` first.
+    let tree = input::load_tree(source)?;
+    let cover_override = naming::select_cover(source);
+    let prepared = assemble(tree, cover_override, source, options, None, false);
+    convert_prepared(prepared, source, options)
+}
+
+/// Resolve a tree's metadata, sanitize its names and build the [`PreparedBook`].
+///
+/// `default_title` overrides the title derived from `source` (used by fusion,
+/// where the source is a synthetic `<name> [fused]` directory); `fusion` strips
+/// the `fusion_NNNN_` ordering prefix from the navigation titles.
+fn assemble(
+    mut tree: ComicTree,
+    cover_override: Option<PathBuf>,
+    source: &Path,
+    options: &Options,
+    default_title: Option<&str>,
+    fusion: bool,
+) -> PreparedBook {
+    let metadata = metadata::resolve_with(&tree, source, options, default_title);
+    let mut sanitized = naming::sanitize_tree(&mut tree, options);
+    if fusion {
+        for title in sanitized.chapter_titles.values_mut() {
+            *title = naming::strip_fusion_prefix(title);
+        }
+    }
+    PreparedBook {
+        tree,
+        metadata,
+        cover_override,
+        sanitized,
+    }
+}
+
+/// Process a prepared book and write its output(s).
+///
+/// The cover is processed from the source before the per-page pass mutates the
+/// first page (cropping), exactly as `makeBook` builds the `Cover` first.
+fn convert_prepared(
+    mut prepared: PreparedBook,
+    source: &Path,
+    options: &Options,
+) -> Result<Vec<PathBuf>> {
     let cover =
         processing::cover::process(&prepared.tree, prepared.cover_override.as_deref(), options)?;
     let mut processed = processing::process_tree(&mut prepared.tree, options)?;
@@ -121,7 +188,7 @@ pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> 
         processed.cover = Some(cover.page);
         processed.cover_smart_crop = cover.smart_cropped;
     }
-    output::write_book(&processed, &prepared, source, options)
+    output::write_book(processed, &prepared, source, options)
 }
 
 /// Remove a source after a successful conversion (`-d/--delete`).

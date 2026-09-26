@@ -325,6 +325,34 @@ pub fn select_cover(source: &Path) -> Option<PathBuf> {
     covers.get(index).map(|name| covers_dir.join(name))
 }
 
+/// KCC's `makeFusion` cover: the first `Covers/` image next to the first source.
+///
+/// The reference reads the directory with `os.listdir` and takes the first
+/// entry, i.e. filesystem order; this port natural-sorts so the result is
+/// deterministic (AGENTS.md §13.14.6).
+pub fn first_cover(parent: &Path) -> Option<PathBuf> {
+    let covers_dir = parent.join("Covers");
+    if !covers_dir.is_dir() {
+        return None;
+    }
+    let mut covers: Vec<String> = read_names(&covers_dir)
+        .into_iter()
+        .filter(|name| is_cover_image(name))
+        .collect();
+    covers.sort_by(|a, b| natord::compare_ignore_case(a, b));
+    covers.into_iter().next().map(|name| covers_dir.join(name))
+}
+
+/// Strip the `fusion_NNNN_` ordering prefix `makeFusion` puts on chapter names.
+///
+/// The prefix keeps the fused sources in the user's order; `makeBook` removes it
+/// from the navigation titles so the reader shows the source names.
+pub fn strip_fusion_prefix(value: &str) -> String {
+    static PREFIX: OnceLock<Regex> = OnceLock::new();
+    let pattern = PREFIX.get_or_init(|| Regex::new(r"^fusion_\d{4}_").expect("valid regex"));
+    pattern.replace(value, "").into_owned()
+}
+
 /// The file names in a directory (empty on error).
 fn read_names(directory: &Path) -> Vec<String> {
     std::fs::read_dir(directory)

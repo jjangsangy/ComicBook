@@ -44,14 +44,21 @@ pub(crate) struct PageRef<'a> {
 }
 
 /// Build the EPUB for `book` and write it to `dest`.
+///
+/// `title` is the tome's title (the base title for a single-tome book, or
+/// `base [i/n]` when the book was split); `drop_bookmarks` matches KCC's
+/// `ischunked` flag, which discards `ComicInfo.xml` bookmarks because their global
+/// page indices do not survive chunking.
 pub fn build_epub(
     dest: &Path,
     book: &ProcessedBook,
     prepared: &PreparedBook,
     source: &Path,
     options: &Options,
+    title: &str,
+    drop_bookmarks: bool,
 ) -> Result<()> {
-    let entries = build_entries(book, prepared, source, options);
+    let entries = build_entries(book, prepared, source, options, title, drop_bookmarks);
     package::write_epub(dest, &entries)
 }
 
@@ -65,6 +72,8 @@ pub(crate) fn build_entries(
     prepared: &PreparedBook,
     source: &Path,
     options: &Options,
+    title: &str,
+    drop_bookmarks: bool,
 ) -> Vec<(String, Vec<u8>)> {
     let uuid = Uuid::new_v4().to_string();
     let modified = modified_timestamp();
@@ -108,17 +117,18 @@ pub(crate) fn build_entries(
     }
 
     // One navigation entry per chapter, or one per ComicInfo bookmark when the
-    // book carries them (KCC's `comicinfo_chapters`).
+    // book carries them (KCC's `comicinfo_chapters`). A chunked book drops the
+    // bookmarks entirely (KCC resets `comicinfo_chapters` per split tome).
+    let bookmarks: &[(usize, String)] = if drop_bookmarks {
+        &[]
+    } else {
+        &prepared.metadata.bookmarks
+    };
     let mut page_titles: HashMap<String, String> = HashMap::new();
-    let entries = if prepared.metadata.bookmarks.is_empty() {
+    let entries = if bookmarks.is_empty() {
         chapter_starts
     } else {
-        bookmark_entries(
-            &filelist,
-            &prepared.metadata.bookmarks,
-            options.splitter,
-            &mut page_titles,
-        )
+        bookmark_entries(&filelist, bookmarks, options.splitter, &mut page_titles)
     };
 
     let cover = book.cover.as_ref().map(|cover| cover.bytes.as_slice());
@@ -155,7 +165,6 @@ pub(crate) fn build_entries(
         ));
     }
 
-    let title = &prepared.metadata.title;
     zip_entries.push((
         "OEBPS/toc.ncx".to_string(),
         nav::build_ncx(

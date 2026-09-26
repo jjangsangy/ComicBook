@@ -270,19 +270,22 @@ fn output_collisions_avoid_clobbering_an_existing_kindle_file() {
 }
 
 #[test]
-fn size_caps_and_explicit_batch_splitting_are_still_reported() {
-    let tmp = tempdir().unwrap();
-    let source = tmp.path().join("book");
-    fixture(&source);
-
+fn explicit_batch_splitting_and_size_caps_now_convert() {
     std::env::set_var(progress::QUIET_ENV, "1");
-    // MOBI forces `batch_split`, but an explicit `--batch-split` still needs
-    // Phase 9 chunking.
-    let explicit = options(&["-f", "mobi", "-p", "KV", "-b", "2"]);
-    let error = convert_source(&source, &explicit).unwrap_err().to_string();
-    assert!(error.contains("Phase 9"), "unexpected error: {error}");
-
-    let capped = options(&["-f", "mobi", "-p", "KV", "--target-size", "50"]);
-    let error = convert_source(&source, &capped).unwrap_err().to_string();
-    assert!(error.contains("Phase 9"), "unexpected error: {error}");
+    // A small flat book fits under the cap either way, so each run yields one tome
+    // with the bare name (Phase 9 chunking; AGENTS.md §15).
+    for args in [
+        vec!["-f", "mobi", "-p", "KV", "-b", "2"],
+        vec!["-f", "mobi", "-p", "KV", "--target-size", "50"],
+    ] {
+        let tmp = tempdir().unwrap();
+        let source = tmp.path().join("book");
+        fixture(&source);
+        let written = convert_source(&source, &options(&args)).expect("conversion succeeds");
+        assert_eq!(
+            written,
+            vec![tmp.path().join("book.mobi")],
+            "args: {args:?}"
+        );
+    }
 }

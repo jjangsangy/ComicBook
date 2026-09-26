@@ -150,6 +150,20 @@ pub struct BookMetadata {
 /// series/volume/number/summary/bookmarks are lifted from the ComicInfo
 /// regardless of the other flags.
 pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetadata {
+    resolve_with(tree, source, options, None)
+}
+
+/// Resolve a book's metadata, overriding the title derived from `source`.
+///
+/// `--file-fusion` converts a synthetic `<name> [fused]` directory whose default
+/// title cannot be derived from the path with the usual file/directory rules, so
+/// the caller supplies it (AGENTS.md §13.14).
+pub fn resolve_with(
+    tree: &ComicTree,
+    source: &Path,
+    options: &Options,
+    default_title: Option<&str>,
+) -> BookMetadata {
     // A malformed ComicInfo is ignored entirely, matching KCC's
     // `except Exception: os.remove(xmlPath); return`.
     let comicinfo = tree
@@ -157,12 +171,14 @@ pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetada
         .as_deref()
         .and_then(|xml| ComicInfo::parse(xml).ok());
 
-    let default_title = options.title.is_none();
+    let book_default_title = options.title.is_none();
     let default_author = options.author.is_none();
 
     let mut title = match &options.title {
         Some(title) => title.clone(),
-        None => default_title_from(source),
+        None => default_title
+            .map(str::to_string)
+            .unwrap_or_else(|| default_title_from(source)),
     };
     let mut authors = match &options.author {
         Some(author) => vec![author.clone()],
@@ -178,7 +194,7 @@ pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetada
     if let Some(info) = &comicinfo {
         if options.metadata_title == 2 {
             title = info.title.clone();
-        } else if default_title {
+        } else if book_default_title {
             if !info.series.is_empty() {
                 title = info.series.clone();
             }

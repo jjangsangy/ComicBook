@@ -23,7 +23,15 @@ use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
 /// Build the PDF for `book` and write it to `dest`.
-pub fn build_pdf(dest: &Path, book: &ProcessedBook, prepared: &PreparedBook) -> Result<()> {
+///
+/// `title` is the tome's title (the base title, or `base [i/n]` when the book was
+/// split into tomes).
+pub fn build_pdf(
+    dest: &Path,
+    book: &ProcessedBook,
+    prepared: &PreparedBook,
+    title: &str,
+) -> Result<()> {
     // KCC writes the cover into `OEBPS/Images/cover.jpg` before its walk only when
     // it was smart-cropped or came from a sibling `Covers/` override, in which case
     // the sorted walk makes it the first PDF page (AGENTS.md §12.3).
@@ -96,7 +104,7 @@ pub fn build_pdf(dest: &Path, book: &ProcessedBook, prepared: &PreparedBook) -> 
 
     {
         let mut info = pdf.document_info(info_id);
-        info.title(TextStr(prepared.metadata.title.as_str()));
+        info.title(TextStr(title));
         if let Some(author) = prepared.metadata.authors.first() {
             info.author(TextStr(author.as_str()));
         }

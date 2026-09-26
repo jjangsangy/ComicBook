@@ -73,6 +73,12 @@ flate2 = "1"
 # needed and the GPL `dualmetafix` is never ported (AGENTS.md §7, §9). Only its
 # builder is used, so our ported KCC pipeline stays in control (§10).
 kindling-mobi = "0.45"
+# Phase 9: the tome `N/M` label KCC draws on a split book's cover (AGENTS.md §13.11.4).
+# `font8x8` is an MIT, pure-Rust 8x8 bitmap font shipped *in the crate*, so the label
+# needs no committed font asset and no external program. The reference uses Pillow's
+# built-in Aileron face, whose glyphs cannot be reproduced exactly; the label's
+# position, size and colours are preserved instead (§13.14).
+font8x8 = "0.3"
 
 [dev-dependencies]
 libc = "0.2"

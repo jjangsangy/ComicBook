@@ -511,6 +511,12 @@ and the GPL `dualmetafix` (§9, §13.13.1). It is a *builder* only — the porte
 still produces the pages, so its own comic pipeline is unused. Its public `mobi_dump` module
 is reused (not a dev-dependency) for the Phase 8 structural readback tests.
 
+**Added in Phase 9.** `font8x8 = "0.3"` (MIT, pure Rust) draws the `N/M` tome label on a
+split book's cover (AGENTS.md §13.14.3). It ships its 8x8 bitmap font *in source*, so no font
+asset is committed and no external program is needed; the reference's Pillow face cannot be
+matched exactly, so the label keeps KCC's position/size/colours and differs only in glyph
+shapes. `bitvec`, already present, was not needed here.
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -1059,13 +1065,12 @@ the safety net the swaps rely on.
    The EPUB builder skips `-below` pages from the spine/navigation but still writes their bytes
    and adds the manifest image item from the `-above` entry; `buildHTML` emits the second `<img
    style="top: 1920px">` and sums the heights into the viewport (KCC's `imgsizeframe`).
-4. **The tome `N/M` cover label is deferred to Phase 9 with chunking.** It is only reachable
-   when a source splits into more than one tome, which is exactly the Phase 9 `--target-size`/
-   `--batch-split` work; today `tomeid` is always 0 and the unlabelled branch is what runs. It
-   also needs a scalable font asset (KCC uses Pillow's built-in font with a 25 px stroke), and
-   no pure-Rust crate ships a font — taking `ab_glyph` would mean committing a third-party font
-   under its own licence for a code path that is currently dead (§5.3). Phase 9 adds the label
-   and its font together, re-encoding the cover per tome as KCC's `save_to_folder` does.
+4. **The tome `N/M` cover label was deferred to Phase 9 with chunking — now delivered.**
+   It is only reachable when a source splits into more than one tome, which is exactly the
+   Phase 9 `--target-size`/`--batch-split` work. It also needs a glyph source (KCC uses
+   Pillow's built-in font with a 25 px stroke), and no pure-Rust crate shipped a font. Phase 9
+   adds the label and its font together (`font8x8`), re-encoding the cover per tome as KCC's
+   `save_to_folder` does — see §13.14.3.
 5. **Panel-view variants and spread options are pinned by integration tests.**
    `tests/ebook_epub_tests.rs` now asserts the Scribe above/below markup + manifest, the
    `-whole` naming, `--two-panel` vs the four-quadrant grid, `--vertical-4-panel`'s
@@ -1103,14 +1108,14 @@ the safety net the swaps rely on.
    rejects `--light-novel`. Two deliberate deviations: `ComicTree` only carries images, so
    non-image entries other than `ComicInfo.xml` are not reproduced, and KCC's `RGBA → LA`
    becomes `RGBA → L` (alpha dropped; comic scans are effectively opaque).
-5. **The size-cap/batch-split guard is hoisted above the format match.** It now applies to
-   CBZ/PDF as well as EPUB and reports the Phase 9 chunking work. Note the two interactions a
-   later phase must preserve: MOBI forces `batch_split = 1`, so `-f mobi` reports Phase 9
-   before the Phase 8 stub, and a reMarkable profile implies `target_size = 95`, so
-   `-f pdf -p Rmk*` does too. **Update (Phase 8):** the guard now tests
-   `options.batch_split_explicit` (a new field recording whether `--batch-split` was actually
-   passed) rather than the resolved value, so the MOBI-forced default no longer blocks
-   `-f mobi`; an explicit `--batch-split` and a size cap still do.
+5. **The size-cap/batch-split guard was hoisted above the format match, then removed in
+   Phase 9.** It briefly applied to CBZ/PDF as well as EPUB and reported the Phase 9 chunking
+   work; the interactions it had to preserve are now handled by [`chunk::split`](src/ebook/chunk.rs)
+   itself: MOBI forces `batch_split = 1` and a reMarkable profile implies `target_size = 95`,
+   both of which simply feed the chunker (and produce one tome for a small book). **Update
+   (Phase 8):** the guard briefly tested a `batch_split_explicit` field recording whether
+   `--batch-split` was actually passed, so the MOBI-forced default did not block `-f mobi`.
+   **Update (Phase 9):** that field and the guard were removed once chunking landed (§13.14.8).
 
 ### 13.13 Phase 8 decisions (Kindle output)
 
@@ -1149,10 +1154,63 @@ the safety net the swaps rely on.
    and shelf tag, and the kept EPUB's `mimetype`/OPF. This matches §5.2's "structure and
    semantics" rule rather than a byte diff against `kindlegen`, which the licence terms also
    forbid bundling.
-7. **Chunking still lands in Phase 9.** A MOBI is a single tome here even though KCC forces
-   `batch_split = 1`; with no size cap that default produces exactly one tome in KCC too
-   (`chunk_process` only splits past the 400 MB default), so no user-requested behaviour is
-   dropped. An explicit `--batch-split` or `--target-size` reports Phase 9 as before.
+7. **Chunking arrived in Phase 9.** A MOBI is a single tome when no size cap applies, even
+   though KCC forces `batch_split = 1`; with the 400 MB default that produces exactly one tome
+   in KCC too (`chunk_process` only splits past it), so no user-requested behaviour was dropped.
+   Phase 9 (§13.14) implements the chunking those defaults feed into; the `batch_split_explicit`
+   flag that only existed to gate the "not implemented" error was removed with it.
+
+### 13.14 Phase 9 decisions (chunking, fusion, delete)
+
+1. **Chunking is in-memory and moves each page once.** `chunk::split` repartitions the
+   [`ProcessedBook`](src/ebook/processing/mod.rs) into tomes, moving every `EncodedPage` into
+   exactly one tome, so peak memory stays flat (AGENTS.md §5.1). The level detection, the
+   per-page (flat) vs per-chapter (one level) split, the `--batch-split 1` oversized-chapter
+   flatten and the `mode >= 3` "every top-level directory its own tome" rule mirror
+   `chunk_directory`/`chunk_process`; each tome's cover is labelled per output.
+2. **No empty leading tome.** KCC's `chunk_process` creates a fresh tome when the *very first*
+   unit already exceeds the cap, leaving the original directory as an empty first tome; the port
+   never emits an empty tome, so a single oversized unit simply becomes its own. Observably this
+   is one fewer, empty output file in that edge case.
+3. **The `N/M` cover label uses `font8x8`.** KCC draws `tomeid/len_tomes` with Pillow's built-in
+   Aileron face (`font_size = h//7`, `anchor='ms'` at `(w/2, h*0.85)`, white with a
+   `stroke_width=25` black outline). No pure-Rust crate ships that face, and committing a
+   third-party TTF under its own licence was rejected (§5.3). The MIT `font8x8` crate ships its
+   8x8 bitmap font *in source*, so the label keeps KCC's position, size and colours while the
+   glyph shapes differ. Only a split book's covers are labelled (KCC increments `tomeid` before
+   saving once there is more than one tome), and a single-tome book keeps its cover bytes.
+4. **Titles, filenames and bookmarks follow `makeBook`.** A split book's tomes are titled
+   `base [i/n]` (`[ii/nn]` once there are ten or more) and named `base i.ext`; each gets a fresh
+   UUID. A chunked book drops its `ComicInfo.xml` bookmarks (KCC resets `comicinfo_chapters` in
+   every split `buildEPUB`), so the builders take a `drop_bookmarks` flag and an explicit `title`
+   instead of reading them from [`PreparedBook`](src/ebook/mod.rs) — that avoids cloning the whole
+   tree per tome.
+5. **Fusion is built in memory.** `input::fusion::build` loads each source and merges them into
+   one [`ComicTree`](src/ebook/model.rs) — one chapter per source, each source's own directories
+   flattened — adding the `fusion_NNNN_` prefix only when the user's order differs from natural
+   order, and takes a shared `Covers/` cover as the fused cover. `run_ebook` then converts it once
+   through the shared pipeline (`assemble` + `convert_prepared`); no `LLL-` scratch tree is
+   written. The output directory defaults to the first source's directory and the name to
+   `<first name> [fused]` (KCC's `options.output = fusion_source_parent`), and `--delete` leaves
+   the sources alone (KCC only removes its own scratch tree). Fusion's chapter titles have the
+   ordering prefix stripped, as `makeBook` does.
+6. **Fusion's `Covers/` pick is deterministic.** KCC takes `filtered_covers[0]` from `os.listdir`
+   order (filesystem order); the port natural-sorts first (§5.2 — the chosen file, not its order,
+   is what a reader sees).
+7. **`--delete` and `--temp-dir`.** `--delete` removes each source after a successful conversion
+   (already present; now covered by a test). `--temp-dir` places the Kindle builder's scratch
+   directory on the source's drive; the in-memory EPUB/CBZ/PDF paths have no temp tree to
+   relocate, so it is a no-op there.
+8. **`Options::batch_split_explicit` is gone.** It only existed to gate the Phase 9 "not
+   implemented" error; `batch_split`/`target_size` alone now drive chunking.
+9. **Windows path-length flattening is not reproduced.** `chunk_directory` flattens a tree when a
+   Windows path would exceed ~220 chars. The port never materialises the tree on disk (§5.1), so
+   the heuristic has no equivalent; zip entry names are unaffected by OS path limits. Noted rather
+   than ported.
+10. **Tests.** `tests/ebook_chunk_tests.rs` (9 tests) pins per-subdirectory splitting, the
+    size-boundary split and its filenames, per-tome labels, dropped bookmarks, fusion (merge, user
+    order, ≥2 sources, shared `Covers/` cover) and `--delete`; unit tests cover the packing
+    boundary, the above/below unit grouping, flatten and mixed-depth detection.
 
 ## 14. Performance & memory goals
 
@@ -1389,20 +1447,40 @@ resize), plus unit tests in `pdf.rs`. Decisions recorded in §13.12.
 - `output/epub/mod.rs` — `build_entries` returns the OEBPS entry list so the Kindle
   path can reuse it without a zip round-trip; `build_epub` wraps it.
 - `output/mod.rs` — Kindle dispatch, deriving the Kindle file name from the
-  resolved intermediate-EPUB name (`makeMOBIFix`), and the size-cap guard now keying
-  on the new `Options::batch_split_explicit`.
-- `options.rs` — `batch_split_explicit`; `naming.rs` — the `_kcc<N>` collision rule
-  covers `Azw3` and `-o out.mobi`/`-o out.azw3`.
+  resolved intermediate-EPUB name (`makeMOBIFix`).
+- `naming.rs` — the `_kcc<N>` collision rule covers `Azw3` and `-o out.mobi`/
+  `-o out.azw3`.
 
 Tests: `tests/ebook_kindle_tests.rs` (11 tests — KF8-only vs dual container via
 `kindling::mobi_dump`, the kept intermediate EPUB, title/author and writing-mode EXTH
-round-trip, the shelf tag, `-f auto`, Panel View, the AZW3 collision, and the Phase 9
-guard), plus `tests/ebook_naming_tests.rs` additions. Decisions recorded in §13.13.
+round-trip, the shelf tag, `-f auto`, Panel View, the AZW3 collision), plus
+`tests/ebook_naming_tests.rs` additions. Decisions recorded in §13.13.
 
-### Phase 9 — Chunking, fusion, delete
+### Phase 9 — Chunking, fusion, delete (complete)
 - `--target-size`, `--batch-split`, tome titles `[i/n]`, the cover `N/M` label (§13.11.4),
   `--file-fusion` (+ `Covers/` fused cover), `--delete`, `--temp-dir`.
 - **Exit:** multi-tome output splits at the size boundary; fusion merges and orders inputs.
+
+**Delivered.**
+- `chunk.rs` — `split`: levels a `ProcessedBook`, picks the reference's split unit (page,
+  chapter or top-level directory), packs by `--target-size` (or KCC's 400 MB/100 MB
+  defaults), flattens when depths mix or a `--batch-split 1` chapter overflows, and labels
+  each tome's cover with its `N/M` number. `processing/cover.rs` gained `labelled` (the
+  `Cover.save_to_folder` port, drawn with `font8x8`).
+- `input/fusion.rs` — `build`: one in-memory chapter per source with the `fusion_NNNN_`
+  ordering prefix only when the user's order differs from natural sort, plus the shared
+  `Covers/` fused cover. `ebook/mod.rs` gained `run_fusion` and a shared `assemble`/
+  `convert_prepared` seam; `metadata::resolve_with` supplies the fused default title.
+- `output/mod.rs` — `write_book` now splits the book, then writes one file per tome with
+  `base [i/n]` titles, ` <i>` filename suffixes, fresh UUIDs and dropped bookmarks; the
+  builders take an explicit `title`/`drop_bookmarks`.
+- `kindle.rs` — `--temp-dir` places the scratch directory on the source's drive.
+- `options.rs` — the now-dead `batch_split_explicit` was removed.
+
+Tests: `tests/ebook_chunk_tests.rs` (9 tests — per-subdirectory and size-boundary splits,
+filenames/titles, per-tome cover labels, dropped bookmarks, fusion merge/order/arity/shared
+cover and `--delete`), `ebook_kindle_tests.rs`/`ebook_epub_tests.rs` updated to expect
+conversion rather than a "Phase 9" error, plus chunk unit tests. Decisions recorded in §13.14.
 
 ### Phase 10 — Webtoon
 - Port `comic2panel`: merge + panel detection + overlap splitting + virtual pages.
@@ -1645,6 +1723,12 @@ stays in control and `dualmetafix` is never ported (§9, §13.13.1). The Phase 8
 readback tests reuse its public `mobi_dump` module. The §20.3 Phase-0 spike action is now
 resolved: the generated fixed-layout EPUB round-trips through `kindling` with our OPF metadata
 intact (verified by `tests/ebook_kindle_tests.rs`).
+
+**Adopted in Phase 9.** `font8x8 = "0.3"` (MIT, pure Rust) for the `N/M` tome cover label
+(§7, §13.14.3). Unlike Phase 8, this is a *new* crate — no existing dependency supplied glyph
+rasterisation (imageproc 0.27 dropped its `ab_glyph`-based `draw_text`, and no font crate was
+in the tree) — but it ships its bitmap font in source, so no TTF asset is committed and the
+label stays MIT-only and asset-free.
 
 ### 20.4 Running Python tooling in a throwaway environment
 

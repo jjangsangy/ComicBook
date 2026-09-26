@@ -377,16 +377,16 @@ fn comicinfo_bookmarks_name_the_navigation_entries() {
 }
 
 #[test]
-fn size_capped_output_is_reported_when_unimplemented() {
-    // Chunking into tomes lands in Phase 9. A reMarkable profile implies a target
-    // size, so the error must be clear, not silent.
+fn a_size_capped_profile_still_converts_to_a_single_tome() {
+    // A reMarkable profile implies a target size, so chunking is engaged; a small
+    // book fits in one tome and uses the bare title/name.
     let tmp = tempdir().unwrap();
     let source = tmp.path().join("book");
     fixture(&source);
 
     let options = options(&["-f", "pdf", "-p", "Rmk1"]);
-    let error = convert_source(&source, &options).unwrap_err().to_string();
-    assert!(error.contains("Phase 9"), "unexpected error: {error}");
+    let written = convert_source(&source, &options).expect("a capped book converts");
+    assert_eq!(written, vec![tmp.path().join("book.pdf")]);
 }
 
 /// A book with no spread specials, so the spread algorithm is easy to read.

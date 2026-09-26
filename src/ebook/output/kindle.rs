@@ -25,6 +25,7 @@ use super::epub;
 /// tree is materialised into a scratch directory and handed to `kindling`'s OPF
 /// builder directly (no zip round-trip, AGENTS.md §5.1). The EPUB zip is only
 /// written when `--format mobi+epub` asked for it.
+#[allow(clippy::too_many_arguments)]
 pub fn build_kindle(
     epub_dest: &Path,
     kindle_dest: &Path,
@@ -32,19 +33,20 @@ pub fn build_kindle(
     prepared: &PreparedBook,
     source: &Path,
     options: &Options,
+    title: &str,
+    drop_bookmarks: bool,
 ) -> Result<()> {
-    let entries = epub::build_entries(book, prepared, source, options);
+    let entries = epub::build_entries(book, prepared, source, options, title, drop_bookmarks);
 
     if options.keep_epub {
         epub::package::write_epub(epub_dest, &entries)?;
     }
 
     // `kindling` reads the OPF, its XHTML and its images from disk, so unpack
-    // the in-memory tree into a scratch directory for it.
-    let scratch = tempfile::Builder::new()
-        .prefix("comic-book-kindle-")
-        .tempdir()
-        .context("Failed to create a scratch directory for Kindle output")?;
+    // the in-memory tree into a scratch directory for it. `--temp-dir` puts that
+    // directory on the source's drive, as KCC's `getWorkFolder` does (AGENTS.md
+    // §15, Phase 9); the in-memory pipeline has no other temp tree to relocate.
+    let scratch = create_scratch(source, options)?;
     write_tree(scratch.path(), &entries)?;
     let opf_path = scratch.path().join("OEBPS/content.opf");
 
@@ -107,6 +109,20 @@ fn doc_type_tag(doc_type: DocType) -> Option<String> {
         DocType::Ebok => Some("EBOK".to_string()),
         DocType::Pdoc => Some("PDOC".to_string()),
     }
+}
+
+/// Create the scratch directory `kindling` reads, honouring `--temp-dir`.
+///
+/// Without `--temp-dir` it is created in the system temp directory; with it, next
+/// to the source, so the spooled images live on the same drive as the input.
+fn create_scratch(source: &Path, options: &Options) -> Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("comic-book-kindle-");
+    let scratch = match options.temp_dir.then(|| source.parent()).flatten() {
+        Some(parent) if !parent.as_os_str().is_empty() => builder.tempdir_in(parent),
+        _ => builder.tempdir(),
+    };
+    scratch.context("Failed to create a scratch directory for Kindle output")
 }
 
 /// Materialise the OEBPS entries under `root`.
