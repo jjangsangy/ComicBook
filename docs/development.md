@@ -65,8 +65,9 @@ cargo nextest run --run-ignored all --test ebook_webtoon_tests
 ## CI
 
 The existing `ubuntu`/`macos`/`windows` matrix installs cargo-nextest
-(`taiki-e/install-action@nextest`) and runs `cargo nextest run`; the release workflow builds
-static musl Linux binaries.
+(`taiki-e/install-action@nextest`) and runs `cargo nextest run --no-fail-fast`, since nextest is
+fail-fast by default: without the flag a single failure (e.g. on Windows) aborts the run and the
+remaining tests never produce output. The release workflow builds static musl Linux binaries.
 
 ## Cross-platform & packaging notes
 
