@@ -48,7 +48,7 @@ fn summary(page: &EncodedPage) -> (OrderClass, MediaType, u32, u32, bool) {
 
 #[test]
 fn fixture_book_snapshot() {
-    // Keep the progress bar quiet regardless of how `cargo test` was invoked.
+    // Keep the progress bar quiet regardless of how `cargo nextest` was invoked.
     std::env::set_var(comic_book::ebook::progress::QUIET_ENV, "1");
 
     let tmp = tempdir().unwrap();

@@ -233,10 +233,11 @@ comic-book completions powershell >> $PROFILE
 
 ## Development & Testing
 
-Run unit and integration tests:
+Run unit and integration tests with [cargo-nextest](https://nexte.st/) (install once with
+`cargo install cargo-nextest --locked`):
 
 ```bash
-cargo test
+cargo nextest run
 ```
 
 Check code style and linter warnings:

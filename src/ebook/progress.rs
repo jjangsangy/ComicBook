@@ -1,7 +1,7 @@
 //! Progress reporting (indicatif), safe to run without an interactive terminal.
 //!
 //! Progress bars render straight to stderr. When stderr is not a terminal — the
-//! normal case under `cargo test`, CI, or a pipe — every bar is hidden so it
+//! normal case under `cargo nextest`, CI, or a pipe — every bar is hidden so it
 //! emits nothing. Setting `COMIC_BOOK_QUIET` hides them unconditionally.
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};

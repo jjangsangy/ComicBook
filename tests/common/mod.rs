@@ -2,8 +2,8 @@
 //!
 //! `indicatif` progress bars draw straight to the stderr file descriptor,
 //! bypassing the capture libtest installs around `println!`/`eprintln!`. Without
-//! this, `cargo test` is littered with half-rendered bar frames interleaved with
-//! the harness's own output.
+//! this, `cargo nextest` output is littered with half-rendered bar frames
+//! interleaved with the harness's own output.
 //!
 //! The wrappers below point fd 2 at `/dev/null` (once per test binary) before
 //! calling into the library entry points that render progress. Normal

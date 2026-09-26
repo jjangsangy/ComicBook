@@ -916,7 +916,7 @@ Phase R's first pass is complete; §15 Phase R records the per-item outcome.
 diff still reads positive because the new unit tests (in `crop.rs`/`page.rs` and
    `tests/integration_tests.rs`) and this decision record outweigh it. Tests were kept: they are
 the safety net the swaps rely on.
-5. **No behaviour change.** `cargo test` (incl. `tests/ebook_crop_tests.rs` and
+5. **No behaviour change.** `cargo nextest run` (incl. `tests/ebook_crop_tests.rs` and
    `tests/ebook_processing_tests.rs`) and `clippy -D warnings` stay green; new unit tests pin
    `trim_histogram_ends`, `binarize`, `fill_rect`, `pack_indices` (byte-identical `bitvec`
    output across 1/2/4/8-bit), and `is_os_metadata`.
@@ -1039,7 +1039,7 @@ the safety net the swaps rely on.
    documents against committed references in `tests/fixtures/epub_golden/` (only the UUID and
    `dcterms:modified` are normalised). The references were captured from the `push_str`
    implementation *before* the refactor, so the migration is provably behaviour-preserving;
-   regenerate with `UPDATE_GOLDEN=1 cargo test --test ebook_golden_tests` only for an
+   regenerate with `UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests` only for an
    intentional format change.
 5. **The Scribe `-above`/`-below` manifest branch is unit-tested directly** (and, since
    Phase 6, end-to-end; §13.11.3). `opf.rs::manifest_items` is a separate function with a unit
@@ -1275,7 +1275,7 @@ the safety net the swaps rely on.
 ## 15. Execution plan (phases)
 
 Each phase ends with `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
-and `cargo test` green on the CI matrix.
+and `cargo nextest run` green on the CI matrix (§16).
 
 Side phases (currently **Phase R**, below) are not milestones and may be worked alongside any
 feature phase.
@@ -1652,7 +1652,7 @@ first (§5.3). Concretely:
 - `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `lopdf` / `pdf-render` (§7).
 
 - **Exit:** every swap/consolidation is a separate no-behaviour-change commit that keeps
-  `cargo test` (including `tests/ebook_crop_tests.rs` and `tests/ebook_processing_tests.rs`)
+  `cargo nextest run` (including `tests/ebook_crop_tests.rs` and `tests/ebook_processing_tests.rs`)
   and `clippy -D warnings` green; new direct deps pass the §7/§18 licence and pure-Rust checks;
   §7 and §20.3 record what was adopted, and each deliberately-kept item carries a comment
   pointing at §5.3 so it is not "fixed" later.
@@ -1661,6 +1661,13 @@ first (§5.3). Concretely:
 
 ## 16. Testing & validation strategy
 
+- **Run tests with `cargo nextest`, not `cargo test`.** [cargo-nextest](https://nexte.st/)
+  (`cargo install cargo-nextest --locked`) is the standard test runner for this repo: it runs
+  each test in its own process, reports failures more clearly, and parallelises better than the
+  built-in runner. Use `cargo nextest run` for the suite (e.g.
+  `cargo nextest run --test ebook_golden_tests`) when running tests directly. This project
+  has no doctests, so nextest covers the whole suite; `cargo test` is only needed where nextest
+  cannot run a target (e.g. `cargo test --doc` for doctests, or a tool hard-wired to it).
 - **Unit tests** per algorithm with small synthetic images (color check decisions, fill
   detection, split classification, crop bboxes, slugify, spread properties, filename logic,
   OPF/NCX/NAV serialization).
@@ -1677,8 +1684,9 @@ first (§5.3). Concretely:
 - **EPUB conformance:** opt-in `epubcheck` job (JVM), marked `#[ignore]` by default.
 - **AZW3/MOBI:** structural readback; if feasible, decode with a reader or compare against a
   committed `kindlegen` reference (note legal caveats — commit only outputs, never binaries).
-- **Cross-platform CI:** reuse the existing `ubuntu`/`macos`/`windows` matrix; add a release
-  job for static musl Linux if AZW3 deps permit.
+- **Cross-platform CI:** reuse the existing `ubuntu`/`macos`/`windows` matrix; the test job
+  installs cargo-nextest (`taiki-e/install-action@nextest`) and runs `cargo nextest run`; add a
+  release job for static musl Linux if AZW3 deps permit.
 - **Silence progress bars in tests** (reuse `tests/common/mod.rs` pattern).
 
 ---

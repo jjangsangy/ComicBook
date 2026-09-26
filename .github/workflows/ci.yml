@@ -51,5 +51,8 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo nextest run --verbose

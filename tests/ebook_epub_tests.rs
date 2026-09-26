@@ -701,7 +701,7 @@ fn cover_is_taken_from_the_uncropped_first_page() {
 }
 
 /// Opt-in EPUB conformance check (AGENTS.md §16); run with
-/// `cargo test -- --ignored epubcheck` when `epubcheck` is on `PATH`.
+/// `cargo nextest run --run-ignored ignored-only epubcheck` when `epubcheck` is on `PATH`.
 #[test]
 #[ignore = "requires the epubcheck command on PATH"]
 fn epubcheck_accepts_a_generated_epub() {

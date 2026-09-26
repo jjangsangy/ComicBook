@@ -11,7 +11,7 @@
 //! Regenerate the references (only when an intentional format change is made):
 //!
 //! ```text
-//! UPDATE_GOLDEN=1 cargo test --test ebook_golden_tests
+//! UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests
 //! ```
 
 use std::collections::BTreeMap;
