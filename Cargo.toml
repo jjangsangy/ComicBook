@@ -60,9 +60,20 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 # derive and `askama.toml` support are enabled; the templates carry their own
 # XML/HTML text.
 askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
+# Phase 7: PDF output. `pdf-writer` (Typst) is a low-level, pure-Rust PDF writer
+# with a minimal dependency set (MIT OR Apache-2.0); it handles the xref table and
+# lets us embed each page's image as an XObject without recompression (AGENTS.md §7).
+pdf-writer = "0.15"
+# Phase 7: zlib-compressing the raw samples of non-JPEG PDF images (the
+# `FlateDecode` path). Already in the tree transitively via `png`/`zip`; promoted
+# to a direct dependency (AGENTS.md §7).
+flate2 = "1"
 
 [dev-dependencies]
 libc = "0.2"
 # Reading the EPUB container back in the Phase 5 structural tests; already a runtime
 # dependency, re-declared here because integration tests cannot name it directly.
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# Parsing the generated PDF back in the Phase 7 round-trip tests (AGENTS.md §15,
+# Phase 7 exit criterion). MIT, pure Rust; dev-only, so it never ships.
+lopdf = { version = "0.45", default-features = false }

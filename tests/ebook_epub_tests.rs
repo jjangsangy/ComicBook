@@ -377,18 +377,16 @@ fn comicinfo_bookmarks_name_the_navigation_entries() {
 }
 
 #[test]
-fn supported_formats_are_reported_when_unimplemented() {
-    // CBZ/PDF/Kindle land in later phases; the error must be clear, not silent.
+fn size_capped_output_is_reported_when_unimplemented() {
+    // Chunking into tomes lands in Phase 9. A reMarkable profile implies a target
+    // size, so the error must be clear, not silent.
     let tmp = tempdir().unwrap();
     let source = tmp.path().join("book");
     fixture(&source);
 
     let options = options(&["-f", "pdf", "-p", "Rmk1"]);
     let error = convert_source(&source, &options).unwrap_err().to_string();
-    assert!(
-        error.contains("not implemented"),
-        "unexpected error: {error}"
-    );
+    assert!(error.contains("Phase 9"), "unexpected error: {error}");
 }
 
 /// A book with no spread specials, so the spread algorithm is easy to read.

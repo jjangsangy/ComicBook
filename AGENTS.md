@@ -407,8 +407,9 @@ src/
         opf.rs                # buildOPF (spread logic, kindle meta)
         package.rs            # OEBPS layout + EPUB zip (mimetype first)
       kepub.rs                # KEPUB variant (extension + Kobo properties)
-      cbz.rs                  # CBZ output (reuse archive writer)
-      pdf.rs                  # buildPDF
+      cbz.rs                  # CBZ output (makeZIP over the processed pages)
+      pdf.rs                  # buildPDF (pdf-writer: one page per image)
+      lightnovel.rs           # --light-novel: resize-only CBZ repackage
       kindle.rs               # kindling integration: azw3 / mobi / mobi+epub
 ```
 
@@ -495,6 +496,15 @@ document skeletons (§13.10). `config` is also what enables askama's `external-s
 the `path = "…"` template files; those extra crates are proc-macro/build-time only, so the
 runtime dependency added to the binary is just `itoa`.
 
+**Added in Phase 7.** `pdf-writer = "0.15"` (MIT OR Apache-2.0, pure Rust; runtime deps are
+only `bitflags`/`itoa`/`memchr`/`ryu`) writes the PDF document skeleton — catalog, page tree,
+image XObjects, document info and xref/trailer — while the page content and filters stay
+ours (§13.12.2). `flate2 = "1"` (MIT/Apache-2.0) zlib-compresses the raw samples of the
+non-JPEG PDF images; it was already in the tree transitively via `png`/`zip` and is promoted
+to a direct dependency (§13.7.1's pattern). The Phase 7 round-trip tests parse the generated
+PDF back with `lopdf = "0.45"` (MIT, pure Rust) as a **dev-dependency** only, so it never
+ships in the binary.
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -530,11 +540,11 @@ transliterate GPL source.
 | `page_number_crop_alg.py` | `processing/crop.rs` | P1 |
 | `inter_panel_crop_alg.py` | `processing/interpanel.rs` | P2 |
 | `rainbow_artifacts_eraser.py` | `processing/rainbow.rs` | P2 |
-| `buildPDF` | `output/pdf.rs` | P2 |
+| `buildPDF` | `output/pdf.rs` (`pdf-writer`) | P2 |
 | PDF input (`getWorkFolder` branch, `pdfjpgextract`) | `input/pdf.rs` | P1 (extract), P2 (render) |
 | EPUB input branch | `input/epub.rs` | P1 |
 | `makeMOBI`/`makeMOBIFix`/`dualmetafix` | `output/kindle.rs` via `kindling` | P1 |
-| `lightnovel` path | `output/mod.rs` resize-and-repackage branch | P1 |
+| `lightnovel` path | `output/lightnovel.rs` resize-and-repackage branch | P1 |
 | `--wallpaper` | `processing/page.rs` (fit crop) | P1 |
 | kindle device upload | **excluded** | — |
 
@@ -1058,6 +1068,41 @@ the safety net the swaps rely on.
    the smart-cropped cover. The panel grid maths itself was already `--hq`-pinned by the
    `kindle_hq`/`kindle_panel` golden scenarios (§13.10), so no golden file changed.
 
+### 13.12 Phase 7 decisions
+
+1. **CBZ output is `makeZIP` over the already-processed pages.** `-f cbz` writes the
+   `EncodedPage` payloads (whose sanitized `kcc-NNNN-kcc-<order>` names and chapter
+   directories are exactly what KCC's `ComicPage.saveToDir` left on disk) through the
+   existing `crate::archive::ArchiveWriter`, stored rather than deflated, matching KCC's
+   `ZipFile(..., ZIP_STORED)`. A `##cover.jpg` is added only when the cover was
+   smart-cropped or came from a sibling `Covers/` override, and `ComicInfo.xml` only when
+   `--keep-comicinfo` retained it (KCC's `options.comicinfo_xml`, populated for CBZ only).
+2. **PDF embeds each image directly as an XObject.** KCC streams the images through
+   PyMuPDF; here a JPEG whose *header* declares 8-bit gray or RGB is embedded verbatim via
+   `DCTDecode` (no recompression, and only the header is read, not a full decode), while
+   PNG/GIF/WebP and any exotic JPEG are decoded and `FlateDecode`d. Each page is the image's
+   own pixel size in points, scaled onto the whole `MediaBox`, and the cover is prepended
+   under the same smart-crop/custom-cover condition KCC applies. The document info carries
+   the resolved title and first author. `pdf-writer` supplies the catalog/page-tree/xref
+   skeleton (§7); the content streams, XObject dictionaries and filters are ours.
+3. **`lopdf` is a dev-dependency only.** The Phase 7 round-trip tests parse the generated
+   PDF back (page count, `MediaBox` sizes, XObject dimensions, filter and colour space) with
+   the MIT, pure-Rust `lopdf`, so no PDF *reader* ships in the binary.
+4. **Light-novel mode bypasses `prepare_book` entirely.** KCC runs `--lightnovel` right
+   after extraction, before `getMetadata`/`sanitizeTree`/`imgDirectoryProcessing`, so pages
+   keep their original names and structure, no cover is built, and only pages larger than the
+   (Kindle-capped) profile are grayscaled and `ImageOps.contain`ed — a page that already fits
+   is copied byte-for-byte. The output is always a CBZ. `convert_source` therefore dispatches
+   to `output::lightnovel::convert` before the normal pipeline, and `run_ebook` no longer
+   rejects `--light-novel`. Two deliberate deviations: `ComicTree` only carries images, so
+   non-image entries other than `ComicInfo.xml` are not reproduced, and KCC's `RGBA → LA`
+   becomes `RGBA → L` (alpha dropped; comic scans are effectively opaque).
+5. **The size-cap/batch-split guard is hoisted above the format match.** It now applies to
+   CBZ/PDF as well as EPUB and reports the Phase 9 chunking work. Note the two interactions a
+   later phase must preserve: MOBI forces `batch_split = 1`, so `-f mobi` reports Phase 9
+   before the Phase 8 stub, and a reMarkable profile implies `target_size = 95`, so
+   `-f pdf -p Rmk*` does too.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -1256,9 +1301,28 @@ spine; `-whole` naming; `--one-page-landscape`; `--spread-shift`; `--invert-dire
 `--two-panel`/`--vertical-4-panel`; the smart-cropped cover), plus unit tests in `cover.rs` and
 `page.rs`. Decisions recorded in §13.11.
 
-### Phase 7 — CBZ, PDF, light-novel
+### Phase 7 — CBZ, PDF, light-novel (complete)
 - CBZ output + `--keep-comicinfo`; PDF output; light-novel mode.
 - **Exit:** round-trip tests (CBZ loads back; PDF has N pages of correct size).
+
+**Delivered.** `src/ebook/output/`:
+- `cbz.rs` — `build_cbz`: the processed pages (and their chapter directories) written
+  through `crate::archive::ArchiveWriter`, with the conditional `##cover.jpg` and
+  `--keep-comicinfo` `ComicInfo.xml` entries.
+- `pdf.rs` — `build_pdf`: one `pdf-writer` page per image at its pixel size, JPEGs embedded
+  through `DCTDecode` (header-probed colour space) and everything else through `FlateDecode`,
+  with the title/author document info. `pdf-writer` (runtime) and `lopdf` (dev-only) added
+  (§7).
+- `lightnovel.rs` — `convert`: KCC's `--lightnovel` branch, run from
+  [`convert_source`](src/ebook/mod.rs) before `prepare_book`: it preserves the source
+  structure, copies fitting pages byte-for-byte, and grayscale-contains only the oversized
+  ones into a CBZ.
+- `output/mod.rs` — CBZ/PDF dispatch; the shared size-cap/batch-split guard.
+
+Tests: `tests/ebook_output_tests.rs` (7 tests — CBZ entries + reload parity, the
+smart-crop cover and `--keep-comicinfo` document, the PDF page count/`MediaBox`/XObject
+colour space and the `FlateDecode` path read back with `lopdf`, and light-novel structure +
+resize), plus unit tests in `pdf.rs`. Decisions recorded in §13.12.
 
 ### Phase 8 — Kindle output (AZW3/MOBI) via kindling
 - Build fixed-layout EPUB → `kindling` → `.azw3` / `.mobi`; `--doc-type`;
@@ -1497,6 +1561,11 @@ for the KCC number-padding and `\W+` rules. See §7 and §13.8.1.
 **Adopted in Phase 5.** `uuid = "1"` (v4, MIT/Apache-2.0) for the EPUB
 `dc:identifier`/`dtb:uid`; `time = "0.3"` (`formatting` + `macros`, MIT/Apache-2.0) for
 `dcterms:modified`. Both come straight from the §7 candidate table (§13.9.5).
+
+**Adopted in Phase 7.** `pdf-writer = "0.15"` (MIT OR Apache-2.0, pure Rust, minimal
+dependencies) for the PDF document skeleton, per §7's candidate table; `flate2 = "1"`
+(MIT/Apache-2.0, already transitive) for the non-JPEG image samples; and `lopdf = "0.45"`
+(MIT, pure Rust) as a **dev-dependency** for the PDF readback tests. See §7 and §13.12.
 
 **Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
 EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our

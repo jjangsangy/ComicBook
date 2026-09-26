@@ -9,8 +9,8 @@
 //! ([`metadata`]) and page/chapter naming ([`naming`]); Phase 5 adds the output
 //! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable; Phase 6 completes
 //! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
-//! spread variants. Later output formats (CBZ, PDF, Kindle) and features (chunking,
-//! fusion, webtoon) land in the phases that follow.
+//! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`. The Kindle
+//! output (Phase 8) and chunking/fusion/webtoon (Phases 9–10) follow.
 //!
 //! # Exit codes
 //!
@@ -83,9 +83,6 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
     if options.webtoon {
         bail!("--webtoon is not implemented yet (AGENTS.md §15, Phase 10)");
     }
-    if options.light_novel {
-        bail!("--light-novel is not implemented yet (AGENTS.md §15, Phase 7)");
-    }
 
     for source in options.inputs.clone() {
         let written = convert_source(&source, &options)?;
@@ -105,7 +102,14 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
 ///
 /// This is KCC's `makeBook` without the per-source loop: load, resolve metadata,
 /// sanitize names, build the cover, process the images and write the output.
+/// `--light-novel` diverges before any of that — KCC's light-novel branch runs
+/// right after extraction and never touches metadata, naming or the cover
+/// (AGENTS.md §12.3), so it is dispatched to [`output::lightnovel`] wholesale.
 pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
+    if options.light_novel {
+        return output::lightnovel::convert(source, options);
+    }
+
     let mut prepared = prepare_book(source, options)?;
     // The cover is processed from the source before the per-page pass mutates the
     // first page (cropping), exactly as `makeBook` builds the `Cover` first.

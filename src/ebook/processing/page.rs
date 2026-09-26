@@ -662,7 +662,7 @@ pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> Dyn
 }
 
 /// Pillow's `ImageOps.contain`: scale to fit within `size`, preserving aspect.
-fn contain(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+pub(crate) fn contain(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
     let (width, height) = image.dimensions();
     let (target_w, target_h) = contain_size(width, height, size);
     resize_to(image, target_w, target_h, method)
@@ -987,9 +987,13 @@ fn encode_webp_lossless(image: &RgbImage) -> Vec<u8> {
     encoder.encode_lossless().to_vec()
 }
 
-/// Encode an image in a given media type at `quality` (used for `--no-processing`
-/// trees that have no retained source bytes).
-fn encode_dynamic(image: &DynamicImage, media_type: MediaType, quality: u8) -> Result<Vec<u8>> {
+/// Encode an image in a given media type at `quality` (used for the `--no-processing`
+/// passthrough and light-novel resizes, which have no retained source bytes to copy).
+pub(crate) fn encode_dynamic(
+    image: &DynamicImage,
+    media_type: MediaType,
+    quality: u8,
+) -> Result<Vec<u8>> {
     match media_type {
         MediaType::Jpeg => encode_jpeg(image, quality),
         MediaType::Png => match image {
