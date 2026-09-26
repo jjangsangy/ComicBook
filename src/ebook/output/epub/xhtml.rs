@@ -1,4 +1,4 @@
-//! Per-page XHTML generation — `buildHTML` (AGENTS.md §12.2).
+//! Per-page XHTML generation — `buildHTML` (see docs/output.md).
 //!
 //! One fixed-layout XHTML file is written per encoded page. The image is
 //! referenced through the `Images/` tree with one `../` per chapter level plus the
@@ -9,7 +9,7 @@
 //! profile and options enable it.
 //!
 //! The document skeleton lives in `templates/page.xhtml`; this module computes the
-//! values it interpolates (AGENTS.md §5.3).
+//! values it interpolates (see docs/dependencies.md).
 
 use askama::Template;
 
@@ -111,7 +111,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         panel_height,
     };
     // askama drops a single trailing newline from every template; KCC's page
-    // XHTML is newline terminated (AGENTS.md §5.2).
+    // XHTML is newline terminated (see docs/architecture.md).
     let mut out = view.render()?;
     out.push('\n');
     Ok(out.into_bytes())

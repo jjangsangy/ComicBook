@@ -1,4 +1,4 @@
-//! `toc.ncx` and `nav.xhtml` generation (AGENTS.md §12.2).
+//! `toc.ncx` and `nav.xhtml` generation (see docs/output.md).
 //!
 //! Both documents are a flat list of chapter entries — one per chapter directory,
 //! or one per `ComicInfo.xml` bookmark when the book carries them. The NCX uses
@@ -6,7 +6,7 @@
 //! `page-list`), matching KCC's output exactly.
 //!
 //! The document skeletons live in `templates/toc.ncx` and `templates/nav.xhtml`;
-//! this module computes the navigation entries they render (AGENTS.md §5.3).
+//! this module computes the navigation entries they render (see docs/dependencies.md).
 
 use std::collections::HashMap;
 

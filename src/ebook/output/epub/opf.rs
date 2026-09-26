@@ -1,4 +1,4 @@
-//! `content.opf` generation and the spread-property algorithm (AGENTS.md §12.2).
+//! `content.opf` generation and the spread-property algorithm (see docs/output.md).
 //!
 //! The OPF is the device-sensitive heart of the EPUB: the Dublin Core block, the
 //! Kindle fixed-layout metas, the manifest and — most delicately — the spine's
@@ -10,7 +10,7 @@
 //!
 //! The document skeleton lives in `templates/content.opf`, `templates/style.css`
 //! and the `CONTAINER_XML` literal; this module computes the values they
-//! interpolate (AGENTS.md §5.3).
+//! interpolate (see docs/dependencies.md).
 
 use std::path::Path;
 
@@ -137,7 +137,7 @@ pub(crate) fn build_opf(
         spine: &spine,
     };
     // askama drops a single trailing newline from every template; KCC's OPF is
-    // newline terminated (AGENTS.md §5.2).
+    // newline terminated (see docs/architecture.md).
     let mut out = view.render()?;
     out.push('\n');
     Ok(out)

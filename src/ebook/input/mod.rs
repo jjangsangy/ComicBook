@@ -1,7 +1,7 @@
 //! Input adapters: turn each supported source into a [`ComicTree`].
 //!
-//! Archives and image folders are handled by [`archive`] (Phase 1); the EPUB
-//! (spine-ordered) and PDF (embedded-image/rasterised) adapters land in Phase 11.
+//! Archives and image folders are handled by [`archive`]; the EPUB (spine-ordered)
+//! and PDF (embedded-image/rasterised) adapters live alongside it.
 
 pub mod archive;
 pub mod epub;
@@ -20,9 +20,9 @@ use crate::ebook::options::Options;
 pub enum SourceKind {
     /// A comic archive or an image folder.
     Archive(ArchiveKind),
-    /// A fixed-layout EPUB (Phase 11).
+    /// A fixed-layout EPUB.
     Epub,
-    /// A PDF (Phase 11).
+    /// A PDF.
     Pdf,
 }
 

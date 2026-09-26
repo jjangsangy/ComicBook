@@ -1,4 +1,4 @@
-//! Colour vs. grayscale decision — `colorCheck` (AGENTS.md §11.1).
+//! Colour vs. grayscale decision — `colorCheck` (see docs/processing.md).
 //!
 //! Clean-room reimplementation of KCC's chroma histogram heuristic: an image is
 //! considered "colourful" when its Cb/Cr histograms spread far enough around the
@@ -7,7 +7,7 @@
 //! `--color-autocontrast`.
 //!
 //! The JFIF YCbCr matrix below is the conversion Pillow applies in
-//! `Image.convert("YCbCr")`. Kept bespoke (AGENTS.md §5.3): the coefficients are
+//! `Image.convert("YCbCr")`. Kept bespoke (see docs/dependencies.md): the coefficients are
 //! pinned to JFIF/Rec. 601 by the tests below.
 
 use image::{DynamicImage, GrayImage, Luma, RgbImage};
@@ -16,7 +16,7 @@ use crate::ebook::options::Options;
 use crate::ebook::processing::crop::trim_histogram_ends;
 
 /// `(cutoff percent, neutral diff threshold)` pairs, applied in order until one
-/// decides (AGENTS.md §11.1).
+/// decides (see docs/processing.md).
 const CASCADE: [(f64, i32); 3] = [(0.0, 22), (0.2, 10), (3.0, 4)];
 
 /// Below this chroma spread the page is treated as "not colourful" (KCC's bias

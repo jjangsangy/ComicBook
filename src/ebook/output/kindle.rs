@@ -1,12 +1,13 @@
-//! AZW3 / MOBI output via the `kindling` crate (Phase 8, AGENTS.md §9).
+//! AZW3 / MOBI output via the `kindling` crate (see docs/output.md).
 //!
 //! KCC's Kindle path is `buildEPUB` → `kindlegen` → `dualmetafix`. This port
 //! keeps the first step — the fixed-layout EPUB that [`super::epub`] builds —
 //! and replaces the last two with `kindling`'s MIT, pure-Rust MOBI builder, so
 //! no external program is spawned and the GPL `dualmetafix` is never ported
-//! (AGENTS.md §5.4, §9). `kindling` is used as a *builder* only: the pages it
+//! (see docs/dependencies.md and docs/output.md). `kindling` is used as a *builder* only: the
+//! pages it
 //! encodes are the ones our own ported KCC pipeline produced, not its comic
-//! pipeline's (§10).
+//! pipeline's.
 
 use std::fs;
 use std::path::Path;
@@ -23,7 +24,7 @@ use super::epub;
 ///
 /// KCC writes the EPUB to disk and runs `kindlegen` on it; here the same OEBPS
 /// tree is materialised into a scratch directory and handed to `kindling`'s OPF
-/// builder directly (no zip round-trip, AGENTS.md §5.1). The EPUB zip is only
+/// builder directly (no zip round-trip; see docs/architecture.md). The EPUB zip is only
 /// written when `--format mobi+epub` asked for it.
 #[allow(clippy::too_many_arguments)]
 pub fn build_kindle(
@@ -44,8 +45,8 @@ pub fn build_kindle(
 
     // `kindling` reads the OPF, its XHTML and its images from disk, so unpack
     // the in-memory tree into a scratch directory for it. `--temp-dir` puts that
-    // directory on the source's drive, as KCC's `getWorkFolder` does (AGENTS.md
-    // §15, Phase 9); the in-memory pipeline has no other temp tree to relocate.
+    // directory on the source's drive, as KCC's `getWorkFolder` does; the in-memory
+    // pipeline has no other temp tree to relocate.
     let scratch = create_scratch(source, options)?;
     write_tree(scratch.path(), &entries)?;
     let opf_path = scratch.path().join("OEBPS/content.opf");
@@ -62,7 +63,7 @@ pub fn build_kindle(
         .map_err(|error| anyhow!("Failed to read the intermediate EPUB: {error}"))?;
 
     // `--doc-type` maps onto EXTH 501; the default (`none`) omits it, avoiding
-    // the firmware "back to library" issue (AGENTS.md §9).
+    // the firmware "back to library" issue (see docs/output.md).
     let doc_type = doc_type_tag(options.doc_type);
     build_mobi(&extracted, kindle_dest, options, doc_type.as_deref())
         .map_err(|error| anyhow!("Kindle output failed: {error}"))?;
@@ -102,7 +103,7 @@ fn build_mobi(
     )
 }
 
-/// `--doc-type` as kindling's EXTH 501 value (AGENTS.md §9).
+/// `--doc-type` as kindling's EXTH 501 value (see docs/output.md).
 fn doc_type_tag(doc_type: DocType) -> Option<String> {
     match doc_type {
         DocType::None => None,

@@ -1,10 +1,10 @@
-//! Target-size / batch-split tome keeper (Phase 9).
+//! Target-size / batch-split tome keeper.
 //!
 //! KCC's `chunk_directory`/`chunk_process`/`createNewTome` move already-processed
 //! page files between temp directories to keep each output under a size cap (or to
 //! split per subdirectory). This port does the same on the in-memory
 //! [`ProcessedBook`]: [`split`] repartitions the pages into tomes, moving each
-//! `EncodedPage` into exactly one tome so memory stays flat (AGENTS.md §5.1), and
+//! `EncodedPage` into exactly one tome so memory stays flat (see docs/architecture.md), and
 //! labels each tome's cover with its `N/M` number (`Cover.save_to_folder`).
 //!
 //! The reference's level detection decides the split unit: a flat `Images` tree
@@ -14,7 +14,7 @@
 //! `--batch-split 1` tree with an oversized chapter — is flattened first, exactly
 //! as `flattenTree` does.
 //!
-//! One deliberate deviation (AGENTS.md §13.14.2): KCC creates an empty leading
+//! One deliberate deviation (see docs/porting.md): KCC creates an empty leading
 //! tome when the very first unit already exceeds the cap; the port never emits an
 //! empty tome, so a single oversized unit simply becomes its own tome.
 
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(
             tomes.len(),
             2,
-            "no empty tome is emitted (AGENTS.md §13.14.2)"
+            "no empty tome is emitted (see docs/porting.md)"
         );
         assert_eq!(tomes[0][0].name, "big.jpg");
         assert_eq!(tomes[1][0].name, "small.jpg");

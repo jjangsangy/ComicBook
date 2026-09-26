@@ -1,4 +1,4 @@
-//! Margin and page-number cropping (AGENTS.md §11.4, §8).
+//! Margin and page-number cropping (see docs/processing.md).
 //!
 //! Clean-room reimplementation of KCC's `cropMargin` / `cropPageNumber`
 //! heuristics. A page is converted to grayscale (optionally inverted for a black
@@ -222,7 +222,8 @@ pub(crate) fn autocontrast_cutoff(image: &GrayImage, cutoff: f64) -> GrayImage {
 /// average, each rounded, with edge pixels replicated.
 ///
 /// The two passes are *not* equivalent to a single 3x3 average because each pass
-/// rounds; the reference rounds per pass, so we do too. Kept bespoke (§5.3).
+/// rounds; the reference rounds per pass, so we do too. Kept bespoke; see
+/// docs/dependencies.md.
 pub(crate) fn box_blur_1(image: &GrayImage) -> GrayImage {
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 {

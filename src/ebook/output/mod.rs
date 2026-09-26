@@ -1,10 +1,8 @@
 //! Output builders, dispatched by the resolved [`Format`](super::options::Format).
 //!
-//! Phase 5 shipped the fixed-layout EPUB/KePub builder, Phase 7 added CBZ and
-//! PDF, Phase 8 added the Kindle formats (`azw3`/`mobi` via `kindling`), and
-//! Phase 9 adds tome chunking: [`write_book`] splits the processed book with
-//! [`crate::ebook::chunk`] and writes one file per tome, each with its own title,
-//! UUID and labelled cover (AGENTS.md §15).
+//! Every format dispatches through [`write_book`], which splits the processed book
+//! into tomes with [`crate::ebook::chunk`] and writes one file per tome, each with
+//! its own title, UUID and labelled cover.
 
 pub mod cbz;
 pub mod epub;
@@ -30,7 +28,7 @@ use crate::ebook::PreparedBook;
 /// `Options::resolve` folds it into [`Format::Epub`] (the KePub differences live
 /// in the shared EPUB builder). Light-novel mode never reaches this function —
 /// [`super::convert_source`] dispatches to [`lightnovel::convert`] before the
-/// normal pipeline (AGENTS.md §12.3).
+/// normal pipeline (see docs/output.md).
 pub fn write_book(
     book: ProcessedBook,
     prepared: &PreparedBook,
@@ -124,7 +122,7 @@ fn write_tome(
             // KCC always builds the fixed-layout EPUB first and derives the
             // Kindle file name from it by replacing the extension
             // (`makeMOBIFix`); the intermediate EPUB survives only under
-            // `mobi+epub` (AGENTS.md §9).
+            // `mobi+epub` (see docs/output.md).
             let epub_dest = naming::output_filename(
                 source,
                 options.output.as_deref(),

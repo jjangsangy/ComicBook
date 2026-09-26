@@ -1,12 +1,12 @@
-//! Metadata: `ComicInfo.xml` parsing and title/author/series resolution (Phase 4).
+//! Metadata: `ComicInfo.xml` parsing and title/author/series resolution.
 //!
 //! This is the Rust counterpart of KCC's `metadata.MetadataParser` plus
 //! `comic2ebook.getMetadata`: the raw `ComicInfo.xml` captured by the input
 //! adapters ([`ComicTree::comicinfo`]) is parsed into [`ComicInfo`], and
 //! [`resolve`] folds it together with the CLI overrides into the [`BookMetadata`]
-//! the output builders consume (AGENTS.md §8, §15 Phase 4).
+//! the output builders consume (see docs/architecture.md).
 //!
-//! The XML is parsed with `quick-xml` (AGENTS.md §5.3/§13.8); nothing is written
+//! The XML is parsed with `quick-xml` (see docs/dependencies.md); nothing is written
 //! back, because `--keep-comicinfo` retains the original document bytes verbatim.
 
 use std::collections::{BTreeSet, HashMap};
@@ -58,7 +58,7 @@ impl ComicInfo {
     /// `getElementsByTagName`, and only the first occurrence of each field is
     /// used. A non-integer `Page/Image` attribute is an error, which
     /// [`resolve`] treats as "no usable ComicInfo" exactly as KCC discards the
-    /// whole file when `int()` raises (AGENTS.md §13.8.2).
+    /// whole file when `int()` raises (see docs/porting.md).
     pub fn parse(xml: &[u8]) -> Result<ComicInfo> {
         let mut reader = Reader::from_reader(xml);
         let mut info = ComicInfo::default();
@@ -144,7 +144,8 @@ pub struct BookMetadata {
 
 /// Resolve a book's metadata from its tree, source path and CLI options.
 ///
-/// This mirrors KCC's `getMetadata` (AGENTS.md §8): the default title comes from
+/// This mirrors KCC's `getMetadata` (see docs/architecture.md): the default title
+/// comes from
 /// the source name, `--metadata-title` selects how the ComicInfo title is used,
 /// the author falls back to the first listed people (or `KCC`), and the
 /// series/volume/number/summary/bookmarks are lifted from the ComicInfo
@@ -157,7 +158,7 @@ pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetada
 ///
 /// `--file-fusion` converts a synthetic `<name> [fused]` directory whose default
 /// title cannot be derived from the path with the usual file/directory rules, so
-/// the caller supplies it (AGENTS.md §13.14).
+/// the caller supplies it (see docs/porting.md).
 pub fn resolve_with(
     tree: &ComicTree,
     source: &Path,

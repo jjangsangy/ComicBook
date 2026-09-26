@@ -1,11 +1,11 @@
-//! Page background detection — `fillCheck` (AGENTS.md §11.2).
+//! Page background detection — `fillCheck` (see docs/processing.md).
 //!
 //! Clean-room reimplementation of KCC's fill heuristic: threshold the page to a
 //! black/white mask, compare the bounding boxes of the two colours, and fall back
 //! to sampling the page border in 5-pixel strips when the areas are close.
 //!
 //! The result decides the padding colour for `pad` resizes and whether a page is
-//! flagged `BlackBackground` (AGENTS.md §10).
+//! flagged `BlackBackground` (see docs/architecture.md).
 
 use image::{DynamicImage, GrayImage};
 
@@ -56,7 +56,7 @@ fn box_area((left, top, right, bottom): (u32, u32, u32, u32)) -> u64 {
 }
 
 /// The bounding box of every pixel satisfying `predicate`, or `None` when none do
-/// (shared with `crop.rs`'s `getbbox`, §5.3).
+/// (shared with `crop.rs`'s `getbbox`; see docs/dependencies.md).
 pub(crate) fn bounding_box(
     mask: &GrayImage,
     predicate: impl Fn(u8) -> bool,

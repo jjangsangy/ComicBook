@@ -2,7 +2,7 @@
 //!
 //! [`Options::resolve`] is the Rust equivalent of KCC's `checkOptions()`: it
 //! takes the raw CLI arguments and derives the concrete device, format and
-//! processing flags the rest of the pipeline consumes (AGENTS.md §8).
+//! processing flags the rest of the pipeline consumes (see docs/architecture.md).
 
 use anyhow::{bail, Result};
 use clap::ValueEnum;
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use super::cli::EbookArgs;
 use super::profiles::{Profile, ProfileData, PALETTE16};
 
-/// User-selectable output format (AGENTS.md §4.3).
+/// User-selectable output format (see docs/cli.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Format {
     /// Pick by profile: MOBI for Kindle, PDF for reMarkable, otherwise EPUB.
@@ -54,7 +54,7 @@ impl Format {
     }
 }
 
-/// `--doc-type` for Kindle output (AGENTS.md §9).
+/// `--doc-type` for Kindle output (see docs/output.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum DocType {
     /// Leave the doc-type untouched (avoids the firmware "back-to-library" issue).
@@ -307,7 +307,7 @@ impl Options {
             profile_data.gamma = 1.0;
         }
 
-        // The `OTHER` profile carries no screen geometry of its own (AGENTS.md §12.1),
+        // The `OTHER` profile carries no screen geometry of its own (see docs/cli.md),
         // so resizing against it produces nothing; it is only meaningful with an
         // explicit custom resolution. KCC divides by the zero width and crashes here.
         if !custom_profile && (profile_data.width == 0 || profile_data.height == 0) {
@@ -329,11 +329,11 @@ impl Options {
         let kindle_scribe_azw3 = profile.is_scribe() && kindle_azw3;
         let webp_output = format != Format::Pdf && !kindle_azw3 && args.processing.webp;
 
-        // CBZ on the Kindle DX/DXG supports a taller image (§12.1).
+        // CBZ on the Kindle DX/DXG supports a taller image (see docs/cli.md).
         if profile == Profile::Kdx && format == Format::Cbz {
             profile_data.height = 1200;
         }
-        // Scribe KF8 output caps the width at 1920 (§12.1).
+        // Scribe KF8 output caps the width at 1920 (see docs/cli.md).
         if kindle_scribe_azw3 {
             profile_data.width = profile_data.width.min(1920);
         }

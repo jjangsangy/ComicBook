@@ -1,6 +1,6 @@
-//! Phase 10 tests for `--webtoon` (AGENTS.md §15, Phase 10 exit criterion): a
-//! webtoon source merges each chapter into a strip and splits it into virtual pages
-//! at the device geometry, and the cover is omitted unless a custom cover is set.
+//! Tests for `--webtoon`: a webtoon source merges each chapter into a strip and
+//! splits it into virtual pages at the device geometry, and the cover is omitted
+//! unless a custom cover is set.
 
 use std::fs;
 use std::io::Read;

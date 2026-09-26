@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 # The dependency graph's highest `rust-version` is `sevenz-rust2` 0.23 (1.93);
 # `quantette` (1.90) and `askama` (1.88) follow. Declaring it here makes cargo
-# refuse an older toolchain instead of failing deep in a build script (AGENTS.md §17).
+# refuse an older toolchain instead of failing deep in a build script.
 rust-version = "1.93"
 keywords = ["comic", "cbz", "cbr", "image-processing", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
@@ -31,7 +31,7 @@ webp = "0.3"
 walkdir = "2.5"
 same-file = "1.0"
 infer = "0.22.0"
-# Image processing for `comic-book ebook` (AGENTS.md §7). `imageproc` supplies the
+# Image processing for `comic-book ebook` (see docs/dependencies.md). `imageproc` supplies the
 # contrast/threshold/filter primitives, `quantette` the fixed-palette quantisation and
 # Floyd-Steinberg dithering. Both are MIT/Apache-2.0 and pure Rust.
 imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
@@ -39,64 +39,66 @@ quantette = { version = "0.6", default-features = false, features = ["image", "t
 # Palette (indexed) PNG output; the `image` crate cannot write an indexed PNG.
 png = "0.18"
 # The moiré eraser (`--erase-rainbow`) transforms the luminance plane with a 2D
-# FFT; AGENTS.md §7. Pure Rust, MIT/Apache-2.0.
+# FFT; see docs/dependencies.md. Pure Rust, MIT/Apache-2.0.
 rustfft = "6"
-# Sub-byte PNG scanline packing for palette pages (AGENTS.md §15, Phase R). Already
-# in the tree transitively via `quantette`; promoted to a direct dependency.
+# Sub-byte PNG scanline packing for palette pages. Already in the tree transitively
+# via `quantette`; promoted to a direct dependency.
 bitvec = "1"
-# Phase 4: `ComicInfo.xml` parsing (AGENTS.md §7/§13.8). MIT, pure Rust.
+# `ComicInfo.xml` parsing (see docs/dependencies.md). MIT, pure Rust.
 quick-xml = "0.37"
-# Phase 4: chapter-directory slugification (AGENTS.md §15, Phase R). `slug`
-# transliterates Unicode to ASCII and collapses disallowed runs to single dashes,
-# matching KCC's `python-slugify` call for the ASCII-alphanumeric case §13.8.1.
+# Chapter-directory slugification. `slug` transliterates Unicode to ASCII and
+# collapses disallowed runs to single dashes, matching KCC's `python-slugify` call
+# for the ASCII-alphanumeric case (the full rule is in docs/porting.md).
 slug = "0.1"
-# Phase 4: KCC's two number-padding substitutions in `slugify`. Already in the
-# tree transitively via `unrar`; promoted to a direct dependency.
+# KCC's two number-padding substitutions in `slugify`. Already in the tree
+# transitively via `unrar`; promoted to a direct dependency.
 regex = "1"
-# Phase 5: the EPUB `dc:identifier`/`dtb:uid` (`urn:uuid:<v4>`) and the
-# `dcterms:modified` timestamp (AGENTS.md §7/§12.2). MIT/Apache-2.0, pure Rust.
+# The EPUB `dc:identifier`/`dtb:uid` (`urn:uuid:<v4>`) and the `dcterms:modified`
+# timestamp (see docs/dependencies.md). MIT/Apache-2.0, pure Rust.
 uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
-# Phase 6: the generated EPUB/KePub documents (OPF/NCX/NAV/XHTML) are rendered
-# from templates instead of being assembled with `push_str` (AGENTS.md §5.3).
+# The generated EPUB/KePub documents (OPF/NCX/NAV/XHTML) are rendered from
+# templates instead of being assembled with `push_str` (see docs/dependencies.md).
 # Askama compiles the templates into Rust, so there is no runtime parsing and a
 # malformed template is a compile error. MIT OR Apache-2.0, pure Rust. Only the
 # derive and `askama.toml` support are enabled; the templates carry their own
 # XML/HTML text.
 askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
-# Phase 7: PDF output. `pdf-writer` (Typst) is a low-level, pure-Rust PDF writer
+# PDF output. `pdf-writer` (Typst) is a low-level, pure-Rust PDF writer
 # with a minimal dependency set (MIT OR Apache-2.0); it handles the xref table and
-# lets us embed each page's image as an XObject without recompression (AGENTS.md §7).
+# lets us embed each page's image as an XObject without recompression (see docs/dependencies.md).
 pdf-writer = "0.15"
-# Phase 7: zlib-compressing the raw samples of non-JPEG PDF images (the
-# `FlateDecode` path). Already in the tree transitively via `png`/`zip`; promoted
-# to a direct dependency (AGENTS.md §7).
+# Zlib-compressing the raw samples of non-JPEG PDF images (the `FlateDecode` path).
+# Already in the tree transitively via `png`/`zip`; promoted to a direct dependency
+# (see docs/dependencies.md).
 flate2 = "1"
-# Phase 8: AZW3/MOBI encoding. `kindling` (`kindling-mobi`) is an MIT, pure-Rust
+# AZW3/MOBI encoding. `kindling` (`kindling-mobi`) is an MIT, pure-Rust
 # kindlegen replacement with fixed-layout/comic support, so no external program is
-# needed and the GPL `dualmetafix` is never ported (AGENTS.md §7, §9). Only its
-# builder is used, so our ported KCC pipeline stays in control (§10).
+# needed and the GPL `dualmetafix` is never ported (see docs/dependencies.md and
+# docs/output.md). Only its builder is used, so our ported KCC pipeline stays in
+# control.
 kindling-mobi = "0.45"
-# Phase 9: the tome `N/M` label KCC draws on a split book's cover (AGENTS.md §13.11.4).
+# The tome `N/M` label KCC draws on a split book's cover (see docs/porting.md).
 # `font8x8` is an MIT, pure-Rust 8x8 bitmap font shipped *in the crate*, so the label
 # needs no committed font asset and no external program. The reference uses Pillow's
 # built-in Aileron face, whose glyphs cannot be reproduced exactly; the label's
-# position, size and colours are preserved instead (§13.14).
+# position, size and colours are preserved instead.
 font8x8 = "0.3"
-# Phase 11: PDF input rasterisation/extraction. `pdfboss-render` renders vector pages and
+# PDF input rasterisation/extraction. `pdfboss-render` renders vector pages and
 # `extract_page_images` decodes embedded images; `pdfboss-core` supplies the `Document`/
 # `Page` handles. Both are MIT OR Apache-2.0 and pure Rust, so MuPDF is replaced without
-# a platform binary, keeping the "no external programs" rule (AGENTS.md §7, §13.16.2).
+# a platform binary, keeping the "no external programs" rule (see docs/dependencies.md
+# and docs/porting.md).
 pdfboss-render = "2.11"
 pdfboss-core = "2.11"
 
 [dev-dependencies]
 libc = "0.2"
-# Reading the EPUB container back in the Phase 5 structural tests; already a runtime
+# Reading the EPUB container back in the structural tests; already a runtime
 # dependency, re-declared here because integration tests cannot name it directly.
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
-# Parsing the generated PDF back in the Phase 7 round-trip tests (AGENTS.md §15,
-# Phase 7 exit criterion). MIT, pure Rust; dev-only, so it never ships.
+# Parsing the generated PDF back in the round-trip tests. MIT, pure Rust; dev-only,
+# so it never ships.
 lopdf = { version = "0.45", default-features = false }
 
 [lints.rust]

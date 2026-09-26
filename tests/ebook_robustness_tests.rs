@@ -1,4 +1,4 @@
-//! Phase 12 hardening tests (AGENTS.md §15, Phase 12).
+//! Hardening tests.
 //!
 //! The `ebook` pipeline reads untrusted, frequently-broken files: truncated
 //! downloads, hand-edited archives, Windows-authored ZIPs and hostile entry
@@ -284,7 +284,7 @@ fn windows_authored_archive_entries_load_as_nested_chapters() -> Result<()> {
 }
 
 /// Chapter/page names are slugified to ASCII, so an EPUB written on any platform
-/// never embeds a Windows-reserved character (AGENTS.md §17).
+/// never embeds a Windows-reserved character (see docs/development.md).
 #[test]
 fn slugified_names_avoid_windows_reserved_characters() {
     use comic_book::ebook::naming::slugify;
@@ -530,7 +530,7 @@ fn count_epub_pages(path: &Path) -> Result<usize> {
 
 /// A 128-page book converts to a complete EPUB, and peak memory stays under a
 /// generous ceiling. The ceiling is a regression guard against an accidental
-/// whole-book duplication (AGENTS.md §14), not a tight budget.
+/// whole-book duplication (see docs/architecture.md), not a tight budget.
 #[test]
 fn a_large_book_converts_under_a_memory_ceiling() -> Result<()> {
     std::env::set_var(progress::QUIET_ENV, "1");

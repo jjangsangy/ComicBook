@@ -1,4 +1,4 @@
-//! In-memory comic data model (AGENTS.md §10).
+//! In-memory comic data model (see docs/architecture.md).
 //!
 //! The pipeline is built around a [`ComicTree`] of chapters and pages rather
 //! than KCC's double temp-directory tree, so a source is decoded once and never
@@ -18,7 +18,7 @@ pub enum Background {
 /// How a page participates in spread splitting.
 ///
 /// The KCC order suffix (`-kcc-x`, `-kcc-a` … `-kcc-d`) is derived from this and
-/// is load-bearing for the OPF spread algorithm (AGENTS.md §10).
+/// is load-bearing for the OPF spread algorithm (see docs/architecture.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OrderClass {
     #[default]
@@ -44,7 +44,7 @@ impl OrderClass {
 
 /// An encoded page image's media type.
 ///
-/// Kept alongside the bytes so the OPF manifest (AGENTS.md §12.2) can emit the
+/// Kept alongside the bytes so the OPF manifest (see docs/output.md) can emit the
 /// matching `media-type` without re-sniffing the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaType {
@@ -117,7 +117,7 @@ pub struct Page {
     /// The source's original encoded bytes.
     ///
     /// Retained so `--no-processing` can emit the page byte-for-byte instead of
-    /// re-encoding the decoded pixels (AGENTS.md §5.1.5). `None` for trees built
+    /// re-encoding the decoded pixels (see docs/architecture.md). `None` for trees built
     /// without a source payload.
     pub raw: Option<Vec<u8>>,
     /// Media type of [`Page::raw`], inferred from the source extension.
@@ -137,11 +137,11 @@ pub struct Chapter {
 ///
 /// A single source page can yield several encoded pages when the splitter
 /// bisects a double-page spread, so this is the unit the output builders consume
-/// (AGENTS.md §10).
+/// (see docs/architecture.md).
 #[derive(Debug, Clone)]
 pub struct EncodedPage {
     /// Output file name, including the `-kcc-<order>` suffix and the media
-    /// extension. Phase 4 replaces the source stem with the sanitized page name.
+    /// extension. Set by the naming pass from the sanitized page name.
     pub name: String,
     /// The `-kcc-<order>` class that drives the OPF spread algorithm.
     pub order_class: OrderClass,
@@ -171,8 +171,8 @@ pub struct ComicTree {
     /// Raw bytes of a discovered `ComicInfo.xml`, if any.
     ///
     /// The tree keeps the original document (rather than parsed fields) so that
-    /// `--keep-comicinfo` can round-trip it and the metadata pass in Phase 4 can
-    /// parse it once, on demand.
+    /// `--keep-comicinfo` can round-trip it and the metadata pass can parse it
+    /// once, on demand.
     pub comicinfo: Option<Vec<u8>>,
 }
 

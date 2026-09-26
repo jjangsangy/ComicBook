@@ -1,4 +1,4 @@
-//! Cover processing — KCC's `Cover` (AGENTS.md §11.8).
+//! Cover processing — KCC's `Cover` (see docs/processing.md).
 //!
 //! [`process`] reproduces the reference's `Cover.process`: the selected image is
 //! flattened to RGB, autocontrasted with preserved tone, optionally converted to
@@ -7,13 +7,12 @@
 //! `cover.jpg` the EPUB layout expects.
 //!
 //! The selection itself — a sibling `Covers/` override, else the first page — is
-//! Phase 4's [`crate::ebook::naming::select_cover`].
+//! [`crate::ebook::naming::select_cover`].
 //!
 //! [`labelled`] adds the tome `N/M` label KCC draws on a split book's cover
-//! (`Cover.save_to_folder`, Phase 9). The glyphs come from the MIT `font8x8`
-//! bitmap font rather than Pillow's built-in face, so the label's *position, size
-//! and colours* match the reference while the exact glyph shapes do not
-//! (AGENTS.md §13.14).
+//! (`Cover.save_to_folder`). The glyphs come from the MIT `font8x8` bitmap font
+//! rather than Pillow's built-in face, so the label's *position, size and colours*
+//! match the reference while the exact glyph shapes do not (see docs/porting.md).
 
 use anyhow::{Context, Result};
 use image::DynamicImage;
@@ -106,7 +105,7 @@ fn cover_size(options: &Options) -> (u32, u32) {
 }
 
 /// KCC's `Cover.save_to_folder` tome label: re-encode `cover` with the `N/M` tome
-/// number drawn near the bottom (AGENTS.md §11.8, §13.14).
+/// number drawn near the bottom (see docs/processing.md and docs/porting.md).
 ///
 /// KCC increments its `tomeid` before saving as soon as there is more than one
 /// tome, so *every* tome of a split book is labelled (including the first). A

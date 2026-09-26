@@ -1,6 +1,6 @@
-//! Phase 5 tests for the fixed-layout EPUB/KePub output (AGENTS.md §15, Phase 5
-//! exit criterion): a fixture book converts to a structurally valid EPUB that can
-//! be parsed back from container → OPF → spine → XHTML → image references.
+//! Tests for the fixed-layout EPUB/KePub output: a fixture book converts to a
+//! structurally valid EPUB that can be parsed back from container → OPF → spine →
+//! XHTML → image references.
 //!
 //! The output is asserted structurally rather than byte-for-byte: `dcterms:modified`
 //! and the `dc:identifier` UUID are freshly generated on every run.
@@ -720,7 +720,7 @@ fn cover_is_taken_from_the_uncropped_first_page() -> Result<()> {
     Ok(())
 }
 
-/// Opt-in EPUB conformance check (AGENTS.md §16); run with
+/// Opt-in EPUB conformance check (see docs/development.md); run with
 /// `cargo nextest run --run-ignored ignored-only epubcheck` when `epubcheck` is on `PATH`.
 #[test]
 #[ignore = "requires the epubcheck command on PATH"]

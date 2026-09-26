@@ -1,6 +1,6 @@
-//! Light-novel mode — KCC's `--lightnovel` (Phase 7).
+//! Light-novel mode — KCC's `--lightnovel`.
 //!
-//! `--light-novel` all but skips the comic pipeline (AGENTS.md §12.3): only the
+//! `--light-novel` all but skips the comic pipeline (see docs/output.md): only the
 //! pages that exceed the profile are grayscaled and downscaled, everything else is
 //! copied byte-for-byte, and the whole book is repackaged as a CBZ with its
 //! **original** file structure. KCC runs this branch before
@@ -9,7 +9,7 @@
 //! processed and `--no-processing` is irrelevant — the resize still happens.
 //!
 //! Two deliberate deviations, both because the in-memory [`ComicTree`] only carries
-//! images (AGENTS.md §5.1): non-image entries other than `ComicInfo.xml` are not
+//! images (see docs/architecture.md): non-image entries other than `ComicInfo.xml` are not
 //! reproduced, and KCC's `RGB → L` / `RGBA → LA` conversion becomes `RGB/RGBA → L`
 //! (alpha is dropped; comic scans are effectively opaque).
 

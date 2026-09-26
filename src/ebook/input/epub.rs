@@ -1,9 +1,10 @@
-//! EPUB input: spine-ordered images (Phase 11).
+//! EPUB input: spine-ordered images.
 //!
 //! KCC's `getWorkFolder` extracts the EPUB like any archive, then reads its
 //! `META-INF/container.xml`, resolves the OPF, walks the spine and collects the
 //! *largest* image each XHTML page references, copying them into a fresh flat
-//! `Images/` tree in spine order (AGENTS.md §3, §13.16). This port does the same
+//! `Images/` tree in spine order (see docs/architecture.md and docs/porting.md).
+//! This port does the same
 //! in memory: the spine images become a flat [`ComicTree`] whose pages keep their
 //! original bytes.
 //!

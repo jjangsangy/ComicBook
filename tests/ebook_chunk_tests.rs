@@ -1,7 +1,7 @@
-//! Phase 9 tests for tome chunking, `--file-fusion` and `--delete`
-//! (AGENTS.md §15, Phase 9 exit criterion): a source splits at the size boundary
-//! (or per subdirectory) into several titled files, fusion merges inputs into one
-//! book, and `--delete` removes the source after a successful conversion.
+//! Tests for tome chunking, `--file-fusion` and `--delete`: a source splits at the
+//! size boundary (or per subdirectory) into several titled files, fusion merges
+//! inputs into one book, and `--delete` removes the source after a successful
+//! conversion.
 
 use std::collections::HashMap;
 use std::fs;
@@ -148,7 +148,7 @@ fn every_tome_of_a_split_book_gets_a_labelled_cover() -> Result<()> {
         .context("the second cover is present")?;
     assert_ne!(
         first, second,
-        "each tome's cover gets its own N/M number (AGENTS.md §13.11.4)"
+        "each tome's cover gets its own N/M number (see docs/porting.md)"
     );
 
     // A single-tome book keeps the unlabelled cover.

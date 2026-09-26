@@ -1,10 +1,10 @@
-//! Fixed-layout EPUB 3 packaging (AGENTS.md §12.2).
+//! Fixed-layout EPUB 3 packaging (see docs/output.md).
 //!
 //! [`build_epub`] is the Rust counterpart of KCC's `buildEPUB`: it turns the
 //! processed pages, the resolved metadata and the cover into the OEBPS tree and
 //! zips it as an EPUB. Where KCC writes the tree to a temp directory and then
 //! walks it, every derived document here is built in memory and streamed into the
-//! archive, so there is no intermediate copy of the book (AGENTS.md §5.1).
+//! archive, so there is no intermediate copy of the book (see docs/architecture.md).
 
 pub mod nav;
 pub mod opf;
@@ -26,7 +26,7 @@ use crate::ebook::options::Options;
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
-/// One page as the EPUB builders see it (AGENTS.md §12.2).
+/// One page as the EPUB builders see it (see docs/output.md).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PageRef<'a> {
     /// Chapter directory relative to `OEBPS/Images` (`""` at the root).
@@ -64,9 +64,9 @@ pub fn build_epub(
 
 /// Build the OEBPS entries (`zip path` → bytes) for `book`.
 ///
-/// Split out from [`build_epub`] so the Kindle path (Phase 8) can materialise
+/// Split out from [`build_epub`] so the Kindle path can materialise
 /// the exact same tree into a scratch directory for `kindling`, without a zip
-/// round-trip (AGENTS.md §5.1, §9).
+/// round-trip (see docs/architecture.md and docs/output.md).
 pub(crate) fn build_entries(
     book: &ProcessedBook,
     prepared: &PreparedBook,

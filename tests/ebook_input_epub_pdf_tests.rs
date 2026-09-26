@@ -1,5 +1,5 @@
 //! Tests for the EPUB (spine-ordered) and PDF (embedded-image/rasterised) input
-//! adapters (AGENTS.md §15, Phase 11).
+//! adapters.
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -121,7 +121,7 @@ fn epub_loads_spine_in_order_and_picks_the_largest_image() -> Result<()> {
     assert_eq!(pages[1].image.dimensions(), (40, 50));
     assert_eq!(pages[1].rel_path, "1.png");
 
-    // The chosen image keeps its original bytes (AGENTS.md §13.5.1).
+    // The chosen image keeps its original bytes (see docs/porting.md).
     assert_eq!(
         pages[0].source_media_type,
         Some(comic_book::ebook::model::MediaType::Png)

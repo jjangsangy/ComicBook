@@ -1,4 +1,4 @@
-//! Byte-level golden tests for the generated EPUB documents (AGENTS.md §5.2).
+//! Byte-level golden tests for the generated EPUB documents (see docs/architecture.md).
 //!
 //! The OPF/NCX/NAV/XHTML layout is device-sensitive and must be reproduced exactly.
 //! These tests pin the current output byte-for-byte against reference copies in

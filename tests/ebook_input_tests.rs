@@ -1,6 +1,5 @@
-//! Phase 1 tests for the `ebook` input adapters: a fixture CBZ/CBR/CB7/CBT or
-//! folder must load into an identical, naturally ordered [`ComicTree`]
-//! (AGENTS.md §15).
+//! Tests for the `ebook` input adapters: a fixture CBZ/CBR/CB7/CBT or folder must
+//! load into an identical, naturally ordered [`ComicTree`].
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -317,8 +316,8 @@ fn empty_folder_reports_no_images() -> Result<()> {
     Ok(())
 }
 
-/// EPUB/PDF inputs are no longer "not implemented"; a malformed stub still
-/// errors, but with an input-specific message rather than a phase marker.
+/// A malformed EPUB/PDF stub still errors, with an input-specific message rather
+/// than a "not implemented" stub error.
 #[test]
 fn malformed_epub_and_pdf_stubs_error() -> Result<()> {
     let tmp = tempdir()?;
@@ -331,7 +330,10 @@ fn malformed_epub_and_pdf_stubs_error() -> Result<()> {
         Ok(_) => bail!("a malformed EPUB should fail"),
         Err(error) => error,
     };
-    assert!(!err.to_string().contains("Phase 11"), "{err}");
+    assert!(
+        !err.to_string().to_lowercase().contains("not implemented"),
+        "{err}"
+    );
 
     let pdf = tmp.path().join("book.pdf");
     fs::write(&pdf, b"stub")?;

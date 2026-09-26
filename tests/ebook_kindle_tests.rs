@@ -1,7 +1,6 @@
-//! Phase 8 tests for the Kindle output (AZW3/MOBI) built through `kindling`
-//! (AGENTS.md §15, Phase 8 exit criterion): the produced files are read back
-//! structurally with `kindling`'s own dumper, and `mobi+epub` keeps a valid
-//! intermediate EPUB.
+//! Tests for the Kindle output (AZW3/MOBI) built through `kindling`: the produced
+//! files are read back structurally with `kindling`'s own dumper, and `mobi+epub`
+//! keeps a valid intermediate EPUB.
 //!
 //! The assertions read the `section.field = value` dump `kindling::mobi_dump`
 //! emits, so they pin the real container layout (KF8-only vs dual MOBI7+KF8, the
@@ -199,7 +198,7 @@ fn the_shelf_tag_is_omitted_by_default_and_set_on_request() -> Result<()> {
     fixture(&source)?;
 
     // The default is `none`: no EXTH 501 at all, avoiding the firmware
-    // "back to library" issue (AGENTS.md §9).
+    // "back to library" issue (see docs/output.md).
     let default = convert(&source, &["-f", "azw3", "-p", "KV"])?;
     assert!(
         !dump(&default[0])?.contains("exth[501]"),
@@ -284,7 +283,7 @@ fn output_collisions_avoid_clobbering_an_existing_kindle_file() -> Result<()> {
 fn explicit_batch_splitting_and_size_caps_now_convert() -> Result<()> {
     std::env::set_var(progress::QUIET_ENV, "1");
     // A small flat book fits under the cap either way, so each run yields one tome
-    // with the bare name (Phase 9 chunking; AGENTS.md §15).
+    // with the bare name (chunking leaves a small book as a single tome).
     for args in [
         vec!["-f", "mobi", "-p", "KV", "-b", "2"],
         vec!["-f", "mobi", "-p", "KV", "--target-size", "50"],

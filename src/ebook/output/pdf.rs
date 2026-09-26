@@ -1,13 +1,13 @@
-//! PDF output (Phase 7).
+//! PDF output.
 //!
-//! [`build_pdf`] is the Rust counterpart of KCC's `buildPDF` (AGENTS.md §12.3):
+//! [`build_pdf`] is the Rust counterpart of KCC's `buildPDF` (see docs/output.md):
 //! one page per processed image at its native pixel size, with the book title and
 //! first author in the document information dictionary. KCC streams the images
 //! through PyMuPDF; here each image is embedded directly as an XObject — a JPEG
 //! via `DCTDecode` (no recompression), anything else decoded and `FlateDecode`d.
 //!
 //! The document skeleton is written with the pure-Rust `pdf-writer` crate, which
-//! also emits the cross-reference table and trailer (AGENTS.md §5.3/§7).
+//! also emits the cross-reference table and trailer (see docs/dependencies.md).
 
 use std::io::Write;
 use std::path::Path;
@@ -34,7 +34,7 @@ pub fn build_pdf(
 ) -> Result<()> {
     // KCC writes the cover into `OEBPS/Images/cover.jpg` before its walk only when
     // it was smart-cropped or came from a sibling `Covers/` override, in which case
-    // the sorted walk makes it the first PDF page (AGENTS.md §12.3).
+    // the sorted walk makes it the first PDF page (see docs/output.md).
     let mut pages: Vec<&EncodedPage> = Vec::new();
     if let Some(cover) = &book.cover {
         if book.cover_smart_crop || prepared.cover_override.is_some() {

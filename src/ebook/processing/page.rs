@@ -1,4 +1,4 @@
-//! `ComicPage` transform and encode pipeline (AGENTS.md §11.3–§11.7, §8).
+//! `ComicPage` transform and encode pipeline (see docs/processing.md).
 //!
 //! This is the Rust counterpart of KCC's `ComicPageParser` + `ComicPage`:
 //!
@@ -7,8 +7,9 @@
 //! 2. each payload runs through gamma → grayscale → autocontrast/autolevel →
 //!    resize → encode, in the same order KCC applies them.
 //!
-//! Cropping (margin, page-number, inter-panel) and the moiré eraser are Phase 3;
-//! their hooks live in [`super::crop`] / [`super::interpanel`] / [`super::rainbow`].
+//! Cropping (margin, page-number, inter-panel) and the moiré eraser run from
+//! [`super::prepare_page`] and live in [`super::crop`] / [`super::interpanel`] /
+//! [`super::rainbow`].
 
 use anyhow::{bail, Context, Result};
 use bitvec::prelude::{BitVec, Msb0};
@@ -30,7 +31,7 @@ use crate::ebook::model::{Background, EncodedPage, MediaType, OrderClass, Page, 
 use crate::ebook::options::{BorderColor, Format, Options};
 use crate::ebook::profiles::Profile;
 
-/// Split a page wider than this multiple of the target aspect ratio (AGENTS.md §11.3).
+/// Split a page wider than this multiple of the target aspect ratio (see docs/processing.md).
 const SPLIT_THRESHOLD: f64 = 1.16;
 /// At or above this ratio a spread is only rotated, never bisected.
 const BISECT_THRESHOLD: f64 = 1.8;
@@ -82,7 +83,7 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
     let (width, height) = page.image.dimensions();
     Ok(vec![EncodedPage {
         // Under `--no-processing` KCC never runs `ComicPage`, so the sanitized
-        // name keeps no `-kcc-x` order suffix (AGENTS.md §13.8.3).
+        // name keeps no `-kcc-x` order suffix (see docs/porting.md).
         name: unsuffixed_name(&page.source_name, media_type),
         order_class: OrderClass::Normal,
         media_type,
@@ -359,7 +360,7 @@ pub(crate) fn is_grayscale_image(image: &DynamicImage) -> bool {
 /// Gamma correction, applied to the RGB image before grayscale conversion.
 ///
 /// `--gamma` defaults to 0, which falls back to the profile gamma (1.0 today, so
-/// a no-op). See AGENTS.md §11.6.
+/// a no-op). See docs/processing.md.
 fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
     let mut gamma = f64::from(options.gamma);
     if gamma < 0.1 {
@@ -393,7 +394,7 @@ fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
     }
 }
 
-/// Autocontrast, plus the optional autolevel pass (AGENTS.md §11.6).
+/// Autocontrast, plus the optional autolevel pass (see docs/processing.md).
 ///
 /// `color` is the page's colour *detection* result (not whether colour is kept):
 /// KCC only autocontrasts detected-colour pages with `--color-autocontrast`.
@@ -510,7 +511,7 @@ fn black_point(image: &DynamicImage, color: bool) -> u8 {
         .unwrap_or(0) as u8
 }
 
-/// Resize to the profile, following KCC's branch order (AGENTS.md §11.6).
+/// Resize to the profile, following KCC's branch order (see docs/processing.md).
 fn resize_image(
     image: &mut DynamicImage,
     options: &Options,
@@ -527,7 +528,7 @@ fn resize_image(
     }
     if options.wallpaper {
         // KCC 9.x leaves this branch unreachable (a bare `pass`); we implement the
-        // documented intent. See AGENTS.md §13.5.
+        // documented intent. See docs/porting.md.
         *image = fit(image, size, method)?;
         return Ok(());
     }
@@ -642,7 +643,7 @@ where
 }
 
 /// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly
-/// (kept bespoke, §5.3 — Pillow's half-to-even rounding is pinned).
+/// (kept bespoke, see docs/dependencies.md — Pillow's half-to-even rounding is pinned).
 pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     let image_ratio = f64::from(width) / f64::from(height);
@@ -692,7 +693,7 @@ pub(crate) fn thumbnail(
 }
 
 /// Pillow's `ImageOps.contain` size calculation (`get_contain_resolution`; kept
-/// bespoke, §5.3).
+/// bespoke, see docs/dependencies.md).
 fn contain_size(width: u32, height: u32, size: (u32, u32)) -> (u32, u32) {
     let image_ratio = f64::from(width) / f64::from(height);
     let dest_ratio = f64::from(size.0) / f64::from(size.1);
@@ -1050,7 +1051,7 @@ fn encodable(image: &DynamicImage) -> std::borrow::Cow<'_, DynamicImage> {
 }
 
 /// The output file name for a payload, keeping the source directory and adding
-/// the `-kcc-<order>` suffix (AGENTS.md §10).
+/// the `-kcc-<order>` suffix (see docs/architecture.md).
 fn output_name(source_name: &str, order: OrderClass, media_type: MediaType) -> String {
     named_page(source_name, media_type, Some(order), None)
 }

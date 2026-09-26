@@ -1,8 +1,8 @@
-//! OEBPS layout and the EPUB zip container (mimetype first, stored) (AGENTS.md §12.2).
+//! OEBPS layout and the EPUB zip container (mimetype first, stored) (see docs/output.md).
 //!
 //! The whole book — images and derived XHTML/NCX/NAV/OPF — is built in memory and
 //! streamed straight into the archive, so there is no temp tree and no second copy
-//! of every page (AGENTS.md §5.1). KCC stores every entry (its payloads are
+//! of every page (see docs/architecture.md). KCC stores every entry (its payloads are
 //! already-compressed images); we keep the same method so the archive layout stays
 //! comparable.
 

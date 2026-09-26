@@ -1,8 +1,8 @@
-//! CBZ repackaging output (Phase 7).
+//! CBZ repackaging output.
 //!
 //! `-f cbz` (and the Kindle DX `Auto` default) repackages the processed pages as
 //! a ZIP comic without any EPUB scaffolding, mirroring KCC's `makeZIP` over its
-//! `OEBPS/Images` tree (AGENTS.md §12.3). The processed pages already carry their
+//! `OEBPS/Images` tree (see docs/output.md). The processed pages already carry their
 //! sanitized `kcc-NNNN-kcc-<order>` names in their chapter directories, so the
 //! archive entries are exactly what KCC's `ComicPage.saveToDir` left on disk.
 
@@ -23,7 +23,8 @@ const COMICINFO_NAME: &str = "ComicInfo.xml";
 /// Repackage a processed book as a CBZ and write it to `dest`.
 ///
 /// The cover is added only when it is not the first page already — KCC gates the
-/// `##cover.jpg` write on `cover.smartcover or options.customcover` (§12.3), which
+/// `##cover.jpg` write on `cover.smartcover or options.customcover` (see
+/// docs/output.md), which
 /// the pipeline tracks as [`ProcessedBook::cover_smart_crop`] and a sibling
 /// `Covers/` override. `ComicInfo.xml` is added only when `--keep-comicinfo`
 /// retained it (KCC's `options.comicinfo_xml`, populated for CBZ only).

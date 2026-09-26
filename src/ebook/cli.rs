@@ -1,5 +1,5 @@
 //! Command-line surface for `comic-book ebook`, grouped like KCC's parser
-//! (AGENTS.md §4).
+//! (see docs/cli.md).
 //!
 //! The structs are pure argument containers; they are resolved into
 //! [`Options`](super::options::Options) by [`Options::resolve`](super::options::Options::resolve).

@@ -1,4 +1,4 @@
-//! Per-page image processing pipeline (AGENTS.md §11).
+//! Per-page image processing pipeline (see docs/processing.md).
 //!
 //! [`process_tree`] is the Rust counterpart of KCC's `imgDirectoryProcessing`: it
 //! detects each page's background, applies the configured cropping, runs the
@@ -156,7 +156,7 @@ fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
 /// KCC's `detectSuboptimalProcessing`: warnings about a source that is likely to
 /// convert poorly, emitted before the pages are renamed and processed.
 ///
-/// Two conditions are checked (AGENTS.md §13.16):
+/// Two conditions are checked (see docs/porting.md):
 ///
 /// - any source page name already carries KCC's `-kcc` order suffix, so it is
 ///   probably KCC output and a second conversion will lose quality;
@@ -164,7 +164,7 @@ fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
 ///   neither `--upscale`/`--stretch` nor a Scribe (`KS*`) profile is in effect.
 ///
 /// The reference's third behaviour — rejecting zero-byte or undecodable images —
-/// is already enforced while the source is decoded (AGENTS.md §13.16).
+/// is already enforced while the source is decoded (see docs/porting.md).
 pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<String> {
     let mut warnings = Vec::new();
 

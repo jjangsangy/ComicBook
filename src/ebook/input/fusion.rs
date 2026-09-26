@@ -1,11 +1,11 @@
-//! `--file-fusion`: combine multiple inputs into a single book (Phase 9).
+//! `--file-fusion`: combine multiple inputs into a single book.
 //!
 //! KCC's `makeFusion` extracts every source into a subdirectory of one temp tree
 //! (adding a `fusion_NNNN_` prefix when the user's order differs from natural
 //! order), flattens each source's own directory structure, and then converts the
 //! combined tree with an optional shared `Covers/` cover. This port builds the
 //! combined [`ComicTree`] directly in memory — one chapter per source, pages in
-//! their original order — so no temp tree is written (AGENTS.md §5.1), and the
+//! their original order — so no temp tree is written (see docs/architecture.md), and the
 //! caller converts it like any other book.
 
 use std::path::{Path, PathBuf};

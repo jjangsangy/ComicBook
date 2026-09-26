@@ -1,4 +1,4 @@
-//! Archive and directory input via [`crate::archive`] (Phase 1).
+//! Archive and directory input via [`crate::archive`].
 //!
 //! Loads a `.cbz`/`.cbr`/`.cb7`/`.cbt` archive or an image folder into a
 //! [`ComicTree`], covering the parts of KCC's `getWorkFolder` + `removeNonImages`
@@ -30,7 +30,7 @@ use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
 /// This is KCC's `shared.IMAGE_TYPES` minus `.jp2` and `.avif`, which have no decoder in the
 /// current (pure-Rust) dependency set and are therefore ignored like any other non-image
 /// rather than aborting the conversion. Deliberately narrower than `image_ops::IMG_EXTENSIONS`
-/// (§5.3): the clamp/convert commands use the wider set.
+/// (see docs/dependencies.md): the clamp/convert commands use the wider set.
 const EBOOK_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 /// Load an archive or image folder into a [`ComicTree`].
@@ -93,7 +93,7 @@ pub(crate) struct LoadedPage {
 /// Decode one encoded image entry into a [`LoadedPage`].
 ///
 /// Keeps the source bytes on the page so `--no-processing` can emit them
-/// untouched (AGENTS.md §13.5.1); the media type is inferred from the name's
+/// untouched (see docs/porting.md); the media type is inferred from the name's
 /// extension, which is how the OPF manifest later learns the payload's type.
 pub(crate) fn decode_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
     let image = image::load_from_memory(data)
@@ -109,7 +109,7 @@ pub(crate) fn decode_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
 /// Group decoded pages into naturally ordered chapters and finish a [`ComicTree`].
 ///
 /// `strip_root` mirrors KCC's archive-only flattening of a single redundant
-/// top-level folder (AGENTS.md §13.4.4); callers that synthesize a flat page list
+/// top-level folder (see docs/porting.md); callers that synthesize a flat page list
 /// (EPUB spine, PDF pages) pass `false` because there is nothing to strip.
 pub(crate) fn build_tree(
     mut pages: Vec<LoadedPage>,
@@ -153,7 +153,8 @@ fn is_comicinfo(name: &str) -> bool {
 /// Mirrors KCC's `getWorkFolder` behaviour: when an archive extracts to exactly
 /// one top-level folder, that folder's contents are hoisted to the image root.
 /// Paths already at the root (or spanning more than one top-level entry) are left
-/// untouched. Kept bespoke (AGENTS.md §5.3) — the rule is KCC-specific (§13.4.4).
+/// untouched. Kept bespoke (see docs/dependencies.md) — the rule is KCC-specific
+/// (see docs/porting.md).
 fn strip_common_root(pages: &mut [LoadedPage]) {
     let mut root: Option<&str> = None;
     for page in pages.iter() {

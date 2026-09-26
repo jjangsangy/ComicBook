@@ -80,7 +80,7 @@ impl Approach {
 }
 
 /// Render an integer with thousands separators for user-facing messages (e.g. `500,000`).
-/// Kept bespoke (AGENTS.md §5.3, "genuinely trivial").
+/// Kept bespoke (see docs/dependencies.md, "genuinely trivial").
 fn group_thousands(value: u64) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
@@ -127,7 +127,7 @@ impl Chapter {
 }
 
 /// Preserve the previous behaviour of tolerating read-only files on Windows when deleting
-/// (kept bespoke, §5.3).
+/// (kept bespoke; see docs/dependencies.md).
 pub fn remove_dir_all_force<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
     if !path.exists() {

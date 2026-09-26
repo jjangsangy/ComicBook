@@ -1,6 +1,5 @@
-//! Phase 3 tests for the cropping and enhancement algorithms: the boxes the Rust
-//! port computes must match what KCC itself returned on the committed fixtures
-//! (AGENTS.md §15, Phase 3 exit criterion).
+//! Tests for the cropping and enhancement algorithms: the boxes the Rust port
+//! computes must match what KCC itself returned on the committed fixtures.
 //!
 //! `tests/fixtures/crop/README.md` records how the fixtures and the reference
 //! values were produced. The fixtures are pure black/white, so the preprocessing

@@ -1,4 +1,4 @@
-//! Inter-panel gutter cropping (AGENTS.md §11.5, §8).
+//! Inter-panel gutter cropping (see docs/processing.md).
 //!
 //! Clean-room reimplementation of KCC's `crop_empty_inter_panel`: the page is
 //! thresholded like the margin cutter, empty rows (or columns) away from the
@@ -78,7 +78,7 @@ fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize
 /// Copy `source` without the lines listed in `remove`.
 ///
 /// Rows/columns are moved through the typed buffer, so grayscale pages keep their
-/// pixel type (kept bespoke, §5.3).
+/// pixel type (kept bespoke; see docs/dependencies.md).
 fn keep_lines<P>(
     source: &ImageBuffer<P, Vec<P::Subpixel>>,
     remove: &BTreeSet<usize>,

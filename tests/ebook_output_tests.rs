@@ -1,7 +1,7 @@
-//! Phase 7 tests for CBZ/PDF output and light-novel mode (AGENTS.md §15, Phase 7
-//! exit criterion): a CBZ repackage loads back into an equivalent tree, a PDF has
-//! one page per image at the image's own pixel size, and `--light-novel` preserves
-//! the source structure while only resizing the oversized pages.
+//! Tests for CBZ/PDF output and light-novel mode: a CBZ repackage loads back into
+//! an equivalent tree, a PDF has one page per image at the image's own pixel size,
+//! and `--light-novel` preserves the source structure while only resizing the
+//! oversized pages.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -323,9 +323,3 @@ fn light_novel_reports_a_folder_source_beside_it() -> Result<()> {
     assert_eq!(written, vec![tmp.path().join("manga.cbz")]);
     Ok(())
 }
-
-// --- unimplemented formats -------------------------------------------------------
-
-// Kindle (AZW3/MOBI) output lands in Phase 8 and is covered by
-// `tests/ebook_kindle_tests.rs`; the size-cap/batch-split guard those formats
-// still hit is pinned there too.

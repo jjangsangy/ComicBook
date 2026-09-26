@@ -1,11 +1,11 @@
-//! Askama view structs for the generated EPUB documents (AGENTS.md §5.3).
+//! Askama view structs for the generated EPUB documents (see docs/dependencies.md).
 //!
 //! Each struct is a thin view over pre-computed values. All of the KCC parity
 //! work — escaping, the spread algorithm, the Panel View grid, the manifest and
 //! spine ordering — stays in Rust; these structs only carry the data the
 //! document skeleton needs. The templates live in `templates/` and are compiled
 //! into the binary by the derive, so a malformed template is a compile error and
-//! there is no runtime template parsing (AGENTS.md §14).
+//! there is no runtime template parsing (see docs/architecture.md).
 //!
 //! `escape = "none"` is deliberate: `.xml`/`.xhtml` would otherwise select
 //! askama's HTML escaper, but the interpolated strings are already escaped (or

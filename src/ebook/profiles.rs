@@ -1,7 +1,7 @@
-//! Device profiles and their screen geometry (AGENTS.md §12.1).
+//! Device profiles and their screen geometry (see docs/cli.md).
 //!
 //! The tables below are re-implemented from KCC's documented behaviour — no GPL
-//! source is copied (see AGENTS.md §5.4). Each row pins the screen resolution,
+//! source is copied (see docs/dependencies.md). Each row pins the screen resolution,
 //! quantisation palette and device family a profile belongs to.
 
 use clap::builder::PossibleValue;
@@ -155,7 +155,7 @@ pub struct ProfileEntry {
     pub palette: &'static [u8],
 }
 
-/// The device profile table (AGENTS.md §12.1), in [`ALL_PROFILES`] order.
+/// The device profile table (see docs/cli.md), in [`ALL_PROFILES`] order.
 pub static PROFILE_TABLE: [ProfileEntry; 41] = [
     ProfileEntry {
         profile: Profile::K1,

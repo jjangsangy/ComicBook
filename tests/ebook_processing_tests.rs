@@ -1,6 +1,5 @@
-//! Phase 2 tests for the core image pipeline: a fixture book processes into the
-//! expected encoded pages — order classes, media types, dimensions and flags
-//! (AGENTS.md §15, Phase 2 exit criterion).
+//! Tests for the core image pipeline: a fixture book processes into the expected
+//! encoded pages — order classes, media types, dimensions and flags.
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;

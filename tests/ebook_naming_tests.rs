@@ -1,5 +1,5 @@
-//! Phase 4 tests for page/chapter naming, output filename resolution and the
-//! sibling `Covers/` pick (AGENTS.md §15).
+//! Tests for page/chapter naming, output filename resolution and the sibling
+//! `Covers/` pick.
 
 use std::fs;
 use std::path::{Path, PathBuf};

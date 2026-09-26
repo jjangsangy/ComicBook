@@ -5,9 +5,8 @@ cropping port to KCC's own behaviour.
 
 Each fixture was fed once through KCC's own cropping entry points —
 `get_bbox_crop_margin`, `get_bbox_crop_margin_page_number` and
-`crop_empty_inter_panel` — run in the throwaway Python environment described in
-AGENTS.md §20.4. The values asserted in the Rust test are exactly what those
-functions returned (KCC 11.3.2; the boxes are stable across Pillow/NumPy
+`crop_empty_inter_panel` — and the values asserted in the Rust test are exactly what
+those functions returned (KCC 11.3.2; the boxes are stable across Pillow/NumPy
 versions — they were reproduced identically under both Pillow 11.3.0/NumPy 2.0.2
 and Pillow 12.3.0/NumPy 2.4.6).
 

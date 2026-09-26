@@ -1,4 +1,4 @@
-//! PDF input: embedded-image extraction and rasterisation (Phase 11).
+//! PDF input: embedded-image extraction and rasterisation.
 //!
 //! KCC's `getWorkFolder` PDF branch offers two extraction strategies:
 //!
@@ -9,7 +9,7 @@
 //!   image and rendering the whole page (with MuPDF) at the device resolution.
 //!
 //! This port reproduces both, but uses the pure-Rust `pdfboss` rasterizer instead
-//! of MuPDF (AGENTS.md §5.3, §13.16). The default path extracts a page's image
+//! of MuPDF (see docs/porting.md). The default path extracts a page's image
 //! when it draws exactly one, and rasterises the page otherwise; the reference's
 //! additional text/CCITT render triggers are not reproduced (we cannot cheaply
 //! detect page text, and pdfboss decodes CCITT where MuPDF could not), so this is

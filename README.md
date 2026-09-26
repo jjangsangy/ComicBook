@@ -5,19 +5,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
-A high-performance command-line tool written in Rust for converting comic book archives (`.cbz`, `.cbr`, `.cb7`, `.cbt`, `.zip`, `.rar`, `.7z`, `.tar`) and clamping oversized comic pages to optimize them for e-readers, tablets, and web readers.
+A high-performance command-line tool written in Rust for working with comic-book archives: repackage them between `.cbz`/`.cbr`/`.cb7`/`.cbt` (and plain folders), clamp oversized pages for size-limited readers, and convert them into e-book formats — fixed-layout EPUB, Kobo KePub, Kindle AZW3/MOBI and PDF — for e-readers, tablets and phones. Everything is compiled into the binary; no `7z`, `unrar`, `kindlegen`, `ImageMagick` or other external program is required.
 
 ---
 
 ## Features
 
-- **Multi-Format Archive Conversion**: Batch convert collections across popular comic formats (`cbz`, `cbr`, `cb7`, `cbt`) and standard archive formats (`zip`, `rar`, `7z`, `tar`).
-- **Smart Image Size Clamping**:
+- **Multi-Format Archive Conversion** (`convert`): Batch convert collections across popular comic formats (`cbz`, `cbr`, `cb7`, `cbt`) and standard archive formats (`zip`, `rar`, `7z`, `tar`), or unpack them to folders.
+- **E-book Conversion** (`ebook`): Convert comics into fixed-layout EPUB 3, Kobo KePub, Kindle AZW3/MOBI and PDF (or repackaged CBZ), with per-device profiles, Panel View, webtoon mode, cropping/enhancement, `ComicInfo.xml` metadata, and size-based tome chunking.
+- **Smart Image Size Clamping** (`clamp`):
   - Perfect for hardware with memory/resolution limits (e.g., Kindle, Kobo, e-ink devices) or apps that fail on huge webtoon/manhwa vertical strips.
   - **3 Clamping Approaches**:
     - **`split`** *(default)*: Recursively slices tall images horizontally until every slice is under the pixel threshold, preserving top-to-bottom reading order.
     - **`resize`**: Proportionally downscales images to stay within total pixel limits using high-quality SIMD-accelerated Lanczos3 convolution.
     - **`max-width`**: Constrains horizontal page dimensions to a maximum pixel width while scaling height proportionally.
+- **No External Programs**: Archive extraction, image processing, EPUB/PDF/MOBI authoring and PDF rasterisation are all native Rust — nothing shells out to `7z`, `unrar`, `kindlegen` or ImageMagick.
 - **WebP Output**: Clamped images are saved with high-efficiency WebP compression to save storage while preserving crisp comic art.
 - **Natural Ordering**: Sorts pages naturally (`page_1.png`, `page_2.png`, ..., `page_10.png`) with `natord` so multi-digit filenames are never scrambled.
 - **Robust Input Handling**: Malformed, truncated or hostile archives, EPUBs and PDFs are rejected with a clear error rather than crashing; the pipeline is fuzzed and memory-tested across Linux, macOS and Windows in CI.
@@ -26,7 +28,29 @@ A high-performance command-line tool written in Rust for converting comic book a
 
 ---
 
+## Documentation
+
+The reference documentation lives in [`docs/`](docs/):
+
+| Document | Contents |
+|:---|:---|
+| [docs/convert.md](docs/convert.md) | `convert`: formats, directory expansion, output naming, mechanics |
+| [docs/clamp.md](docs/clamp.md) | `clamp`: approaches, thresholds, output layout |
+| [docs/cli.md](docs/cli.md) | `ebook`: options, formats and device profiles |
+| [docs/architecture.md](docs/architecture.md) | `ebook`: pipeline, module map, data model, design principles |
+| [docs/processing.md](docs/processing.md) | `ebook`: image-processing algorithms and fidelity rules |
+| [docs/output.md](docs/output.md) | `ebook`: EPUB/KePub/CBZ/PDF/Kindle document specs, chunking, fusion |
+| [docs/dependencies.md](docs/dependencies.md) | Off-the-shelf policy, crates, licences, clean-room rules |
+| [docs/porting.md](docs/porting.md) | Porting history and the decisions/deviations behind the code |
+| [docs/development.md](docs/development.md) | Testing, CI, cross-platform notes, glossary |
+
+Run `comic-book <command> --help` for the complete flag reference.
+
+---
+
 ## Supported Formats
+
+### Archives & folders
 
 | Format | Extension(s) | Extract / Read | Compress / Write | Notes |
 |:---|:---|:---:|:---:|:---|
@@ -35,6 +59,17 @@ A high-performance command-line tool written in Rust for converting comic book a
 | **Comic Book 7-Zip** | `.cb7`, `.7z` | Yes | Yes | Native Rust `sevenz-rust2` (stored / uncompressed) |
 | **Comic Book TAR** | `.cbt`, `.tar` | Yes | Yes | Native Rust `tar` |
 | **Directory** | Folder of images | Yes | Yes | Plain uncompressed directories |
+
+### E-book formats (`ebook`)
+
+| Format | Extension(s) | Read (input) | Write (output) | Notes |
+|:---|:---|:---:|:---:|:---|
+| **EPUB 3** | `.epub` | Yes | Yes | Fixed-layout output; input reads spine-ordered images |
+| **PDF** | `.pdf` | Yes | Yes | Input extracts embedded images / rasterises vector pages |
+| **KePub** | `.kepub.epub` | Yes | Yes | Kobo EPUB variant (page-spread properties) |
+| **Kindle AZW3** | `.azw3` | No | Yes | KF8-only, via the `kindling` crate |
+| **Kindle MOBI** | `.mobi` | No | Yes | Dual MOBI7 + KF8, for legacy devices |
+| **CBZ** | `.cbz` | Yes | Yes | Plain repackage of the processed images |
 
 ---
 
@@ -144,6 +179,8 @@ Convert comic archives between formats — taking individual comic files (e.g. `
 comic-book convert <PATHS>... --to <FORMAT>
 ```
 
+See [`docs/convert.md`](docs/convert.md) for the full format table, directory-expansion rules and conversion mechanics.
+
 #### Supported Target Formats
 `cbz`, `zip`, `cbr`, `rar`, `cb7`, `7z`, `cbt`, `tar`, `dir`
 
@@ -178,6 +215,8 @@ Clamp image dimensions within comic archives or directories, either by splitting
 ```bash
 comic-book clamp [OPTIONS] <INPUT_DIR_OR_FILE>
 ```
+
+See [`docs/clamp.md`](docs/clamp.md) for the threshold rules, fast path and output layout.
 
 #### Options
 
@@ -264,7 +303,8 @@ comic-book ebook ch1.cbz ch2.cbz ch3.cbz --file-fusion -t "Omnibus"
 ```
 
 Run `comic-book ebook --help` for the full option set (profiles, cropping, colour handling,
-Panel View, webtoon mode, chunking and more).
+Panel View, webtoon mode, chunking and more). See [`docs/cli.md`](docs/cli.md) for every option
+and device profile, and [`docs/output.md`](docs/output.md) for the output document formats.
 
 ---
 
@@ -314,4 +354,6 @@ Contributions are welcome! Please check out [CONTRIBUTING.md](CONTRIBUTING.md) f
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE). Third-party notices, including the
+ISC notice for Kindle Comic Converter, whose command-line behaviour this project reimplements,
+are recorded in [NOTICE](NOTICE).

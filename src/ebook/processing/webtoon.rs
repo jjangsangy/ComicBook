@@ -1,4 +1,4 @@
-//! Webtoon merge and panel splitting — `comic2panel` (AGENTS.md §11.9, §15 Phase 10).
+//! Webtoon merge and panel splitting — KCC's `comic2panel` (see docs/processing.md).
 //!
 //! In `--webtoon` mode KCC collapses every chapter directory into a single tall
 //! strip (at the chapter's most common width), then cuts that strip into "virtual
@@ -13,11 +13,11 @@
 //! `sanitize_tree` (as the reference does), so the merged strip inherits the first
 //! page's sanitized `kcc-NNNN` name and the virtual pages are `kcc-NNNN-MMMM`.
 //!
-//! The edge filter is `imageproc`'s 3x3 convolution (AGENTS.md §5.3); it reproduces
+//! The edge filter is `imageproc`'s 3x3 convolution (see docs/dependencies.md); it reproduces
 //! Pillow's `FIND_EDGES` except at the 1px border ring, which Pillow copies from the
 //! source and we restore explicitly (the reference's `Image.filter` leaves borders
 //! untouched). Everything else — the panel scan, the overlap split and the packing —
-//! is KCC's own heuristic, reproduced from the documented behaviour (§5.4).
+//! is KCC's own heuristic, reproduced from the documented behaviour.
 
 use anyhow::{bail, Result};
 use image::{DynamicImage, GenericImageView, GrayImage, Luma, Rgb, RgbImage};
@@ -70,7 +70,7 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
 /// Every page is widened to the chapter's most common width with a bicubic
 /// `ImageOps.fit`; the canvas is sized from the pages' *original* heights, so a page
 /// widened by the fit is clipped at the bottom — a reference quirk that is
-/// reproduced deliberately (AGENTS.md §5.2).
+/// reproduced deliberately (see docs/architecture.md).
 fn merge_chapter(pages: &[Page]) -> Result<DynamicImage> {
     let target_width = most_common_width(pages);
     let target_height: u32 = pages.iter().map(|page| page.image.height()).sum();
@@ -107,7 +107,7 @@ fn merge_chapter(pages: &[Page]) -> Result<DynamicImage> {
 ///
 /// Ties are broken by the first page that reached the winning count, which is
 /// deterministic; the reference's `set` iteration order there is implementation
-/// defined (AGENTS.md §5.2).
+/// defined (see docs/architecture.md).
 fn most_common_width(pages: &[Page]) -> u32 {
     let mut best = 0;
     let mut best_count = 0;
@@ -293,7 +293,7 @@ fn edge_mask(image: &DynamicImage) -> GrayImage {
     let (width, height) = gray.dimensions();
 
     // Pillow's `FIND_EDGES` is a 3x3 Laplacian; `imageproc` supplies the convolution
-    // (AGENTS.md §5.3), and the result is clamped to `[0, 255]` as Pillow does.
+    // (see docs/dependencies.md), and the result is clamped to `[0, 255]` as Pillow does.
     let kernel = Kernel::new(&[-1i32, -1, -1, -1, 8, -1, -1, -1, -1], 3, 3);
     let filtered: image::ImageBuffer<Luma<i16>, Vec<i16>> =
         filter(&gray, kernel, |value| value.clamp(0, 255) as i16);

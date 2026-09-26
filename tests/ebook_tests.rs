@@ -1,5 +1,5 @@
-//! Phase 0 tests for the `comic-book ebook` scaffolding: CLI parsing, option
-//! resolution and the device profile tables (AGENTS.md §15).
+//! Tests for the `comic-book ebook` CLI surface: parsing, option resolution and the
+//! device profile tables.
 
 use anyhow::{bail, Result};
 use clap::error::ErrorKind;
@@ -116,7 +116,7 @@ fn profile_table_is_consistent_with_the_variant_list() {
     codes.dedup();
     assert_eq!(codes.len(), unique);
 
-    // Spot-check a few rows against AGENTS.md §12.1.
+    // Spot-check a few rows against the profile table (docs/cli.md).
     assert_eq!(
         Profile::Kv.data(),
         comic_book::ebook::profiles::ProfileData {
@@ -281,7 +281,7 @@ fn custom_geometry_replaces_the_profile() -> Result<()> {
 
 #[test]
 fn the_other_profile_needs_an_explicit_size() -> Result<()> {
-    // `OTHER` has no screen geometry of its own (AGENTS.md §12.1), so it is only
+    // `OTHER` has no screen geometry of its own (see docs/cli.md), so it is only
     // usable with a custom resolution.
     let err = resolve_err(&["book.cbz", "-p", "OTHER"])?;
     assert!(

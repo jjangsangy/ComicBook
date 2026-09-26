@@ -1,4 +1,4 @@
-//! Fourier moiré eraser for colour e-ink screens (AGENTS.md §11.10, §8).
+//! Fourier moiré eraser for colour e-ink screens (see docs/processing.md).
 //!
 //! Clean-room reimplementation of KCC's `rainbow_artifacts_eraser`: the luminance
 //! plane is transformed with a 2D FFT and the diagonal frequency bands that beat

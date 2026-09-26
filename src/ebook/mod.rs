@@ -1,22 +1,12 @@
 //! `comic-book ebook` — comic-to-ebook conversion.
 //!
-//! This is a clean-room Rust port of KCC's `kcc-c2e` pipeline (see `AGENTS.md`).
-//! Phase 0 provides the command-line surface, the device-profile tables, option
-//! resolution and progress scaffolding; Phase 1 adds the input adapters
-//! ([`input`]) that decode archives/folders into a [`ComicTree`]; Phase 2 adds the
-//! per-page image pipeline ([`processing`]) that turns a tree into encoded pages;
-//! Phase 3 adds cropping and enhancement; Phase 4 adds metadata resolution
-//! ([`metadata`]) and page/chapter naming ([`naming`]); Phase 5 adds the output
-//! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable; Phase 6 completes
-//! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
-//! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`; Phase 8
-//! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`); Phase 9 adds
-//! tome chunking ([`chunk`]), `--file-fusion` and `--delete`; Phase 10 adds
-//! `--webtoon` ([`processing::webtoon`]); Phase 11 adds the EPUB (spine-ordered) and PDF
-//! (embedded-image/rasterised) input adapters ([`input`]) and KCC's
-//! `detectSuboptimalProcessing` warnings; Phase 12 hardens the pipeline against
-//! malformed/truncated inputs and verifies it scales to a large book (the
-//! `ebook_robustness_tests` suite).
+//! This is a clean-room Rust port of KCC's `kcc-c2e` pipeline; the design and the
+//! behaviour it reproduces are documented under `docs/` (see `docs/architecture.md`).
+//! Input adapters ([`input`]) decode archives, folders, EPUBs and PDFs into a
+//! [`ComicTree`]; [`processing`] (including [`processing::webtoon`]) turns that
+//! tree into encoded pages; [`metadata`] and [`naming`] resolve metadata and the
+//! output layout; [`output`] writes EPUB/KePub, CBZ, PDF, light-novel or Kindle
+//! files, splitting into tomes via [`chunk`].
 //!
 //! # Exit codes
 //!
@@ -51,7 +41,7 @@ use std::path::{Path, PathBuf};
 /// [`input::load_tree`] decodes the source, [`metadata::resolve`] turns its
 /// `ComicInfo.xml` and the CLI overrides into a [`BookMetadata`], and
 /// [`naming::sanitize_tree`] renames every chapter directory and page to the
-/// deterministic output layout (AGENTS.md §3, §15 Phase 4).
+/// deterministic output layout (see docs/architecture.md).
 #[derive(Debug, Clone)]
 pub struct PreparedBook {
     pub tree: ComicTree,
@@ -130,7 +120,7 @@ fn run_fusion(options: &Options) -> Result<()> {
 /// sanitize names, build the cover, process the images and write the output.
 /// `--light-novel` diverges before any of that — KCC's light-novel branch runs
 /// right after extraction and never touches metadata, naming or the cover
-/// (AGENTS.md §12.3), so it is dispatched to [`output::lightnovel`] wholesale.
+/// (see docs/output.md), so it is dispatched to [`output::lightnovel`] wholesale.
 pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
     if options.light_novel {
         return output::lightnovel::convert(source, options);

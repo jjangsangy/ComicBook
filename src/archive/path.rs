@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Strips leading/trailing slashes, backslashes, Windows drive prefixes (e.g. `C:`),
 /// redundant `./`, and `..` segments to prevent path traversal and ensure uniform cross-platform
-/// compatibility across Windows, Linux, and macOS. Kept bespoke (AGENTS.md §5.3).
+/// compatibility across Windows, Linux, and macOS. Kept bespoke (see docs/dependencies.md).
 pub fn normalize_archive_path(raw: &str) -> String {
     // Build the result in place (a single buffer) rather than collecting segments into an
     // intermediate `Vec` and joining them, which avoids an allocation for every entry.
@@ -52,7 +52,8 @@ pub fn safe_join<P: AsRef<Path>>(base: P, relative: &str) -> PathBuf {
     target
 }
 
-/// Recursively copy an entire directory tree from `src` to `dst` (kept bespoke, §5.3).
+/// Recursively copy an entire directory tree from `src` to `dst` (kept bespoke; see
+/// docs/dependencies.md).
 pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     let dst = dst.as_ref();
     fs::create_dir_all(dst)?;
@@ -134,7 +135,7 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
 }
 
 /// Check whether an archive's root folder matches the destination folder or source file
-/// stem (kept bespoke, §5.3).
+/// stem (kept bespoke; see docs/dependencies.md).
 pub fn is_matching_root(root: &str, dest_name: &str, src_stem: &str) -> bool {
     fn normalize(s: &str) -> String {
         s.chars()

@@ -1,14 +1,16 @@
-//! Slugify, page naming and output filename resolution (Phase 4).
+//! Slugify, page naming and output filename resolution.
 //!
-//! Mirrors KCC's `sanitizeTree`/`slugify`/`getOutputFilename` (AGENTS.md §8),
-//! including the `-kcc-x`/`-kcc-a`…`-kcc-d` page suffixes and the `_kcc<N>`
-//! collision scheme: [`sanitize_tree`] rewrites a [`ComicTree`]'s chapter
-//! directories and page names to the deterministic output layout the pipeline
-//! expects, and [`output_filename`] resolves where the finished book is written.
+//! Mirrors KCC's `sanitizeTree`/`slugify`/`getOutputFilename` (see
+//! docs/architecture.md), including the `-kcc-x`/`-kcc-a`…`-kcc-d` page suffixes and
+//! the `_kcc<N>` collision scheme: [`sanitize_tree`] rewrites a [`ComicTree`]'s
+//! chapter directories and page names to the deterministic output layout the
+//! pipeline expects, and [`output_filename`] resolves where the finished book is
+//! written.
 //!
 //! Slugification delegates the hard part (Unicode transliteration) to the `slug`
-//! crate rather than re-implementing `python-slugify` (AGENTS.md §5.3/§13.8.1);
-//! the KCC-specific zero-padding and CBZ pass-through rules are layered on top.
+//! crate rather than re-implementing `python-slugify` (see docs/dependencies.md and
+//! docs/porting.md); the KCC-specific zero-padding and CBZ pass-through rules are
+//! layered on top.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,7 +28,7 @@ const PAGE_PREFIX: &str = "kcc";
 ///
 /// Deliberately narrower than `shared.IMAGE_TYPES` (`.jp2`/`.avif` included) for
 /// the same reason as the page loader: no pure-Rust decoder is available, so
-/// those files are ignored rather than aborting (AGENTS.md §13.4.6).
+/// those files are ignored rather than aborting (see docs/porting.md).
 const COVER_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 /// The result of [`sanitize_tree`].
@@ -40,7 +42,7 @@ pub struct Sanitized {
     pub cover_path: Option<String>,
 }
 
-/// KCC's `slugify` (AGENTS.md §8).
+/// KCC's `slugify`.
 ///
 /// The format and `is_natural_sorted` arguments reproduce the two shortcuts in
 /// the reference: a naturally ordered CBZ keeps its directory names verbatim,
@@ -192,7 +194,7 @@ fn is_natural_sorted(names: &[String]) -> bool {
     natural == plain
 }
 
-/// KCC's `getOutputFilename` (AGENTS.md §8).
+/// KCC's `getOutputFilename`.
 ///
 /// `ext` includes the leading dot (`".epub"`); `tome_number` is KCC's
 /// `" N"`/`""` suffix. The returned path is made absolute, as the reference
@@ -292,7 +294,7 @@ fn resolve_collision(filename: PathBuf, ext: &str, options: &Options) -> PathBuf
     filename
 }
 
-/// KCC's sibling `Covers/` overrides (AGENTS.md §8).
+/// KCC's sibling `Covers/` overrides.
 ///
 /// When `<source-parent>/Covers/` exists, the source's index among the
 /// same-extension sibling files selects the matching cover image. Returns `None`
@@ -332,7 +334,7 @@ pub fn select_cover(source: &Path) -> Option<PathBuf> {
 ///
 /// The reference reads the directory with `os.listdir` and takes the first
 /// entry, i.e. filesystem order; this port natural-sorts so the result is
-/// deterministic (AGENTS.md §13.14.6).
+/// deterministic (see docs/porting.md).
 pub fn first_cover(parent: &Path) -> Option<PathBuf> {
     let covers_dir = parent.join("Covers");
     if !covers_dir.is_dir() {
@@ -465,7 +467,7 @@ mod tests {
     #[test]
     fn slugify_collapses_underscores_and_dots() {
         // Deliberate deviation from python-slugify, whose custom pattern preserves
-        // `_`/`.` — see AGENTS.md §13.8.1.
+        // `_`/`.` — see docs/porting.md.
         assert_eq!(slugify("a_b.c", Format::Epub, true), "a-b-c");
     }
 
