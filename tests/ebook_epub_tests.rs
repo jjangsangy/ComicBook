@@ -391,6 +391,317 @@ fn supported_formats_are_reported_when_unimplemented() {
     );
 }
 
+/// A book with no spread specials, so the spread algorithm is easy to read.
+fn simple_fixture(root: &Path) {
+    write_png(&root.join("01.png"), 100, 150, [10, 10, 10]);
+    write_png(&root.join("02.png"), 100, 150, [200, 200, 200]);
+}
+
+#[test]
+fn scribe_profile_splits_a_tall_page_into_above_and_below() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    // Larger than the KS profile, so it is contain-resized to 1653x2480 and then
+    // split at 1920 (cropping disabled to keep the geometry predictable).
+    write_png(&source.join("01.png"), 2000, 3000, [10, 10, 10]);
+
+    let outputs = convert(&source, &["-f", "epub", "-p", "KS", "-c", "0"]);
+    let epub = Epub::open(&outputs[0]);
+
+    // The tall page becomes two images; the unsplit name is never written.
+    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-above.jpg"));
+    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-below.jpg"));
+    assert!(!epub.has("OEBPS/Images/kcc-0001-kcc-x.jpg"));
+
+    // The XHTML stacks both images and the viewport spans their combined height.
+    let xhtml = epub.text("OEBPS/Text/kcc-0001-kcc-x-above.xhtml");
+    assert!(xhtml.contains(
+        "<img width=\"1653\" height=\"1920\" src=\"../Images/kcc-0001-kcc-x-above.jpg\"/>"
+    ));
+    assert!(xhtml.contains(
+        "<img style=\"top: 1920px\" width=\"1653\" height=\"560\" src=\"../Images/kcc-0001-kcc-x-below.jpg\"/>"
+    ));
+    assert!(xhtml.contains("content=\"width=1653, height=2480\""));
+
+    let opf = epub.text("OEBPS/content.opf");
+    // The `-below` image is in the manifest but never a spine item of its own.
+    assert!(opf.contains("href=\"Images/kcc-0001-kcc-x-below.jpg\""));
+    let spine = spine(&opf);
+    assert_eq!(spine.len(), 1);
+    assert!(spine[0].contains("above"));
+    // Every manifest href still resolves (the below image included).
+    for (id, href, _) in manifest(&opf) {
+        assert!(
+            epub.has(&format!("OEBPS/{href}")),
+            "manifest item {id} points at missing OEBPS/{href}"
+        );
+    }
+}
+
+#[test]
+fn scribe_profile_names_a_short_page_whole() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    write_png(&source.join("01.png"), 100, 150, [10, 10, 10]);
+
+    let outputs = convert(&source, &["-f", "epub", "-p", "KS", "-c", "0"]);
+    let epub = Epub::open(&outputs[0]);
+    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-whole.jpg"));
+    assert!(!epub.has("OEBPS/Images/kcc-0001-kcc-x.jpg"));
+}
+
+#[test]
+fn one_page_landscape_centres_every_spine_item() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    simple_fixture(&source);
+
+    let outputs = convert(
+        &source,
+        &["-f", "epub", "-p", "K57", "--one-page-landscape"],
+    );
+    let opf = Epub::open(&outputs[0]).text("OEBPS/content.opf");
+    let itemrefs: Vec<&str> = opf
+        .lines()
+        .filter(|line| line.starts_with("<itemref "))
+        .collect();
+    assert_eq!(itemrefs.len(), 2);
+    assert!(itemrefs
+        .iter()
+        .all(|line| line.contains("properties=\"page-spread-center\"")));
+}
+
+#[test]
+fn spread_shift_flips_the_opening_side() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    simple_fixture(&source);
+
+    let plain_dir = tmp.path().join("plain");
+    let plain = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "KoE",
+                "--no-kepub",
+                "-o",
+                plain_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    let shifted_dir = tmp.path().join("shifted");
+    let shifted = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "KoE",
+                "--no-kepub",
+                "--spread-shift",
+                "-o",
+                shifted_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+
+    let plain_spine = spine(&plain.text("OEBPS/content.opf"));
+    let plain_opf = plain.text("OEBPS/content.opf");
+    assert!(plain_opf.contains(&format!(
+        "<itemref idref=\"{}\" properties=\"rendition:page-spread-left\"/>",
+        plain_spine[0]
+    )));
+
+    let shift_opf = shifted.text("OEBPS/content.opf");
+    let shift_spine = spine(&shift_opf);
+    assert!(shift_opf.contains(&format!(
+        "<itemref idref=\"{}\" properties=\"rendition:page-spread-right\"/>",
+        shift_spine[0]
+    )));
+}
+
+#[test]
+fn invert_direction_reverses_progression_and_writing_mode() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    simple_fixture(&source);
+
+    let normal_dir = tmp.path().join("normal");
+    let normal = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "K57",
+                "-o",
+                normal_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    let normal_opf = normal.text("OEBPS/content.opf");
+    assert!(normal_opf.contains("<spine page-progression-direction=\"ltr\""));
+    assert!(normal_opf.contains("primary-writing-mode\" content=\"horizontal-lr\""));
+
+    let inverted_dir = tmp.path().join("inverted");
+    let inverted = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "K57",
+                "--invert-direction",
+                "-o",
+                inverted_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    let inverted_opf = inverted.text("OEBPS/content.opf");
+    assert!(inverted_opf.contains("<spine page-progression-direction=\"rtl\""));
+    assert!(inverted_opf.contains("primary-writing-mode\" content=\"horizontal-rl\""));
+}
+
+#[test]
+fn two_panel_and_vertical_4_panel_reshape_the_panel_view() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    // Larger than the K57 screen so Panel View has content to magnify.
+    write_png(&source.join("01.png"), 800, 1200, [10, 10, 10]);
+
+    // `--hq` alone lays out four quadrants.
+    let quad_dir = tmp.path().join("quad");
+    let quad = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "K57",
+                "--hq",
+                "-c",
+                "0",
+                "-o",
+                quad_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    let quad_xhtml = quad.text("OEBPS/Text/kcc-0001-kcc-x.xhtml");
+    assert!(quad_xhtml.contains("<div id=\"PV-TL\">"));
+    assert!(quad_xhtml.contains("<div id=\"PV-BR\">"));
+
+    // `-2/--two-panel` scales the page to the device width, leaving only the
+    // vertical pair of panels.
+    let two_dir = tmp.path().join("two");
+    let two = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "K57",
+                "--hq",
+                "--two-panel",
+                "-c",
+                "0",
+                "-o",
+                two_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    let two_xhtml = two.text("OEBPS/Text/kcc-0001-kcc-x.xhtml");
+    assert!(two_xhtml.contains("<div id=\"PV-T\">"));
+    assert!(two_xhtml.contains("<div id=\"PV-B\">"));
+    assert!(!two_xhtml.contains("PV-TL"));
+
+    // `--vertical-4-panel` writes a vertical reading mode.
+    let vertical_dir = tmp.path().join("vertical");
+    let vertical = Epub::open(
+        &convert(
+            &source,
+            &[
+                "-f",
+                "epub",
+                "-p",
+                "K57",
+                "--hq",
+                "--vertical-4-panel",
+                "-o",
+                vertical_dir.to_str().unwrap(),
+            ],
+        )[0],
+    );
+    assert!(vertical
+        .text("OEBPS/content.opf")
+        .contains("primary-writing-mode\" content=\"vertical-lr\""));
+}
+
+#[test]
+fn smart_cover_crop_takes_a_single_side_and_the_cover_is_fitted() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    // A 2:1 spread: the smart crop keeps the right (non-manga) half, so the cover
+    // ends up portrait once thumbnailed.
+    write_png(&source.join("01.png"), 2000, 1000, [255, 255, 255]);
+
+    let outputs = convert(
+        &source,
+        &[
+            "-f",
+            "epub",
+            "-p",
+            "KoE",
+            "--no-kepub",
+            "--smart-cover-crop",
+        ],
+    );
+    let epub = Epub::open(&outputs[0]);
+    let cover = image::load_from_memory(epub.bytes("OEBPS/Images/cover.jpg").unwrap()).unwrap();
+    assert!(
+        cover.width() < cover.height(),
+        "the wide spread was not cropped"
+    );
+}
+
+#[test]
+fn cover_is_taken_from_the_uncropped_first_page() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book");
+    fs::create_dir_all(&source).unwrap();
+    // A white page with a small dark block: `-c 1` crops the page down to the
+    // block, but KCC builds the cover before processing, so it keeps 400x600.
+    let mut page = RgbImage::from_pixel(400, 600, Rgb([255, 255, 255]));
+    for y in 250..350 {
+        for x in 150..250 {
+            page.put_pixel(x, y, Rgb([0, 0, 0]));
+        }
+    }
+    DynamicImage::ImageRgb8(page)
+        .save(source.join("01.png"))
+        .unwrap();
+
+    let outputs = convert(
+        &source,
+        &["-f", "epub", "-p", "KoE", "--no-kepub", "-c", "1"],
+    );
+    let epub = Epub::open(&outputs[0]);
+    let cover = image::load_from_memory(epub.bytes("OEBPS/Images/cover.jpg").unwrap()).unwrap();
+    assert_eq!((cover.width(), cover.height()), (400, 600));
+
+    // The processed page itself was margin-cropped.
+    let processed =
+        image::load_from_memory(epub.bytes("OEBPS/Images/kcc-0001-kcc-x.jpg").unwrap()).unwrap();
+    assert!(processed.width() < 400);
+}
+
 /// Opt-in EPUB conformance check (AGENTS.md §16); run with
 /// `cargo test -- --ignored epubcheck` when `epubcheck` is on `PATH`.
 #[test]

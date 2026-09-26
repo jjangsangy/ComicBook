@@ -36,6 +36,9 @@ const SPLIT_THRESHOLD: f64 = 1.16;
 const BISECT_THRESHOLD: f64 = 1.8;
 /// Aspect-ratio tolerance for crop-to-fill resizes (KCC's `AUTO_CROP_THRESHOLD`).
 const AUTO_CROP_THRESHOLD: f64 = 0.015;
+/// Kindle Scribe KF8 pages taller than this are split into `-above`/`-below`
+/// halves (KCC's literal `1920` in `saveToDir`).
+pub(crate) const SCRIBE_MAX_DIMENSION: u32 = 1920;
 
 /// The profile's output geometry, enlarged by 1.5× in `--hq` panel-view mode.
 pub fn profile_size(options: &Options) -> (u32, u32) {
@@ -61,10 +64,11 @@ pub fn process_page(page: &Page, options: &Options, size: (u32, u32)) -> Result<
     }
 
     let fill = page_fill(page, options);
-    split_check(&page.image, options, size)
-        .into_iter()
-        .map(|payload| encode_payload(payload, options, size, page, fill))
-        .collect()
+    let mut out = Vec::new();
+    for payload in split_check(&page.image, options, size) {
+        out.extend(encode_payload(payload, options, size, page, fill)?);
+    }
+    Ok(out)
 }
 
 /// `--no-processing`: emit the source unchanged, ignoring the profile entirely.
@@ -224,13 +228,17 @@ fn bisect(image: &DynamicImage, right_to_left: bool) -> (DynamicImage, DynamicIm
 }
 
 /// Run one payload through the transform pipeline and encode it.
+///
+/// A single payload normally yields one [`EncodedPage`], but Kindle Scribe KF8
+/// output splits a page taller than [`SCRIBE_MAX_DIMENSION`] into two images and
+/// names a shorter one `-whole` (KCC's `saveToDir`).
 fn encode_payload(
     payload: Payload,
     options: &Options,
     size: (u32, u32),
     page: &Page,
     fill: Background,
-) -> Result<EncodedPage> {
+) -> Result<Vec<EncodedPage>> {
     let original_is_grayscale = is_grayscale_image(&payload.image);
     let rgb = payload.image.to_rgb8();
     let color = color_check(&rgb, original_is_grayscale, options);
@@ -246,24 +254,72 @@ fn encode_payload(
         color_output,
     );
 
+    let flags = |above: bool, below: bool| PageFlags {
+        order_class: payload.order,
+        rotated: payload.rotated,
+        black_background: fill == Background::Black,
+        above,
+        below,
+    };
+
+    if options.kindle_scribe_azw3 {
+        let (width, height) = image.dimensions();
+        if height > SCRIBE_MAX_DIMENSION {
+            let above = image.crop_imm(0, 0, width, SCRIBE_MAX_DIMENSION);
+            let below = image.crop_imm(
+                0,
+                SCRIBE_MAX_DIMENSION,
+                width,
+                height - SCRIBE_MAX_DIMENSION,
+            );
+            let (above_type, above_bytes) = encode_image(&above, options, color_output)?;
+            let (below_type, below_bytes) = encode_image(&below, options, color_output)?;
+            return Ok(vec![
+                EncodedPage {
+                    name: split_name(&page.source_name, payload.order, "above", above_type),
+                    order_class: payload.order,
+                    media_type: above_type,
+                    bytes: above_bytes,
+                    width,
+                    height: SCRIBE_MAX_DIMENSION,
+                    flags: flags(true, false),
+                },
+                EncodedPage {
+                    name: split_name(&page.source_name, payload.order, "below", below_type),
+                    order_class: payload.order,
+                    media_type: below_type,
+                    bytes: below_bytes,
+                    width,
+                    height: height - SCRIBE_MAX_DIMENSION,
+                    flags: flags(false, true),
+                },
+            ]);
+        }
+
+        let (media_type, bytes) = encode_image(&image, options, color_output)?;
+        return Ok(vec![EncodedPage {
+            name: split_name(&page.source_name, payload.order, "whole", media_type),
+            order_class: payload.order,
+            media_type,
+            bytes,
+            width,
+            height,
+            flags: flags(false, false),
+        }]);
+    }
+
     let (media_type, bytes) = encode_image(&image, options, color_output)?;
     let (width, height) = image.dimensions();
 
-    Ok(EncodedPage {
+    Ok(vec![EncodedPage {
         name: output_name(&page.source_name, payload.order, media_type),
         order_class: payload.order,
         media_type,
         bytes,
         width,
         height,
-        flags: PageFlags {
-            order_class: payload.order,
-            rotated: payload.rotated,
-            black_background: fill == Background::Black,
-            above: false,
-            below: false,
-        },
-    })
+        flags: flags(false, false),
+    }])
 }
 
 /// gamma → grayscale → autocontrast/autolevel → resize, in KCC's order.
@@ -373,6 +429,21 @@ fn luma_range(image: &DynamicImage) -> imageproc::stats::MinMax<u8> {
     imageproc::stats::min_max(&gray)[0]
 }
 
+/// Pillow's unconditional `ImageOps.autocontrast(preserve_tone=True)`: stretch
+/// the luminance range to `[0, 255]` using one range for every channel.
+///
+/// This is the cover's autocontrast (KCC's `Cover.process`), which — unlike the
+/// per-page pass — has no low-contrast guard and is not gated by `--no-` /
+/// `--color-autocontrast`. A flat image is left untouched (Pillow's zero-width
+/// range would divide by zero).
+pub(crate) fn autocontrast_preserve_tone(image: &mut DynamicImage) {
+    let range = luma_range(image);
+    if range.min >= range.max {
+        return;
+    }
+    stretch_contrast(image, range.min, range.max);
+}
+
 /// Stretch `[min, max]` to `[0, 255]` in every channel, preserving tone.
 fn stretch_contrast(image: &mut DynamicImage, min: u8, max: u8) {
     match image {
@@ -464,8 +535,12 @@ fn resize_image(
         && matches!(order, OrderClass::RotateFirst | OrderClass::RotateLast)
         && !options.kindle_scribe_azw3
     {
-        if options.kindle_azw3 && (width > 1920 || height > 1920) {
-            *image = contain(image, (1920, 1920), Method::Lanczos);
+        if options.kindle_azw3 && (width > SCRIBE_MAX_DIMENSION || height > SCRIBE_MAX_DIMENSION) {
+            *image = contain(
+                image,
+                (SCRIBE_MAX_DIMENSION, SCRIBE_MAX_DIMENSION),
+                Method::Lanczos,
+            );
         } else if width > size.0 * 2 || height > size.1 {
             *image = contain(image, (size.0 * 2, size.1), Method::Lanczos);
         }
@@ -495,7 +570,7 @@ fn resize_image(
 /// The resampling filter KCC picks: bicubic when the page already fits the
 /// profile, Lanczos when it must be scaled down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Method {
+pub(crate) enum Method {
     Bicubic,
     Lanczos,
 }
@@ -564,7 +639,7 @@ where
 
 /// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly
 /// (kept bespoke, §5.3 — Pillow's half-to-even rounding is pinned).
-fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
     let (width, height) = image.dimensions();
     let image_ratio = f64::from(width) / f64::from(height);
     let box_ratio = f64::from(size.0) / f64::from(size.1);
@@ -589,6 +664,17 @@ fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
 /// Pillow's `ImageOps.contain`: scale to fit within `size`, preserving aspect.
 fn contain(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
     let (width, height) = image.dimensions();
+    let (target_w, target_h) = contain_size(width, height, size);
+    resize_to(image, target_w, target_h, method)
+}
+
+/// Pillow's `Image.thumbnail`: shrink to fit `size`, preserving aspect, never
+/// enlarging (a no-op when the image already fits). Used for the cover.
+pub(crate) fn thumbnail(image: &DynamicImage, size: (u32, u32), method: Method) -> DynamicImage {
+    let (width, height) = image.dimensions();
+    if width <= size.0 && height <= size.1 {
+        return image.clone();
+    }
     let (target_w, target_h) = contain_size(width, height, size);
     resize_to(image, target_w, target_h, method)
 }
@@ -945,16 +1031,28 @@ fn encodable(image: &DynamicImage) -> std::borrow::Cow<'_, DynamicImage> {
 /// The output file name for a payload, keeping the source directory and adding
 /// the `-kcc-<order>` suffix (AGENTS.md §10).
 fn output_name(source_name: &str, order: OrderClass, media_type: MediaType) -> String {
-    named_page(source_name, media_type, Some(order))
+    named_page(source_name, media_type, Some(order), None)
 }
 
 /// The output file name for a `--no-processing` page: the sanitized name alone.
 fn unsuffixed_name(source_name: &str, media_type: MediaType) -> String {
-    named_page(source_name, media_type, None)
+    named_page(source_name, media_type, None, None)
 }
 
-/// Build a page name from a source path, media type and optional order suffix.
-fn named_page(source_name: &str, media_type: MediaType, order: Option<OrderClass>) -> String {
+/// The output file name for a Kindle Scribe split half (`-above`/`-below`) or an
+/// unsplit `-whole` page: `kcc-0001-kcc-x-above.jpg` (KCC's `saveToDir`).
+fn split_name(source_name: &str, order: OrderClass, part: &str, media_type: MediaType) -> String {
+    named_page(source_name, media_type, Some(order), Some(part))
+}
+
+/// Build a page name from a source path, media type, optional order suffix and an
+/// optional trailing part (`above`/`below`/`whole`).
+fn named_page(
+    source_name: &str,
+    media_type: MediaType,
+    order: Option<OrderClass>,
+    part: Option<&str>,
+) -> String {
     let (directory, file_name) = match source_name.rsplit_once('/') {
         Some((directory, file_name)) => (Some(directory), file_name),
         None => (None, source_name),
@@ -963,10 +1061,16 @@ fn named_page(source_name: &str, media_type: MediaType, order: Option<OrderClass
         Some((stem, _)) if !stem.is_empty() => stem,
         _ => file_name,
     };
-    let name = match order {
-        Some(order) => format!("{stem}-kcc-{}.{}", order.suffix(), media_type.extension()),
-        None => format!("{stem}.{}", media_type.extension()),
-    };
+    let mut name = stem.to_string();
+    if let Some(order) = order {
+        name.push_str(&format!("-kcc-{}", order.suffix()));
+    }
+    if let Some(part) = part {
+        name.push('-');
+        name.push_str(part);
+    }
+    name.push('.');
+    name.push_str(media_type.extension());
     match directory {
         Some(directory) => format!("{directory}/{name}"),
         None => name,
@@ -1258,5 +1362,67 @@ mod tests {
             pack_indices(&[0, 1, 2, 255], 4, 1, png::BitDepth::Eight),
             vec![0, 1, 2, 255]
         );
+    }
+
+    #[test]
+    fn page_names_add_the_order_and_part_suffixes() {
+        assert_eq!(
+            output_name(
+                "Chapter 1/kcc-0001.png",
+                OrderClass::Normal,
+                MediaType::Jpeg
+            ),
+            "Chapter 1/kcc-0001-kcc-x.jpg"
+        );
+        assert_eq!(
+            split_name(
+                "kcc-0001.png",
+                OrderClass::RotateLast,
+                "above",
+                MediaType::Jpeg
+            ),
+            "kcc-0001-kcc-d-above.jpg"
+        );
+        assert_eq!(
+            split_name("kcc-0002.png", OrderClass::Normal, "below", MediaType::Gif),
+            "kcc-0002-kcc-x-below.gif"
+        );
+        assert_eq!(
+            split_name("kcc-0003.png", OrderClass::Normal, "whole", MediaType::Png),
+            "kcc-0003-kcc-x-whole.png"
+        );
+    }
+
+    #[test]
+    fn a_tall_scribe_page_splits_at_1920_into_above_and_below() {
+        // A page larger than the KS profile: it is contain-resized to 2480 tall,
+        // then split into a 1920-row top and a 560-row bottom.
+        let tall = page(2000, 3000, [10, 10, 10]);
+        let options = options(&["-f", "epub", "-p", "KS"]);
+        let size = profile_size(&options);
+        let encoded = process_page(&tall, &options, size).expect("processes");
+
+        assert_eq!(encoded.len(), 2);
+        assert_eq!(encoded[0].name, "page-kcc-x-above.jpg");
+        assert_eq!(encoded[1].name, "page-kcc-x-below.jpg");
+        assert_eq!(
+            (encoded[0].width, encoded[0].height),
+            (1653, SCRIBE_MAX_DIMENSION)
+        );
+        assert_eq!((encoded[1].width, encoded[1].height), (1653, 560));
+        assert!(encoded[0].flags.above && !encoded[0].flags.below);
+        assert!(!encoded[1].flags.above && encoded[1].flags.below);
+    }
+
+    #[test]
+    fn a_scribe_page_that_fits_is_named_whole() {
+        let small = page(100, 150, [10, 10, 10]);
+        let options = options(&["-f", "epub", "-p", "KS"]);
+        let size = profile_size(&options);
+        let encoded = process_page(&small, &options, size).expect("processes");
+
+        assert_eq!(encoded.len(), 1);
+        assert_eq!(encoded[0].name, "page-kcc-x-whole.jpg");
+        assert!(!encoded[0].flags.above && !encoded[0].flags.below);
     }
 }

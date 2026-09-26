@@ -37,6 +37,12 @@ pub(crate) struct PageXhtml<'a> {
     pub img_height: u32,
     /// The page image reference (`../Images/<chapter>/<file>`).
     pub image_src: &'a str,
+    /// Whether the Kindle Scribe `-below` second image is emitted.
+    pub has_below: bool,
+    /// The `-below` image reference and size (`top: 1920px` under the first).
+    pub below_image_src: &'a str,
+    pub below_img_width: u32,
+    pub below_img_height: u32,
     /// Whether the Kindle virtual Panel View block is emitted.
     pub panel: bool,
     pub boxes: &'a [PanelBox],

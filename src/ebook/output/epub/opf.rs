@@ -164,16 +164,13 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
             has_properties_before: false,
             has_properties_after: false,
         });
-        if entry.file.contains("above") {
+        if let Some(below) = entry.below {
             let below_id = id.replace("above", "below");
+            let below_file = below.name.rsplit('/').next().unwrap_or(below.name.as_str());
             manifest.push(OpfItem {
                 id: format!("img_{below_id}"),
-                href: format!(
-                    "{}/{}",
-                    images_dir(entry.image_dir),
-                    entry.file.replace("above", "below")
-                ),
-                media_type: entry.media_type.mime(),
+                href: format!("{}/{}", images_dir(entry.image_dir), below_file),
+                media_type: below.media_type.mime(),
                 properties: String::new(),
                 has_properties_before: false,
                 has_properties_after: false,
@@ -346,8 +343,23 @@ mod tests {
 
     #[test]
     fn a_scribe_above_page_adds_its_below_image_to_the_manifest() {
-        use crate::ebook::model::{MediaType, OrderClass, PageFlags};
+        use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags};
 
+        let below = EncodedPage {
+            name: "kcc-0001-kcc-x-below.jpg".to_string(),
+            order_class: OrderClass::Normal,
+            media_type: MediaType::Jpeg,
+            bytes: Vec::new(),
+            width: 100,
+            height: 50,
+            flags: PageFlags {
+                order_class: OrderClass::Normal,
+                rotated: false,
+                black_background: false,
+                above: false,
+                below: true,
+            },
+        };
         let entry = PageRef {
             image_dir: "Chapter 1",
             file: "kcc-0001-kcc-x-above.jpg",
@@ -362,7 +374,7 @@ mod tests {
                 below: false,
             },
             media_type: MediaType::Jpeg,
-            bytes: &[],
+            below: Some(&below),
         };
 
         let items = manifest_items(&[entry]);

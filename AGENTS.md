@@ -395,7 +395,7 @@ src/
       interpanel.rs           # inter-panel crop
       rainbow.rs              # FFT moiré eraser
       page.rs                 # ComicPage: gamma/autocontrast/autolevel/resize/encode
-      cover.rs                # Cover: process, smart cover crop, tome label
+      cover.rs                # Cover: process, smart cover crop (tome label: Phase 9)
       webtoon.rs              # comic2panel: merge + panel split
     output/
       mod.rs                  # dispatch by Format; filename resolution; --delete
@@ -447,7 +447,7 @@ Add (verify licenses; prefer pure Rust):
 | `quantette` | fixed-palette quantisation + Floyd–Steinberg dithering | MIT/Apache |
 | `png` (direct) | indexed/palette PNG output (`image` cannot write indexed PNG) | MIT/Apache |
 | `rustfft` | moiré FFT (`rainbow_artifacts_eraser`) | MIT/Apache |
-| `ab_glyph` (via imageproc) | tome-number cover text | MIT/Apache |
+| `ab_glyph` (via imageproc) | tome-number cover text (deferred to Phase 9; §13.11.4) | MIT/Apache |
 | `slug` or small custom fn | chapter slugify parity with python-slugify | MIT/Apache |
 | `lopdf` and/or `pdf-render`/`pdfboss-render` | PDF input (extract/render), pure Rust | verify |
 | `printpdf` or `pdf-writer` | PDF output | MIT |
@@ -465,7 +465,9 @@ default codecs (avif/exr/…); `quantette`'s `kmeans` default is disabled becaus
 `CustomPalette` path is used.
 
 **Added in Phase 3.** `rustfft = "6"` (MIT/Apache-2.0, pure Rust) for the `--erase-rainbow`
-moiré eraser. Not yet added (Phase 6): `ab_glyph` for cover text.
+moiré eraser. **No font dependency was taken in Phase 6:** `ab_glyph` (for the tome `N/M`
+cover label) is deferred to Phase 9 along with chunking, because the label is unreachable
+until a source splits into multiple tomes and no pure-Rust crate ships a font asset (§13.11.4).
 
 **Added in Phase R.** `bitvec = "1"` (MIT, pure Rust) for the sub-byte scanline packing in
 `page.rs::pack_indices`. It was already in the tree transitively via `quantette`; Phase R
@@ -641,7 +643,8 @@ All operate on decoded RGB/RGBA/grayscale images.
    (Kindle Scribe B/W), WebP (`--webp`), with the same branch order as `save_with_codec`.
    Media types in OPF must match (`image/jpeg|png|gif|webp`).
 8. **`Cover`** — autocontrast, optional grayscale, `smartcovercrop` (wide-spread heuristics),
-   `thumbnail`/`fit` to profile, optional tome label `N/M` text (stroke width 25, size h/7).
+   `thumbnail`/`fit` to profile, optional tome label `N/M` text (stroke width 25, size h/7;
+   the label is deferred to Phase 9 — §13.11.4).
 9. **Webtoon (`comic2panel`)** — merge chapter images vertically, detect panels via
    `FIND_EDGES` + threshold >6 + solid-row scanning, split over-long panels with overlap,
    repack into virtual pages at the device width/height (max width 1072).
@@ -959,12 +962,14 @@ the safety net the swaps rely on.
    and Panel View markup cannot be split from `buildHTML`, so `buildOPF`/`buildHTML` are
    complete. Phase 6's remaining scope is `Cover::process` (+ smart crop, fit, tome label),
    the Scribe `-above`/`-below` two-image page (the OPF/buildHTML hooks for it are already
-   present), and hardening the panel-view variants.
+   present), and hardening the panel-view variants. **Update (Phase 6):** all of it landed
+   (the tome label moved to Phase 9); see §13.11.
 4. **The cover is a Phase 5 placeholder.** `processing::cover::make_cover` selects the cover
    image (sibling `Covers/` override, else the first page) and encodes it as the `cover.jpg`
    the OPF advertises as `image/jpeg`; it does **not** apply KCC's `Cover` pipeline
    (autocontrast, grayscale, smart crop, fit-to-profile, `N/M` tome label). That pipeline is
-   Phase 6 and replaces this function without changing the packaging plumbing.
+   Phase 6 and replaces this function without changing the packaging plumbing. **Update
+   (Phase 6):** replaced by `processing::cover::process` (§13.11.1–2); `make_cover` is gone.
 5. **Timestamps and identifiers use crates, not hand-rolled code** (§5.3): `uuid` (v4) for
    `dc:identifier`/`dtb:uid` and `time` for `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`), both
    MIT/Apache-2.0 and pure Rust.
@@ -1012,10 +1017,46 @@ the safety net the swaps rely on.
    implementation *before* the refactor, so the migration is provably behaviour-preserving;
    regenerate with `UPDATE_GOLDEN=1 cargo test --test ebook_golden_tests` only for an
    intentional format change.
-5. **The Scribe `-above`/`-below` manifest branch is unit-tested directly.** No fixture
-   currently *generates* an `-above` page (that split is still Phase 6 work), so
-   `opf.rs::manifest_items` is a separate function with a unit test covering the added
-   `-below` image item.
+5. **The Scribe `-above`/`-below` manifest branch is unit-tested directly** (and, since
+   Phase 6, end-to-end; §13.11.3). `opf.rs::manifest_items` is a separate function with a unit
+   test covering the added `-below` image item.
+
+### 13.11 Phase 6 decisions (cover, Scribe strips, panel view)
+
+1. **The cover is KCC's `Cover.process`, and it reuses the existing pipeline helpers.**
+   `processing::cover::process` mirrors the reference exactly: flatten to RGB → unconditional
+   `autocontrast(preserve_tone=True)` → optional grayscale (`--force-color` keeps colour) →
+   optional `--smart-cover-crop` → fit to the profile → JPEG. The autocontrast is built from
+   `imageproc::stats::min_max` + `imageproc::contrast::stretch_contrast` (the same primitives
+   the per-page pass uses, §13.5.3); the smart crop is `crop::crop_rounded` (Pillow `Image.crop`
+   rounding, §13.6.3); the sizing is `page::fit` (`--cover-fill`) or the new
+   `page::thumbnail` — Pillow's `Image.thumbnail` is `ImageOps.contain` clamped to not upscale,
+   so it reuses the pinned `contain_size`. No new image algorithm was written (§5.3).
+2. **`Cover::process` replaces the Phase 5 placeholder.** `processing::cover::make_cover` is
+   gone; `convert_source` now calls `processing::cover::process`, which returns the encoded
+   cover plus KCC's `smartcover` flag. That flag is carried on `ProcessedBook.cover_smart_crop`
+   because CBZ/PDF output gates its cover write on `cover.smartcover or customcover` (Phase 7).
+3. **The Kindle Scribe split is two `EncodedPage`s.** When `kindle_scribe_azw3` is set, a page
+   taller than 1920 px becomes an `-above` (top 1920 rows) and a `-below` (the rest) image, and
+   a page that fits is named `-whole` — matching `saveToDir`. Above/below share the codec, the
+   order class and the rotated/background flags; `PageFlags.above`/`below` distinguish them.
+   The EPUB builder skips `-below` pages from the spine/navigation but still writes their bytes
+   and adds the manifest image item from the `-above` entry; `buildHTML` emits the second `<img
+   style="top: 1920px">` and sums the heights into the viewport (KCC's `imgsizeframe`).
+4. **The tome `N/M` cover label is deferred to Phase 9 with chunking.** It is only reachable
+   when a source splits into more than one tome, which is exactly the Phase 9 `--target-size`/
+   `--batch-split` work; today `tomeid` is always 0 and the unlabelled branch is what runs. It
+   also needs a scalable font asset (KCC uses Pillow's built-in font with a 25 px stroke), and
+   no pure-Rust crate ships a font — taking `ab_glyph` would mean committing a third-party font
+   under its own licence for a code path that is currently dead (§5.3). Phase 9 adds the label
+   and its font together, re-encoding the cover per tome as KCC's `save_to_folder` does.
+5. **Panel-view variants and spread options are pinned by integration tests.**
+   `tests/ebook_epub_tests.rs` now asserts the Scribe above/below markup + manifest, the
+   `-whole` naming, `--two-panel` vs the four-quadrant grid, `--vertical-4-panel`'s
+   `primary-writing-mode`, `--one-page-landscape` centring every spine item, `--spread-shift`
+   flipping the opening side, `--invert-direction` reversing the progression/writing mode, and
+   the smart-cropped cover. The panel grid maths itself was already `--hq`-pinned by the
+   `kindle_hq`/`kindle_panel` golden scenarios (§13.10), so no golden file changed.
 
 ## 14. Performance & memory goals
 
@@ -1192,17 +1233,28 @@ validation, Kindle fixed-layout + Panel View, KePub extension/properties, RTL pr
 plus unit tests for the spread algorithm, `html_escape`, `stem_of` and `panel_offset`.
 Decisions recorded in §13.9.
 
-### Phase 6 — Cover, panel view, Scribe strips, spread options
-- `Cover::process` + smart crop + tome label; panel-view variants
+### Phase 6 — Cover, panel view, Scribe strips, spread options (complete)
+- `Cover::process` + smart crop; panel-view variants
   (`-2`, `--vertical-4-panel`, `--legacy-panel-view`, `-q`); Scribe `above`/`below`;
   `--spread-shift`, `--one-page-landscape`, `--invert-direction`.
 - **Exit:** OPF spine/spread assertions across RTL/LTR/shift/one-page cases.
 
-**Delivered so far (document templating).** The OPF/NCX/NAV/XHTML/`style.css` skeletons are
-rendered from askama templates (`templates/`, `epub/templates.rs`), replacing the `push_str`
-chains; output is byte-identical and pinned by `tests/ebook_golden_tests.rs` (§13.10). The
-remaining Phase 6 scope (`Cover::process`, the Scribe `-above`/`-below` split, panel-view
-variant hardening) is still open.
+**Delivered.**
+- `processing/cover.rs` — `process` (the `Cover.process` port: autocontrast, optional
+  grayscale, `--smart-cover-crop`, `--cover-fill`/thumbnail to the profile) returning the
+  encoded cover plus KCC's `smartcover` flag. The tome `N/M` label is deferred to Phase 9
+  (§13.11.4).
+- `processing/page.rs` — the Kindle Scribe `-above`/`-below`/`-whole` split; shared
+  `pub(crate)` `thumbnail` and `autocontrast_preserve_tone` helpers (no new algorithm).
+- `output/epub/{mod,xhtml,opf}.rs` + `templates/page.xhtml` — the second `<img
+  style="top: 1920px">`, the summed viewport, the `-below` zip payload/manifest item, and
+  `-below` pages excluded from the spine/navigation.
+- Document templating (askama skeletons) landed earlier; see §13.10.
+
+Tests: `tests/ebook_epub_tests.rs` grew to 14 tests (Scribe above/below markup, manifest and
+spine; `-whole` naming; `--one-page-landscape`; `--spread-shift`; `--invert-direction`;
+`--two-panel`/`--vertical-4-panel`; the smart-cropped cover), plus unit tests in `cover.rs` and
+`page.rs`. Decisions recorded in §13.11.
 
 ### Phase 7 — CBZ, PDF, light-novel
 - CBZ output + `--keep-comicinfo`; PDF output; light-novel mode.
@@ -1214,8 +1266,8 @@ variant hardening) is still open.
 - **Exit:** structural readback of produced AZW3/MOBI (or `kindling dump`) + integration test.
 
 ### Phase 9 — Chunking, fusion, delete
-- `--target-size`, `--batch-split`, tome titles `[i/n]`, `--file-fusion` (+ `Covers/` fused
-  cover), `--delete`, `--temp-dir`.
+- `--target-size`, `--batch-split`, tome titles `[i/n]`, the cover `N/M` label (§13.11.4),
+  `--file-fusion` (+ `Covers/` fused cover), `--delete`, `--temp-dir`.
 - **Exit:** multi-tome output splits at the size boundary; fusion merges and orders inputs.
 
 ### Phase 10 — Webtoon

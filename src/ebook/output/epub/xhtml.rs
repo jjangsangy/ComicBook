@@ -4,8 +4,9 @@
 //! referenced through the `Images/` tree with one `../` per chapter level plus the
 //! implicit `Text/` level, and the `viewport`/`img` sizes come from the processed
 //! page's dimensions, halved-and-a-bit in `--hq` mode exactly as the reference
-//! does. Kindle Panel View markup is emitted when the profile and options enable
-//! it.
+//! does. A Kindle Scribe tall-page split adds a second `<img>` at `top: 1920px`, and
+//! the `viewport` spans both images. Kindle Panel View markup is emitted when the
+//! profile and options enable it.
 //!
 //! The document skeleton lives in `templates/page.xhtml`; this module computes the
 //! values it interpolates (AGENTS.md §5.3).
@@ -14,24 +15,27 @@ use askama::Template;
 
 use super::html_escape;
 use super::templates::{PageXhtml, PanelBox};
+use super::PageRef;
 use crate::ebook::model::PageFlags;
 use crate::ebook::options::Options;
 
 /// Build one page's XHTML (`buildHTML`).
 ///
-/// `image_dir` is the chapter directory relative to `OEBPS/Images` (`""` at the
-/// root), `file` the image file name and `stem` its extension-less form (both
-/// used as the reference does: the `<title>` and the XHTML file name come from the
-/// stem).
-pub(crate) fn build_xhtml(
-    image_dir: &str,
-    file: &str,
-    stem: &str,
-    width: u32,
-    height: u32,
-    flags: PageFlags,
-    options: &Options,
-) -> Vec<u8> {
+/// `page` carries the image's chapter directory (relative to `OEBPS/Images`), its
+/// file name and its extension-less stem (the `<title>` and the XHTML file name
+/// come from the stem), plus the optional second image of a Kindle Scribe tall-page
+/// split, laid out under the first at `top: 1920px`.
+pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Vec<u8> {
+    let PageRef {
+        image_dir,
+        file,
+        stem,
+        width,
+        height,
+        flags,
+        below,
+        ..
+    } = *page;
     let depth = image_dir
         .split('/')
         .filter(|segment| !segment.is_empty())
@@ -47,13 +51,16 @@ pub(crate) fn build_xhtml(
     let style_href = format!("{}style.css", "../".repeat(backref - 1));
     let image_src = format!("{}Images/{postfix}{file}", "../".repeat(backref));
 
+    // The viewport spans the stacked page (KCC's `imgsizeframe`), but each `<img>`
+    // keeps its own size.
+    let frame_height = height + below.map_or(0, |image| image.height);
     let (viewport_width, viewport_height) = if options.hq {
         (
             (f64::from(width) / 1.5).floor() as u32,
-            (f64::from(height) / 1.5).floor() as u32,
+            (f64::from(frame_height) / 1.5).floor() as u32,
         )
     } else {
-        (width, height)
+        (width, frame_height)
     };
 
     let body_style = if flags.black_background {
@@ -62,6 +69,18 @@ pub(crate) fn build_xhtml(
         ""
     };
     let title = html_escape(stem);
+
+    let (below_src, below_width, below_height) = match below {
+        Some(image) => {
+            let file = image.name.rsplit('/').next().unwrap_or(image.name.as_str());
+            (
+                format!("{}Images/{postfix}{file}", "../".repeat(backref)),
+                image.width,
+                image.height,
+            )
+        }
+        None => (String::new(), 0, 0),
+    };
 
     let panel = options.is_kindle && options.panel_view;
     let (boxes, panel_width, panel_height) = if panel {
@@ -80,6 +99,10 @@ pub(crate) fn build_xhtml(
         img_width: width,
         img_height: height,
         image_src: &image_src,
+        has_below: below.is_some(),
+        below_image_src: &below_src,
+        below_img_width: below_width,
+        below_img_height: below_height,
         panel,
         boxes: &boxes,
         panel_width,

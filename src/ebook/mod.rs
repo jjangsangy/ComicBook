@@ -7,9 +7,10 @@
 //! per-page image pipeline ([`processing`]) that turns a tree into encoded pages;
 //! Phase 3 adds cropping and enhancement; Phase 4 adds metadata resolution
 //! ([`metadata`]) and page/chapter naming ([`naming`]); Phase 5 adds the output
-//! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable. Later output
-//! formats (CBZ, PDF, Kindle) and features (chunking, fusion, webtoon) land in the
-//! phases that follow.
+//! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable; Phase 6 completes
+//! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
+//! spread variants. Later output formats (CBZ, PDF, Kindle) and features (chunking,
+//! fusion, webtoon) land in the phases that follow.
 //!
 //! # Exit codes
 //!
@@ -103,13 +104,18 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
 /// Run the full pipeline for one source, returning the output paths.
 ///
 /// This is KCC's `makeBook` without the per-source loop: load, resolve metadata,
-/// sanitize names, process the images, build the cover and write the output.
+/// sanitize names, build the cover, process the images and write the output.
 pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
     let mut prepared = prepare_book(source, options)?;
+    // The cover is processed from the source before the per-page pass mutates the
+    // first page (cropping), exactly as `makeBook` builds the `Cover` first.
+    let cover =
+        processing::cover::process(&prepared.tree, prepared.cover_override.as_deref(), options)?;
     let mut processed = processing::process_tree(&mut prepared.tree, options)?;
-    // Phase 5's cover placeholder; Phase 6's `Cover::process` replaces it.
-    processed.cover =
-        processing::cover::make_cover(&prepared.tree, prepared.cover_override.as_deref(), options)?;
+    if let Some(cover) = cover {
+        processed.cover = Some(cover.page);
+        processed.cover_smart_crop = cover.smart_cropped;
+    }
     output::write_book(&processed, &prepared, source, options)
 }
 

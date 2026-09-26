@@ -447,7 +447,7 @@ fn ignore_pixels_near_edge(bw: &mut GrayImage) {
 ///
 /// `f64::round_ties_even` is exactly Pillow's `round` (banker's rounding); see
 /// `pillow_round_is_half_to_even`.
-fn crop_rounded(
+pub(crate) fn crop_rounded(
     image: &DynamicImage,
     left: f64,
     upper: f64,

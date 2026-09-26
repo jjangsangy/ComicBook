@@ -21,7 +21,7 @@ use time::macros::format_description;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::ebook::model::{MediaType, PageFlags};
+use crate::ebook::model::{EncodedPage, MediaType, PageFlags};
 use crate::ebook::options::Options;
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
@@ -39,8 +39,8 @@ pub(crate) struct PageRef<'a> {
     pub height: u32,
     pub flags: PageFlags,
     pub media_type: MediaType,
-    /// The encoded image payload.
-    pub bytes: &'a [u8],
+    /// The `-below` companion of a Kindle Scribe `-above` page, if any.
+    pub below: Option<&'a EncodedPage>,
 }
 
 /// Build the EPUB for `book` and write it to `dest`.
@@ -55,6 +55,8 @@ pub fn build_epub(
     let modified = modified_timestamp();
 
     // Flatten the processed chapters into the page list KCC's `os.walk` produces.
+    // A Scribe `-below` image is skipped: it is only referenced from its `-above`
+    // page's XHTML/manifest entry, never a spine item of its own.
     let mut filelist: Vec<PageRef<'_>> = Vec::new();
     let mut chapter_starts: Vec<usize> = Vec::new();
     for chapter in &book.chapters {
@@ -63,7 +65,18 @@ pub fn build_epub(
         }
         let dir = chapter.name.trim_matches('/');
         chapter_starts.push(filelist.len());
-        for page in &chapter.pages {
+        let mut index = 0;
+        while index < chapter.pages.len() {
+            let page = &chapter.pages[index];
+            if page.flags.below {
+                index += 1;
+                continue;
+            }
+            let below = if page.flags.above {
+                chapter.pages.get(index + 1).filter(|next| next.flags.below)
+            } else {
+                None
+            };
             let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
             filelist.push(PageRef {
                 image_dir: dir,
@@ -73,8 +86,9 @@ pub fn build_epub(
                 height: page.height,
                 flags: page.flags,
                 media_type: page.media_type,
-                bytes: &page.bytes,
+                below,
             });
+            index += 1 + usize::from(below.is_some());
         }
     }
 
@@ -106,22 +120,20 @@ pub fn build_epub(
     if let Some(bytes) = cover {
         zip_entries.push(("OEBPS/Images/cover.jpg".to_string(), bytes.to_vec()));
     }
-    for page in &filelist {
-        zip_entries.push((
-            format!("OEBPS/{}/{}", images_dir(page.image_dir), page.file),
-            page.bytes.to_vec(),
-        ));
+    // Every processed page — including a Scribe `-below` companion — is written to
+    // `OEBPS/Images`, whether or not it is a spine item.
+    for chapter in &book.chapters {
+        let dir = chapter.name.trim_matches('/');
+        for page in &chapter.pages {
+            let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
+            zip_entries.push((
+                format!("OEBPS/{}/{}", images_dir(dir), file),
+                page.bytes.clone(),
+            ));
+        }
     }
     for page in &filelist {
-        let bytes = xhtml::build_xhtml(
-            page.image_dir,
-            page.file,
-            page.stem,
-            page.width,
-            page.height,
-            page.flags,
-            options,
-        );
+        let bytes = xhtml::build_xhtml(page, options);
         zip_entries.push((
             format!("OEBPS/{}/{}.xhtml", text_dir(page.image_dir), page.stem),
             bytes,

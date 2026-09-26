@@ -39,8 +39,11 @@ pub struct ProcessedChapter {
 #[derive(Debug, Clone)]
 pub struct ProcessedBook {
     pub chapters: Vec<ProcessedChapter>,
-    /// The processed cover, once Phase 6's `Cover::process` lands.
+    /// The processed cover, set by [`crate::ebook::convert_source`].
     pub cover: Option<EncodedPage>,
+    /// Whether `--smart-cover-crop` actually cropped the cover (KCC's
+    /// `Cover.smartcover`), which CBZ/PDF output tests before writing a cover.
+    pub cover_smart_crop: bool,
     /// Total encoded pages, which may exceed the source page count when spreads
     /// were bisected.
     pub page_count: usize,
@@ -88,6 +91,7 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
     Ok(ProcessedBook {
         chapters,
         cover: None,
+        cover_smart_crop: false,
         page_count,
     })
 }
