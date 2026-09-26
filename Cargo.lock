@@ -586,6 +586,8 @@ dependencies = [
  "lopdf",
  "natord",
  "pdf-writer",
+ "pdfboss-core",
+ "pdfboss-render",
  "png",
  "quantette",
  "quick-xml 0.37.5",
@@ -1395,6 +1397,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpeg-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1958,6 +1969,50 @@ dependencies = [
  "itoa",
  "memchr",
  "ryu",
+]
+
+[[package]]
+name = "pdfboss-core"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9e4502bb3545515ea1eb43e41756e5e8ffc8cd38306156f1ebf19eb0e5b81ed"
+dependencies = [
+ "flate2",
+ "getrandom 0.4.3",
+ "memchr",
+ "thiserror",
+]
+
+[[package]]
+name = "pdfboss-encoding"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b577ff52a43480107746d5e96acdf637d2772e5af600d6c8697aaa8dd98b503"
+
+[[package]]
+name = "pdfboss-icc"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1887b919095c203942901be61849fab27eb24027e07ba79e46818097fb9a6cc2"
+
+[[package]]
+name = "pdfboss-jpx"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88a00eee5bf0049ddf30cba4d58ccd388d9e8f02a6ff2a0d23c174a62a277c14"
+
+[[package]]
+name = "pdfboss-render"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60be6c25ec98258a9c4a2943187be447ed504a0ad9ee6e8192a69aaa735d98c4"
+dependencies = [
+ "jpeg-decoder",
+ "pdfboss-core",
+ "pdfboss-encoding",
+ "pdfboss-icc",
+ "pdfboss-jpx",
+ "png",
 ]
 
 [[package]]

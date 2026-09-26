@@ -17,7 +17,7 @@ pub mod webtoon;
 pub use page::process_page;
 
 use anyhow::Result;
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use rayon::prelude::*;
 
 use crate::ebook::model::{ComicTree, EncodedPage, Page};
@@ -151,4 +151,76 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) {
 /// Whether a page is detected as colour, for the first-page crop exemption.
 fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
     color::color_check(&image.to_rgb8(), page::is_grayscale_image(image), options)
+}
+
+/// KCC's `detectSuboptimalProcessing`: warnings about a source that is likely to
+/// convert poorly, emitted before the pages are renamed and processed.
+///
+/// Two conditions are checked (AGENTS.md §13.16):
+///
+/// - any source page name already carries KCC's `-kcc` order suffix, so it is
+///   probably KCC output and a second conversion will lose quality;
+/// - more than 25% of pages are smaller than the target device resolution, and
+///   neither `--upscale`/`--stretch` nor a Scribe (`KS*`) profile is in effect.
+///
+/// The reference's third behaviour — rejecting zero-byte or undecodable images —
+/// is already enforced while the source is decoded (AGENTS.md §13.16).
+pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    let mut image_number: u64 = 0;
+    let mut image_smaller: u64 = 0;
+    let mut already_processed = false;
+    let mut any_page = false;
+
+    for chapter in &tree.chapters {
+        for page in &chapter.pages {
+            any_page = true;
+            if !already_processed && file_stem(&page.rel_path).contains("-kcc") {
+                already_processed = true;
+            }
+            let (width, height) = page.image.dimensions();
+            image_number += 1;
+            if options.profile_data.width > width && options.profile_data.height > height {
+                image_smaller += 1;
+            }
+        }
+    }
+
+    if !any_page {
+        return warnings;
+    }
+
+    if already_processed {
+        warnings.push(
+            "WARNING: Source files are probably created by KCC. \
+             The second conversion will decrease quality."
+                .to_string(),
+        );
+    }
+
+    // `imageSmaller > imageNumber * 0.25` compares floats in the reference; the
+    // integer form below is exact and avoids the exact-multiple edge case.
+    if image_smaller * 4 > image_number
+        && !options.upscale
+        && !options.stretch
+        && !options.profile.is_scribe()
+    {
+        warnings.push(
+            "WARNING: More than 25% of images are smaller than target device resolution. \
+             Consider enabling stretching or upscaling to improve readability."
+                .to_string(),
+        );
+    }
+
+    warnings
+}
+
+/// A page file name without its final extension.
+fn file_stem(name: &str) -> &str {
+    let base = name.rsplit('/').next().unwrap_or(name);
+    match base.rfind('.') {
+        Some(index) if index > 0 => &base[..index],
+        _ => base,
+    }
 }

@@ -103,7 +103,7 @@ fn cbz_repackage_loads_back_into_the_processed_tree() {
     assert!(!entries.iter().any(|name| name == "ComicInfo.xml"));
 
     // The repackaged archive loads back into the same chapters and pages.
-    let tree = load_tree(&written[0]).unwrap();
+    let tree = load_tree(&written[0], &options(&[])).unwrap();
     assert_eq!(
         shape(&tree),
         vec![

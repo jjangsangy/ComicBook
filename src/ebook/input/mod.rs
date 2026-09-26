@@ -1,7 +1,7 @@
 //! Input adapters: turn each supported source into a [`ComicTree`].
 //!
-//! Archives and image folders are handled by [`archive`] (Phase 1); the EPUB and
-//! PDF adapters land in Phase 11.
+//! Archives and image folders are handled by [`archive`] (Phase 1); the EPUB
+//! (spine-ordered) and PDF (embedded-image/rasterised) adapters land in Phase 11.
 
 pub mod archive;
 pub mod epub;
@@ -13,6 +13,7 @@ use std::path::Path;
 
 use crate::archive::{detect_archive_kind, ArchiveKind};
 use crate::ebook::model::ComicTree;
+use crate::ebook::options::Options;
 
 /// The kind of input a source path resolves to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,14 +47,19 @@ pub fn detect_source_kind(source: &Path) -> Option<SourceKind> {
 }
 
 /// Load one source into a [`ComicTree`].
-pub fn load_tree(source: &Path) -> Result<ComicTree> {
+///
+/// `options` supplies the PDF adapter's render geometry (`--pdf-width`,
+/// `--legacy-extract`, the profile size and the crop multiplier) and lets the
+/// EPUB adapter fall back to plain extraction under `--legacy-extract`/
+/// `--light-novel`, exactly as KCC's `getWorkFolder` does.
+pub fn load_tree(source: &Path, options: &Options) -> Result<ComicTree> {
     if !source.exists() {
         bail!("Failed to open source file/directory: {}", source.display());
     }
     match detect_source_kind(source) {
         Some(SourceKind::Archive(kind)) => archive::load(source, kind),
-        Some(SourceKind::Epub) => epub::load(source),
-        Some(SourceKind::Pdf) => pdf::load(source),
+        Some(SourceKind::Epub) => epub::load(source, options),
+        Some(SourceKind::Pdf) => pdf::load(source, options),
         None => bail!(
             "Unsupported input '{}': expected a comic archive (.cbz/.cbr/.cb7/.cbt), \
              an image folder, or an .epub/.pdf file",

@@ -350,3 +350,19 @@ fn mozjpeg_is_rejected_with_a_clear_message() {
     let err = resolve_err(&["book.cbz", "--mozjpeg"]);
     assert!(err.to_string().contains("--mozjpeg is not supported"));
 }
+
+#[test]
+fn ebook_is_registered_in_completions_with_its_input_flags() {
+    let command = Cli::command();
+    let ebook = command
+        .get_subcommands()
+        .find(|sub| sub.get_name() == "ebook")
+        .expect("the ebook subcommand is registered");
+    let flags: Vec<String> = ebook
+        .get_arguments()
+        .map(|arg| arg.get_id().to_string())
+        .collect();
+    for expected in ["legacy_extract", "pdf_width", "profile", "format"] {
+        assert!(flags.contains(&expected.to_string()), "missing {expected}");
+    }
+}

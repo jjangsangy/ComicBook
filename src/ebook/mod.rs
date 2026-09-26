@@ -12,7 +12,9 @@
 //! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`; Phase 8
 //! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`); Phase 9 adds
 //! tome chunking ([`chunk`]), `--file-fusion` and `--delete`; Phase 10 adds
-//! `--webtoon` ([`processing::webtoon`]).
+//! `--webtoon` ([`processing::webtoon`]); Phase 11 adds the EPUB (spine-ordered) and PDF
+//! (embedded-image/rasterised) input adapters ([`input`]) and KCC's
+//! `detectSuboptimalProcessing` warnings.
 //!
 //! # Exit codes
 //!
@@ -61,7 +63,7 @@ pub struct PreparedBook {
 
 /// Load a source, resolve its metadata and sanitize its chapter/page names.
 pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
-    let tree = input::load_tree(source)?;
+    let tree = input::load_tree(source, options)?;
     let cover_override = naming::select_cover(source);
     Ok(assemble(tree, cover_override, source, options, None, false))
 }
@@ -95,7 +97,7 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
 /// pipeline. `--delete` is not honoured here, matching the reference, whose fused
 /// run deletes only its own scratch tree, never the user's sources.
 fn run_fusion(options: &Options) -> Result<()> {
-    let fused = input::fusion::build(&options.inputs)?;
+    let fused = input::fusion::build(&options.inputs, options)?;
 
     // KCC defaults a fused run's output directory to the first source's directory
     // (`options.output = fusion_source_parent`).
@@ -132,7 +134,7 @@ pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> 
         return output::lightnovel::convert(source, options);
     }
 
-    let tree = input::load_tree(source)?;
+    let tree = input::load_tree(source, options)?;
     let cover_override = naming::select_cover(source);
     let prepared = assemble(tree, cover_override, source, options, None, false);
     convert_prepared(prepared, source, options)
@@ -152,6 +154,11 @@ fn assemble(
     fusion: bool,
 ) -> PreparedBook {
     let metadata = metadata::resolve_with(&tree, source, options, default_title);
+    // KCC warns about a likely-degraded conversion after the tree is extracted but
+    // before it is renamed (`detectSuboptimalProcessing`).
+    for warning in processing::detect_suboptimal_processing(&tree, options) {
+        progress::warn(&warning);
+    }
     let mut sanitized = naming::sanitize_tree(&mut tree, options);
     if fusion {
         for title in sanitized.chapter_titles.values_mut() {

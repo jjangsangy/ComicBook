@@ -32,7 +32,7 @@ const KINDLE_MAX_DIMENSION: u32 = 1920;
 
 /// Convert `source` in light-novel mode, returning the output path(s).
 pub fn convert(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
-    let tree = input::load_tree(source)?;
+    let tree = input::load_tree(source, options)?;
     let bounds = resize_bounds(options);
 
     // Parallelise within each chapter and collect in reading order, matching the

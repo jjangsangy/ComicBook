@@ -52,3 +52,15 @@ pub fn spinner(message: impl Into<String>) -> ProgressBar {
 pub fn hidden() -> ProgressBar {
     ProgressBar::with_draw_target(None, ProgressDrawTarget::hidden())
 }
+
+/// Print a warning to stderr, unless `COMIC_BOOK_QUIET` is set.
+///
+/// Warnings are diagnostic rather than progress, so they are not suppressed when
+/// stderr is not a terminal (KCC prints its `detectSuboptimalProcessing` warnings
+/// on every run); `COMIC_BOOK_QUIET` still silences them for scripted callers.
+pub fn warn(message: &str) {
+    if std::env::var_os(QUIET_ENV).is_some() {
+        return;
+    }
+    eprintln!("{message}");
+}

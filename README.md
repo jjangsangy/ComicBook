@@ -124,6 +124,7 @@ Usage: comic-book <COMMAND>
 Commands:
   convert      Convert different archive formats (cbr, cbz, etc..)
   clamp        Clamp image sizes in comic archives to all be under a size threshold
+  ebook        Convert comics into e-book formats (epub, kepub, azw3, mobi, pdf, cbz)
   completions  Generate shell completion scripts (alias: completion)
   help         Print this message or the help of the given subcommand(s)
 
@@ -211,7 +212,62 @@ comic-book clamp ~/Comics/Issue1.cbz -o Clamped -s 1200 -a max-width -w 4
 
 ---
 
-### 3. `completions` — Shell Autocompletions
+### 3. `ebook` — Comic to E-book Conversion
+
+Convert comic archives (`.cbz`/`.cbr`/`.cb7`/`.cbt`), image folders, and (as input)
+`.epub`/`.pdf` files into e-book formats for Kindle, Kobo, reMarkable and generic EPUB
+readers. Everything — archive extraction, image processing, EPUB/PDF/MOBI building and PDF
+rasterisation — is compiled into the binary: no `7z`, `unrar`, `kindlegen`, ImageMagick or
+other external program is required.
+
+```bash
+comic-book ebook [OPTIONS] <INPUT>...
+```
+
+#### Output formats (`-f/--format`)
+
+| Value | Meaning |
+|:---|:---|
+| `auto` (default) | MOBI for Kindle profiles, PDF for reMarkable, otherwise EPUB |
+| `epub` | fixed-layout EPUB 3 |
+| `kepub` | KePub (`.kepub.epub` for Kobo) |
+| `azw3` / `mobi` | Kindle KF8 (`.azw3`) or dual MOBI7+KF8 (`.mobi`) |
+| `mobi+epub` | keep the intermediate EPUB alongside the MOBI |
+| `cbz` / `pdf` | repackaged images, or a PDF |
+| `kfx` | EPUB preset for Calibre's KFX Output plugin |
+| `epub-200mb` / `pdf-200mb` / `mobi+epub-200mb` | size-capped presets |
+
+#### Inputs
+
+- Comic archives `.cbz`/`.zip`, `.cbr`/`.rar`, `.cb7`/`.7z`, `.cbt`/`.tar`, and image folders.
+- EPUBs (spine-ordered images) and PDFs (embedded images extracted, vector pages rasterised).
+- A folder of comics is expanded; `--file-fusion` combines several inputs into one book.
+
+#### Examples
+
+```bash
+# A CBZ to its default e-book for the default Kindle profile
+comic-book ebook Issue_01.cbz
+
+# Right-to-left manga at a fixed size for Kobo
+comic-book ebook "Vol 1.cbz" -m -p KoE --target-size 100
+
+# AZW3 for a Kindle, with panel view
+comic-book ebook Issue_01.cbz -f azw3 -q
+
+# A PDF (vector pages rasterised) into an EPUB
+comic-book ebook scan.pdf -f epub
+
+# Merge several sources into a single book
+comic-book ebook ch1.cbz ch2.cbz ch3.cbz --file-fusion -t "Omnibus"
+```
+
+Run `comic-book ebook --help` for the full option set (profiles, cropping, colour handling,
+Panel View, webtoon mode, chunking and more).
+
+---
+
+### 4. `completions` — Shell Autocompletions
 
 Generate completion scripts for your shell.
 

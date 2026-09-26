@@ -450,7 +450,7 @@ Add (verify licenses; prefer pure Rust):
 | `rustfft` | moiré FFT (`rainbow_artifacts_eraser`) | MIT/Apache |
 | `ab_glyph` (via imageproc) | tome-number cover text (deferred to Phase 9; §13.11.4) | MIT/Apache |
 | `slug` or small custom fn | chapter slugify parity with python-slugify | MIT/Apache |
-| `lopdf` and/or `pdf-render`/`pdfboss-render` | PDF input (extract/render), pure Rust | verify |
+| `lopdf` and/or `pdfboss-render` | PDF input (extract/render), pure Rust | `pdfboss-render`+`-core` adopted (Phase 11); `lopdf` dev-only |
 | `printpdf` or `pdf-writer` | PDF output | MIT |
 | `flate2` | EPUB deflate (likely already transitive) | MIT/Apache |
 
@@ -516,6 +516,14 @@ split book's cover (AGENTS.md §13.14.3). It ships its 8x8 bitmap font *in sourc
 asset is committed and no external program is needed; the reference's Pillow face cannot be
 matched exactly, so the label keeps KCC's position/size/colours and differs only in glyph
 shapes. `bitvec`, already present, was not needed here.
+
+**Added in Phase 11.** `pdfboss-render = "2.11"` (MIT OR Apache-2.0, pure Rust) rasterises
+PDF pages, and its sibling `pdfboss-core = "2.11"` (MIT OR Apache-2.0, pure Rust; deps only
+`flate2`/`getrandom`/`memchr`/`thiserror`) supplies the `Document`/`Page` handles. Together
+they replace MuPDF for the PDF input adapter (§8, §13.16.2), exactly as §20.3 anticipated
+(satisfying the “no external programs” rule — no `pdfium`/`mupdf` platform binaries). The
+legacy `--legacy-extract` path needs no dependency; it is a byte scan (`pdfjpgextract`). The
+EPUB adapter uses the existing `zip` reader and `quick-xml` (§7, Phase 4).
 
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
@@ -742,8 +750,9 @@ smaller ones (§13.3). The rest remain open (§13.2).
 
 ### 13.2 Still open
 
-3. **PDF input depth.** Start with embedded-JPEG extraction (pure Rust); decide whether to
-   add a pure-Rust rasterizer for vector PDFs.
+3. **PDF input depth — RESOLVED in Phase 11 (§13.16.2).** Extraction *and* a pure-Rust
+   rasterizer are implemented: `pdfboss-render` renders vector pages and decodes embedded
+   images, with the raw `pdfjpgextract` byte scan kept for `--legacy-extract`.
 4. **Memory policy.** Default in-memory vs. spool-to-temp for large inputs; choose the
    spill budget and flag.
 5. **`--mozjpeg` — RESOLVED in Phase 0 (§13.3.1).** Drop with a clear message; no mozjpeg
@@ -1261,6 +1270,41 @@ the safety net the swaps rely on.
    checker-boarded so the edge map is deterministic and the values were derived with the throwaway
    Python environment of §20.4.
 
+### 13.16 Phase 11 decisions (PDF/EPUB input, warnings, polish)
+
+1. **Every adapter now feeds one shared tree builder.** `input/archive.rs` exposes
+   `decode_page`/`build_tree` (`pub(crate)`), so the archive, EPUB and PDF adapters all decode into
+   the same `LoadedPage` list and reuse the chapter-grouping/natural-ordering logic. `load_tree`
+   gained an `&Options` argument (threaded through `fusion`, `lightnovel` and `mod.rs`), because the
+   PDF adapter needs `--legacy-extract`/`--pdf-width`/the profile geometry and the EPUB adapter needs
+   the legacy/light-novel fallback (AGENTS.md §5.1: one decode, no temp tree).
+2. **PDF input uses the pure-Rust `pdfboss` rasterizer (new deps).** `--legacy-extract` is the raw
+   `pdfjpgextract` byte scan (no dependency). The default path opens the document with
+   `pdfboss_core::Document`, and per page extracts its single embedded image when it draws exactly
+   one (`extract_page_images`) or rasterises the page otherwise (`render_page`) at KCC's target zoom —
+   fit height, or fit width for a portrait page under `--pdf-width`, with the `cropping` 1.2×/1.25×
+   margin allowance. This replaces MuPDF without a platform binary (§7, §20.3), keeping the
+   “no external programs” rule. Documented deviation: the reference's extra text/CCITT render
+   triggers are not reproduced (page text is not cheaply detectable, and pdfboss decodes CCITT),
+   and an extracted image is re-encoded as PNG rather than copied with its original extension, so the
+   decision reduces to “one drawn image → extract, otherwise render”.
+3. **EPUB input walks the OPF spine in memory.** `input/epub.rs` reads the container's
+   `META-INF/container.xml` and OPF with a lenient namespace-insensitive `quick-xml` tag scan,
+   follows the spine, and keeps the largest image each page's `<img>`/`<image>` references
+   (resolving `../` against the page directory), copied flat as `0.ext`, `1.ext`, … like KCC. A spine
+   that yields no image falls back to plain archive extraction (KCC's `return workdir`); so do
+   `--legacy-extract` and `--light-novel`, which KCC routes past the spine branch. A missing
+   container/OPF still errors, matching the reference's unguarded `ElementTree.parse`.
+4. **`detectSuboptimalProcessing` is a pure function plus a printer.**
+   `processing::detect_suboptimal_processing(&tree, &options)` returns the warning strings
+   (KCC-made sources via a `-kcc` page suffix; >25% of pages smaller than the device in both
+   dimensions unless `--upscale`/`--stretch`/a `KS*` profile). `assemble` calls it before
+   `sanitize_tree`, where `makeBook` does, and prints each through the new `progress::warn` (stderr,
+   silenced by `COMIC_BOOK_QUIET`). The reference's zero-byte/undecodable-image rejection is already
+   enforced while decoding (§13.4).
+5. **Polish.** The `ebook` subcommand and its `--legacy-extract`/`--pdf-width` flags are exercised
+   through the shared `completions` generator (no code change needed) and documented in the README.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
@@ -1550,10 +1594,34 @@ Tests: `tests/ebook_webtoon_tests.rs` (3 tests — end-to-end strip split with n
 pinning the merge and the exact virtual-page sizes KCC produced (780/525, three 1080s, three 1253s,
 800×1500) and the 1072px virtual-height cap. Decisions recorded in §13.15.
 
-### Phase 11 — PDF/EPUB input, polish
+### Phase 11 — PDF/EPUB input, polish (complete)
 - PDF input (extract, optional render), EPUB input (spine order), legacy extract,
   `--pdf-width`; `detectSuboptimalProcessing` warnings; completions/docs; README section.
 - **Exit:** all input kinds covered; warnings match KCC semantics.
+
+**Delivered.**
+- `input/epub.rs` — `load`: reads `META-INF/container.xml` + the OPF with a lenient,
+  namespace-insensitive `quick-xml` scan, walks the spine, keeps the largest image each
+  XHTML page references (resolving `../`), and copies them flat as `0.ext`, `1.ext`, …;
+  falls back to plain archive extraction when the spine yields no image (and for
+  `--legacy-extract`/`--light-novel`), matching KCC's `getWorkFolder`.
+- `input/pdf.rs` — `load`: `--legacy-extract` runs the raw `pdfjpgextract` byte scan
+  (`legacy_extract`), otherwise the pure-Rust `pdfboss` rasterizer (`rasterize`) extracts a
+  page's single embedded image or renders it at KCC's target zoom (fit height, or width for a
+  portrait page under `--pdf-width`, with the crop margin multiplier).
+- `input/archive.rs` — `decode_page`/`build_tree` are now `pub(crate)` so all three adapters
+  share one decode → chapter-group → [`ComicTree`] path; `input::load_tree` takes `&Options`
+  (threaded through `fusion`, `lightnovel` and `mod.rs`).
+- `processing/mod.rs` — `detect_suboptimal_processing` (the `detectSuboptimalProcessing`
+  port) plus `progress::warn`; `assemble` runs it before `sanitize_tree`.
+- README — an `ebook` command section.
+
+Tests: `tests/ebook_input_epub_pdf_tests.rs` (EPUB spine order/largest-image/fallback/
+non-image-reference/legacy-extract and end-to-end conversion; PDF embedded extraction, vector
+rasterisation at the KV target, legacy JPEG scan and end-to-end conversion), the
+`detectSuboptimalProcessing` cases in `tests/ebook_processing_tests.rs` (the four warning
+conditions), a completions/`--legacy-extract`/`--pdf-width` check in `tests/ebook_tests.rs`,
+plus unit tests in `epub.rs`/`pdf.rs`. Decisions recorded in §13.16.
 
 ### Phase 12 — Hardening
 - Fuzz/robustness on malformed archives; large-book memory test; cross-platform verification;
@@ -1649,7 +1717,8 @@ first (§5.3). Concretely:
   hand-written but delegates the container to `zip` and the document strings to plain
   formatting; `tests/ebook_epub_tests.rs` pins the container→OPF→spine→XHTML→image
   structure. Revisit only if a crate gains fixed-layout control.
-- `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `lopdf` / `pdf-render` (§7).
+- `input/pdf.rs` / `output/pdf.rs` (Phases 7/11) → `pdf-writer` (output), `pdfboss-render`/`pdfboss-core`
+  (input rendering/extraction), `lopdf` (dev-only readback). **Done** (§13.12, §13.16.2).
 
 - **Exit:** every swap/consolidation is a separate no-behaviour-change commit that keeps
   `cargo nextest run` (including `tests/ebook_crop_tests.rs` and `tests/ebook_processing_tests.rs`)
@@ -1761,7 +1830,7 @@ but these are the candidates §7 depends on.
 | `boko` | 0.5.x | **GPL-3.0-or-later** | EPUB/AZW3/KFX reader+writer, pure Rust. KFX/AZW3 **write** support would be valuable, but the GPL-3 license is incompatible with this repo's MIT policy — **do not depend on it** unless the project relicenses. |
 | `epub3-kindle` | 0.4.x | verify | Alternative EPUB3→KF8/dual-MOBI converter if `kindling-mobi`'s API does not fit. |
 | `mobi` | 0.8.0 | MIT/Apache | MOBI **reader** only (useful for structural readback tests, not encoding). |
-| `pdfboss-render` | 2.11.x | verify | Pure-Rust PDF rasterize + embedded-image extract — candidate back end for vector PDF input (P2). |
+| `pdfboss-render` | 2.11.x | **MIT OR Apache-2.0** | Pure-Rust PDF rasterize + embedded-image extract. **Adopted in Phase 11 (§7, §13.16.2)** together with `pdfboss-core` 2.11 (MIT OR Apache-2.0; deps only `flate2`/`getrandom`/`memchr`/`thiserror`) for the PDF input adapter, replacing MuPDF without a platform binary. |
 | `pdf-render` | 1.0.0 | verify | Pure-Rust PDF rasterizer — alternate candidate. |
 | `fop-pdf-renderer` / `fop-render` | 0.1.x | Apache-2.0 | Pure-Rust PDF-to-image (from Apache FOP port); lower maturity. |
 
@@ -1801,6 +1870,14 @@ intact (verified by `tests/ebook_kindle_tests.rs`).
 rasterisation (imageproc 0.27 dropped its `ab_glyph`-based `draw_text`, and no font crate was
 in the tree) — but it ships its bitmap font in source, so no TTF asset is committed and the
 label stays MIT-only and asset-free.
+
+**Adopted in Phase 11.** `pdfboss-render = "2.11"` and `pdfboss-core = "2.11"` (both
+MIT OR Apache-2.0, pure Rust) for PDF input (§7, §13.16.2): the rasterizer renders vector
+pages and `extract_page_images` decodes embedded images, so MuPDF is replaced without a
+platform binary. This is the §20.3 `pdfboss-render` row finally being taken up (it was listed
+as the P2 vector-PDF candidate). `pdfboss-core`'s only normal dependencies are
+`flate2`/`getrandom`/`memchr`/`thiserror`. No new crate was needed for EPUB input: the existing
+`zip` reader and `quick-xml` (Phase 4) suffice.
 
 ### 20.4 Running Python tooling in a throwaway environment
 

@@ -58,16 +58,7 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
             return Ok(());
         }
         if is_ebook_image(name) {
-            let image = image::load_from_memory(data)
-                .with_context(|| format!("Image file {name} could not be decoded"))?;
-            pages.push(LoadedPage {
-                name: name.to_string(),
-                image,
-                media_type: image_extension(name).and_then(|ext| MediaType::from_extension(&ext)),
-                // Retained so `--no-processing` can emit the page untouched and
-                // later phases can copy bytes that need no transform (§5.1.5).
-                raw: data.to_vec(),
-            });
+            pages.push(decode_page(name, data)?);
         }
         Ok(())
     })?;
@@ -84,24 +75,55 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
 
     // KCC flattens a single top-level folder when extracting an archive, but
     // copies a folder source verbatim. Mirror both.
-    if kind != ArchiveKind::Directory {
-        strip_common_root(&mut pages);
-    }
+    Ok(build_tree(pages, comicinfo, kind != ArchiveKind::Directory))
+}
 
-    Ok(ComicTree {
-        chapters: group_into_chapters(pages),
-        cover: Some(CoverSource::FirstPage),
-        comicinfo,
+/// A page decoded from a source entry, before chapter grouping.
+///
+/// Shared by every input adapter (archive, EPUB, PDF) so they all feed the same
+/// chapter-grouping/natural-ordering logic.
+pub(crate) struct LoadedPage {
+    /// Book-relative source path (before redundant-root stripping).
+    pub(crate) name: String,
+    pub(crate) image: DynamicImage,
+    pub(crate) media_type: Option<MediaType>,
+    pub(crate) raw: Vec<u8>,
+}
+
+/// Decode one encoded image entry into a [`LoadedPage`].
+///
+/// Keeps the source bytes on the page so `--no-processing` can emit them
+/// untouched (AGENTS.md §13.5.1); the media type is inferred from the name's
+/// extension, which is how the OPF manifest later learns the payload's type.
+pub(crate) fn decode_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
+    let image = image::load_from_memory(data)
+        .with_context(|| format!("Image file {name} could not be decoded"))?;
+    Ok(LoadedPage {
+        name: name.to_string(),
+        image,
+        media_type: image_extension(name).and_then(|ext| MediaType::from_extension(&ext)),
+        raw: data.to_vec(),
     })
 }
 
-/// A page decoded straight from a source entry, before chapter grouping.
-struct LoadedPage {
-    /// Book-relative source path (before redundant-root stripping).
-    name: String,
-    image: DynamicImage,
-    media_type: Option<MediaType>,
-    raw: Vec<u8>,
+/// Group decoded pages into naturally ordered chapters and finish a [`ComicTree`].
+///
+/// `strip_root` mirrors KCC's archive-only flattening of a single redundant
+/// top-level folder (AGENTS.md §13.4.4); callers that synthesize a flat page list
+/// (EPUB spine, PDF pages) pass `false` because there is nothing to strip.
+pub(crate) fn build_tree(
+    mut pages: Vec<LoadedPage>,
+    comicinfo: Option<Vec<u8>>,
+    strip_root: bool,
+) -> ComicTree {
+    if strip_root {
+        strip_common_root(&mut pages);
+    }
+    ComicTree {
+        chapters: group_into_chapters(pages),
+        cover: Some(CoverSource::FirstPage),
+        comicinfo,
+    }
 }
 
 /// The extension of `name` (after the final `.`), lower-cased, if any.
@@ -115,7 +137,7 @@ fn image_extension(name: &str) -> Option<String> {
 }
 
 /// Whether `name` looks like an image KCC would keep (`shared.IMAGE_TYPES`).
-fn is_ebook_image(name: &str) -> bool {
+pub(crate) fn is_ebook_image(name: &str) -> bool {
     image_extension(name)
         .map(|ext| EBOOK_IMAGE_EXTENSIONS.contains(&ext.as_str()))
         .unwrap_or(false)

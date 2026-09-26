@@ -165,10 +165,11 @@ fn process_fixture(name: &str, args: &[&str]) -> Vec<(u32, u32)> {
     fs::create_dir_all(&source).unwrap();
     fs::copy(fixture_path(name), source.join("page.png")).unwrap();
 
-    let mut tree = load_tree(&source).unwrap();
     let mut full = vec!["-p", "KoE"];
     full.extend_from_slice(args);
-    let book = process_tree(&mut tree, &options(&full)).unwrap();
+    let options = options(&full);
+    let mut tree = load_tree(&source, &options).unwrap();
+    let book = process_tree(&mut tree, &options).unwrap();
 
     assert_eq!(book.page_count, 1);
     book.chapters

@@ -60,7 +60,7 @@ fn chapters_and_pages_are_renamed() {
     write_png(&source.join("Chapter 1/page2.png"));
     write_png(&source.join("Chapter 1/page3.png"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     let sanitized = sanitize_tree(&mut tree, &options(&["-f", "epub"]));
 
     assert_eq!(
@@ -93,7 +93,7 @@ fn page_numbering_is_global_and_lowercases_the_extension() {
     write_png(&source.join("A1.PNG"));
     write_png(&source.join("Chapter 1/B1.PNG"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     sanitize_tree(&mut tree, &options(&["-f", "epub"]));
 
     assert_eq!(
@@ -116,7 +116,7 @@ fn unsorted_chapters_get_zero_padded_numbers() {
     write_png(&source.join("Chapter 2/b.png"));
     write_png(&source.join("Chapter 10/c.png"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     sanitize_tree(&mut tree, &options(&["-f", "epub"]));
 
     let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
@@ -130,7 +130,7 @@ fn cbz_keeps_naturally_ordered_directory_names() {
     write_png(&source.join("Chapter 1/a.png"));
     write_png(&source.join("Chapter 2/b.png"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     sanitize_tree(&mut tree, &options(&["-p", "KDX"]));
 
     let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
@@ -145,7 +145,7 @@ fn cbz_still_pads_unsorted_directory_numbers() {
     write_png(&source.join("Chapter 2/b.png"));
     write_png(&source.join("Chapter 10/c.png"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     sanitize_tree(&mut tree, &options(&["-p", "KDX"]));
 
     let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
@@ -161,7 +161,7 @@ fn colliding_slugs_get_an_a_suffix() {
     write_png(&source.join("foo-bar/a.png"));
     write_png(&source.join("foo_bar/b.png"));
 
-    let mut tree = load_tree(&source).unwrap();
+    let mut tree = load_tree(&source, &options(&[])).unwrap();
     sanitize_tree(&mut tree, &options(&["-f", "epub"]));
 
     let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
@@ -178,8 +178,8 @@ fn sanitize_keeps_an_archive_and_a_folder_in_step() {
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let mut from_folder = load_tree(&source).unwrap();
-    let mut from_archive = load_tree(&archive).unwrap();
+    let mut from_folder = load_tree(&source, &options(&[])).unwrap();
+    let mut from_archive = load_tree(&archive, &options(&[])).unwrap();
     let opts = options(&["-f", "epub"]);
     sanitize_tree(&mut from_folder, &opts);
     sanitize_tree(&mut from_archive, &opts);

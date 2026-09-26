@@ -2,13 +2,25 @@
 //! folder must load into an identical, naturally ordered [`ComicTree`]
 //! (AGENTS.md §15).
 
+use clap::Parser;
 use comic_book::archive::{compress_archive, ArchiveKind};
+use comic_book::cli::Cli;
 use comic_book::ebook::input::{detect_source_kind, load_tree, SourceKind};
 use comic_book::ebook::model::{ComicTree, CoverSource};
+use comic_book::ebook::options::Options;
 use image::{DynamicImage, GenericImageView, RgbImage};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+
+/// Resolve the default option set for a `comic-book ebook` run.
+fn options() -> Options {
+    let cli = Cli::try_parse_from(["comic-book", "ebook", "book.cbz"]).expect("CLI parses");
+    match cli.command {
+        comic_book::cli::Commands::Ebook(args) => Options::resolve(&args).expect("resolves"),
+        _ => unreachable!(),
+    }
+}
 
 /// A chapter's name plus its pages' `(file name, width, height)`.
 type ChapterShape = (String, Vec<(String, u32, u32)>);
@@ -67,8 +79,9 @@ fn build_variants(root: &Path, layout: &[(&str, u32, u32)]) -> Vec<(ArchiveKind,
 
 /// Assert every variant loads into exactly `expected`.
 fn assert_variants_match(variants: &[(ArchiveKind, PathBuf)], expected: &[ChapterShape]) {
+    let options = options();
     for (kind, path) in variants {
-        let tree = load_tree(path).unwrap_or_else(|err| panic!("{kind:?}: {err}"));
+        let tree = load_tree(path, &options).unwrap_or_else(|err| panic!("{kind:?}: {err}"));
         assert_eq!(&tree_shape(&tree), expected, "shape mismatch for {kind:?}");
         let pages: usize = tree.chapters.iter().map(|c| c.pages.len()).sum();
         assert_eq!(pages, tree.page_count(), "page_count mismatch for {kind:?}");
@@ -159,7 +172,7 @@ fn archive_wrapper_directory_is_flattened() {
     let archive = tmp.path().join("wrap.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let tree = load_tree(&archive).unwrap();
+    let tree = load_tree(&archive, &options()).unwrap();
     assert_eq!(
         tree_shape(&tree),
         vec![(
@@ -179,7 +192,7 @@ fn image_folder_keeps_a_single_subdirectory_as_a_chapter() {
     let source = tmp.path().join("manga");
     write_png(&source.join("book/page1.png"), 10, 10);
 
-    let tree = load_tree(&source).unwrap();
+    let tree = load_tree(&source, &options()).unwrap();
     assert_eq!(
         tree_shape(&tree),
         vec![("book".to_string(), vec![("page1.png".to_string(), 10, 10)])]
@@ -199,7 +212,7 @@ fn non_images_and_os_junk_are_dropped() {
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let tree = load_tree(&archive).unwrap();
+    let tree = load_tree(&archive, &options()).unwrap();
     assert_eq!(
         tree_shape(&tree),
         vec![(String::new(), vec![("page1.png".to_string(), 10, 10)])]
@@ -216,7 +229,7 @@ fn comicinfo_is_captured_and_not_a_page() {
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let tree = load_tree(&archive).unwrap();
+    let tree = load_tree(&archive, &options()).unwrap();
     assert_eq!(
         tree_shape(&tree),
         vec![(String::new(), vec![("page1.png".to_string(), 10, 10)])]
@@ -230,7 +243,7 @@ fn source_names_are_book_relative() {
     let source = tmp.path().join("src");
     write_png(&source.join("Chapter 1/page.png"), 5, 5);
 
-    let tree = load_tree(&source).unwrap();
+    let tree = load_tree(&source, &options()).unwrap();
     let page = &tree.chapters[0].pages[0];
     assert_eq!(page.source_name, "Chapter 1/page.png");
     assert_eq!(page.rel_path, "page.png");
@@ -264,12 +277,12 @@ fn detect_source_kind_classifies_inputs() {
 fn missing_and_unsupported_sources_error() {
     let tmp = tempdir().unwrap();
 
-    let missing = load_tree(&tmp.path().join("nope.cbz")).unwrap_err();
+    let missing = load_tree(&tmp.path().join("nope.cbz"), &options()).unwrap_err();
     assert!(missing.to_string().contains("Failed to open source"));
 
     let text = tmp.path().join("notes.txt");
     fs::write(&text, b"hello").unwrap();
-    let unsupported = load_tree(&text).unwrap_err();
+    let unsupported = load_tree(&text, &options()).unwrap_err();
     assert!(unsupported.to_string().contains("Unsupported input"));
 }
 
@@ -279,23 +292,28 @@ fn empty_folder_reports_no_images() {
     let source = tmp.path().join("empty");
     fs::create_dir_all(&source).unwrap();
 
-    let err = load_tree(&source).unwrap_err();
+    let err = load_tree(&source, &options()).unwrap_err();
     assert!(err.to_string().contains("No images detected"));
 }
 
+/// EPUB/PDF inputs are no longer "not implemented"; a malformed stub still
+/// errors, but with an input-specific message rather than a phase marker.
 #[test]
-fn epub_and_pdf_inputs_report_not_implemented() {
+fn malformed_epub_and_pdf_stubs_error() {
     let tmp = tempdir().unwrap();
-    for (name, kind) in [
-        ("book.epub", SourceKind::Epub),
-        ("book.pdf", SourceKind::Pdf),
-    ] {
-        let path = tmp.path().join(name);
-        fs::write(&path, b"stub").unwrap();
-        assert_eq!(detect_source_kind(&path), Some(kind));
-        let err = load_tree(&path).unwrap_err();
-        assert!(err.to_string().contains("Phase 11"), "{err}");
-    }
+    let options = options();
+
+    let epub = tmp.path().join("book.epub");
+    fs::write(&epub, b"stub").unwrap();
+    assert_eq!(detect_source_kind(&epub), Some(SourceKind::Epub));
+    let err = load_tree(&epub, &options).unwrap_err();
+    assert!(!err.to_string().contains("Phase 11"), "{err}");
+
+    let pdf = tmp.path().join("book.pdf");
+    fs::write(&pdf, b"stub").unwrap();
+    assert_eq!(detect_source_kind(&pdf), Some(SourceKind::Pdf));
+    let err = load_tree(&pdf, &options).unwrap_err();
+    assert!(err.to_string().contains("PDF"), "{err}");
 }
 
 #[test]
@@ -308,7 +326,7 @@ fn jp2_and_avif_entries_are_ignored() {
 
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
-    let tree = load_tree(&archive).unwrap();
+    let tree = load_tree(&archive, &options()).unwrap();
     assert_eq!(
         tree_shape(&tree),
         vec![(String::new(), vec![("page1.png".to_string(), 10, 10)])]
@@ -320,6 +338,6 @@ fn jp2_and_avif_entries_are_ignored() {
     fs::write(only.join("scan.jp2"), b"undecodable").unwrap();
     let only_archive = tmp.path().join("only.cbz");
     compress_archive(ArchiveKind::Cbz, &only, &only_archive).unwrap();
-    let err = load_tree(&only_archive).unwrap_err();
+    let err = load_tree(&only_archive, &options()).unwrap_err();
     assert!(err.to_string().contains("No images detected"));
 }

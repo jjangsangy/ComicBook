@@ -6,9 +6,9 @@ use clap::Parser;
 use comic_book::archive::{compress_archive, ArchiveKind};
 use comic_book::cli::Cli;
 use comic_book::ebook::input::load_tree;
-use comic_book::ebook::model::{EncodedPage, MediaType, OrderClass};
+use comic_book::ebook::model::{ComicTree, EncodedPage, MediaType, OrderClass};
 use comic_book::ebook::options::Options;
-use comic_book::ebook::processing::process_tree;
+use comic_book::ebook::processing::{detect_suboptimal_processing, process_tree};
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use std::fs;
 use std::path::Path;
@@ -61,7 +61,7 @@ fn fixture_book_snapshot() {
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let mut tree = load_tree(&archive).unwrap();
+    let mut tree = load_tree(&archive, &options(&[])).unwrap();
     // A non-Kindle profile keeps monochrome pages as JPEG rather than GIF.
     let options = options(&["-p", "KoE"]);
     let book = process_tree(&mut tree, &options).unwrap();
@@ -124,7 +124,7 @@ fn no_processing_copies_source_bytes_verbatim() {
     let archive = tmp.path().join("book.cbz");
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
-    let mut tree = load_tree(&archive).unwrap();
+    let mut tree = load_tree(&archive, &options(&[])).unwrap();
     let pristine = tree.chapters[0].pages[0].raw.clone().unwrap();
 
     let options = options(&["-p", "KoE", "--no-processing"]);
@@ -153,7 +153,7 @@ fn no_processing_keeps_the_sanitized_name() {
     compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
 
     let options = options(&["-p", "KoE", "--no-processing"]);
-    let mut tree = load_tree(&archive).unwrap();
+    let mut tree = load_tree(&archive, &options).unwrap();
     comic_book::ebook::naming::sanitize_tree(&mut tree, &options);
     let book = process_tree(&mut tree, &options).unwrap();
 
@@ -164,4 +164,58 @@ fn no_processing_keeps_the_sanitized_name() {
         .collect();
     // `--no-processing` emits the sanitized name without an order suffix.
     assert_eq!(names, vec!["kcc-0001.png"]);
+}
+
+/// Load a folder of solid PNGs as a source tree (page names drive the warnings).
+fn tree_of(root: &Path, pages: &[(&str, u32, u32)]) -> ComicTree {
+    let source = root.join("source");
+    for (name, width, height) in pages {
+        write_png(&source.join(name), *width, *height, [128, 128, 128]);
+    }
+    load_tree(&source, &options(&[])).unwrap()
+}
+
+#[test]
+fn kcc_made_sources_warn_about_quality_loss() {
+    let tmp = tempdir().unwrap();
+    let tree = tree_of(tmp.path(), &[("page-kcc-x.png", 2000, 3000)]);
+
+    let warnings = detect_suboptimal_processing(&tree, &options(&["--stretch"]));
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("created by KCC"), "{warnings:?}");
+}
+
+#[test]
+fn small_images_warn_unless_upscaled_or_scribe() {
+    let tmp = tempdir().unwrap();
+    let tree = tree_of(tmp.path(), &[("page1.png", 10, 10), ("page2.png", 20, 20)]);
+
+    let warnings = detect_suboptimal_processing(&tree, &options(&[]));
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].contains("smaller than target device resolution"),
+        "{warnings:?}"
+    );
+
+    assert!(detect_suboptimal_processing(&tree, &options(&["--upscale"])).is_empty());
+    assert!(detect_suboptimal_processing(&tree, &options(&["-p", "KS"])).is_empty());
+}
+
+#[test]
+fn pages_larger_than_the_device_do_not_warn() {
+    let tmp = tempdir().unwrap();
+    // KV is 1072x1448; both pages exceed it.
+    let tree = tree_of(
+        tmp.path(),
+        &[("page1.png", 1200, 1500), ("page2.png", 2000, 3000)],
+    );
+    assert!(detect_suboptimal_processing(&tree, &options(&[])).is_empty());
+}
+
+#[test]
+fn a_page_smaller_in_only_one_dimension_does_not_count() {
+    let tmp = tempdir().unwrap();
+    // 2000x10 is wider than KV but shorter, so it is not "smaller".
+    let tree = tree_of(tmp.path(), &[("page1.png", 2000, 10)]);
+    assert!(detect_suboptimal_processing(&tree, &options(&[])).is_empty());
 }

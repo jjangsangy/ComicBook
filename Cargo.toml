@@ -79,6 +79,12 @@ kindling-mobi = "0.45"
 # built-in Aileron face, whose glyphs cannot be reproduced exactly; the label's
 # position, size and colours are preserved instead (§13.14).
 font8x8 = "0.3"
+# Phase 11: PDF input rasterisation/extraction. `pdfboss-render` renders vector pages and
+# `extract_page_images` decodes embedded images; `pdfboss-core` supplies the `Document`/
+# `Page` handles. Both are MIT OR Apache-2.0 and pure Rust, so MuPDF is replaced without
+# a platform binary, keeping the "no external programs" rule (AGENTS.md §7, §13.16.2).
+pdfboss-render = "2.11"
+pdfboss-core = "2.11"
 
 [dev-dependencies]
 libc = "0.2"

@@ -14,6 +14,7 @@ use anyhow::{bail, Result};
 
 use crate::ebook::model::{Chapter, ComicTree};
 use crate::ebook::naming;
+use crate::ebook::options::Options;
 
 use super::load_tree;
 
@@ -34,7 +35,7 @@ pub struct Fused {
 }
 
 /// Merge the inputs into a single [`ComicTree`] (`makeFusion`).
-pub fn build(sources: &[PathBuf]) -> Result<Fused> {
+pub fn build(sources: &[PathBuf], options: &Options) -> Result<Fused> {
     if sources.len() < 2 {
         bail!("Fusion requires at least 2 sources. Did you forget to uncheck fusion?");
     }
@@ -50,7 +51,7 @@ pub fn build(sources: &[PathBuf]) -> Result<Fused> {
 
     let mut chapters = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
-        let tree = load_tree(source)?;
+        let tree = load_tree(source, options)?;
         let prefix = if needs_prefix {
             format!("fusion_{:04}_", index + 1)
         } else {
@@ -104,6 +105,7 @@ fn source_name(source: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn a_file_source_uses_its_stem_and_a_folder_its_name() {
@@ -113,7 +115,17 @@ mod tests {
 
     #[test]
     fn fusion_needs_at_least_two_sources() {
-        let error = build(&[PathBuf::from("only.cbz")]).unwrap_err().to_string();
+        let cli = crate::cli::Cli::try_parse_from(["comic-book", "ebook", "book.cbz"])
+            .expect("CLI parses");
+        let options = match cli.command {
+            crate::cli::Commands::Ebook(args) => {
+                crate::ebook::options::Options::resolve(&args).expect("resolves")
+            }
+            _ => unreachable!(),
+        };
+        let error = build(&[PathBuf::from("only.cbz")], &options)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("at least 2"), "unexpected error: {error}");
     }
 }
