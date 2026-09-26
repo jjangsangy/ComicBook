@@ -108,6 +108,7 @@ pub struct ProcessingArgs {
         short = 'r',
         long = "splitter",
         default_value = "0",
+        value_parser = clap::value_parser!(u8).range(0..=2),
         value_name = "0|1|2"
     )]
     pub splitter: u8,
@@ -126,6 +127,7 @@ pub struct ProcessingArgs {
         short = 'c',
         long = "cropping",
         default_value = "2",
+        value_parser = clap::value_parser!(u8).range(0..=2),
         value_name = "0|1|2"
     )]
     pub cropping: u8,
@@ -143,7 +145,12 @@ pub struct ProcessingArgs {
     pub preserve_margin: u32,
 
     /// Crop empty sections: 0 disabled, 1 horizontally, 2 both
-    #[arg(long = "inter-panel-crop", default_value = "0", value_name = "0|1|2")]
+    #[arg(
+        long = "inter-panel-crop",
+        default_value = "0",
+        value_parser = clap::value_parser!(u8).range(0..=2),
+        value_name = "0|1|2"
+    )]
     pub inter_panel_crop: u8,
 
     /// Disable border autodetection and force black borders

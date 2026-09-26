@@ -3,7 +3,7 @@
 [![CI](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml)
 [![Release](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
 A high-performance command-line tool written in Rust for converting comic book archives (`.cbz`, `.cbr`, `.cb7`, `.cbt`, `.zip`, `.rar`, `.7z`, `.tar`) and clamping oversized comic pages to optimize them for e-readers, tablets, and web readers.
 
@@ -20,6 +20,7 @@ A high-performance command-line tool written in Rust for converting comic book a
     - **`max-width`**: Constrains horizontal page dimensions to a maximum pixel width while scaling height proportionally.
 - **WebP Output**: Clamped images are saved with high-efficiency WebP compression to save storage while preserving crisp comic art.
 - **Natural Ordering**: Sorts pages naturally (`page_1.png`, `page_2.png`, ..., `page_10.png`) with `natord` so multi-digit filenames are never scrambled.
+- **Robust Input Handling**: Malformed, truncated or hostile archives, EPUBs and PDFs are rejected with a clear error rather than crashing; the pipeline is fuzzed and memory-tested across Linux, macOS and Windows in CI.
 - **Multi-Threaded Parallelism**: Leverages all available CPU cores using Rayon, complete with interactive multi-progress bars powered by `indicatif`.
 - **Shell Autocompletions**: Built-in completion script generator for Bash, Zsh, Fish, PowerShell, and Elvish.
 
@@ -63,7 +64,7 @@ Pass options to the piped script with `sh -s --`:
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --version v0.2.0
 
 # Choose where the binary is installed
 curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --install-dir "$HOME/bin"
@@ -86,7 +87,7 @@ This installs `comic-book.exe` to `%LOCALAPPDATA%\Programs\comic-book\bin` and a
 To pass options, download the script and run it:
 
 ```powershell
-.\scripts\install.ps1 -Version v0.1.0 -InstallDir "$env:USERPROFILE\bin"
+.\scripts\install.ps1 -Version v0.2.0 -InstallDir "$env:USERPROFILE\bin"
 ```
 
 #### Verify the Install
@@ -97,7 +98,7 @@ comic-book --version
 
 ### Build from Source
 
-Requires [Rust](https://www.rust-lang.org/tools/install) (version 1.87 or newer).
+Requires [Rust](https://www.rust-lang.org/tools/install) (version 1.93 or newer).
 
 ```bash
 git clone https://github.com/jjangsangy/comic-book.git

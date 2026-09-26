@@ -1,10 +1,14 @@
 [package]
 name = "comic-book"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Fast comic book archive conversion and image clamping CLI tool"
 license = "MIT"
 readme = "README.md"
+# The dependency graph's highest `rust-version` is `sevenz-rust2` 0.23 (1.93);
+# `quantette` (1.90) and `askama` (1.88) follow. Declaring it here makes cargo
+# refuse an older toolchain instead of failing deep in a build script (AGENTS.md §17).
+rust-version = "1.93"
 keywords = ["comic", "cbz", "cbr", "image-processing", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
 

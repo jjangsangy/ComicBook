@@ -1305,12 +1305,50 @@ the safety net the swaps rely on.
 5. **Polish.** The `ebook` subcommand and its `--legacy-extract`/`--pdf-width` flags are exercised
    through the shared `completions` generator (no code change needed) and documented in the README.
 
+### 13.17 Phase 12 decisions (hardening)
+
+1. **Fuzz/robustness is a dedicated integration suite, not new guards.**
+   `tests/ebook_robustness_tests.rs` drives `load_tree`/`convert_source` through `catch_unwind`
+   for truncated archives (every prefix of each format), a deterministic xorshift64* fuzzer
+   (magic-prefixed random bytes across `.cbz/.cbr/.cb7/.cbt/.epub/.pdf`), malformed EPUB
+   containers and malformed PDFs. The contract is *error, never panic*, and a partially readable
+   archive must still return a non-empty tree. No library entry point needed a new guard: every
+   reader was already `Result`-returning, so the phase pins the existing behaviour instead.
+2. **Hostile entry names stay in-bounds.** A raw ZIP carrying `..`, absolute, drive-lettered and
+   Windows-backslash entries loads with every chapter/page name interior and forward-slashed:
+   `normalize_archive_path` (already applied by every reader) collapses them. This is asserted at
+   the `ebook` layer, complementing `integration_tests`' path tests.
+3. **The enumerated processing modes now mirror KCC's `choices`.** `--splitter`, `--cropping` and
+   `--inter-panel-crop` gained `clap::value_parser!(u8).range(0..=2)`, so an out-of-range value is
+   a clap usage error (exit `2`) instead of being silently reinterpreted by the `match` arms. This
+   is the phase's only behaviour change, and it matches KCC's argparse contract.
+4. **Cross-platform verification.** Path handling is platform-agnostic (Windows-authored entries
+   load identically on every OS), and chapter/page names are slugified to ASCII with none of
+   Windows' reserved characters (`<>:"/\|?*`), pinned by a test. The one remaining edge is an
+   output *file* named after a Windows reserved device (`CON.cbz` → `CON.mobi`): KCC shares it and
+   §5.2 forbids changing `getOutputFilename`, so it is documented rather than "fixed". The CI
+   matrix (ubuntu/macos/windows) remains the compile-and-run verification.
+5. **The large-book test is a memory regression guard with an honest ceiling.**
+   `a_large_book_converts_under_a_memory_ceiling` converts a 128-page book to EPUB, checks the
+   page count, and asserts peak RSS (`getrusage(RUSAGE_SELF)`, per process under nextest) stays
+   under 512 MiB. The pipeline decodes every page up front (§5.1), so peak memory is linear in the
+   decoded book rather than the `O(cores × page_buffer)` of §14; the ceiling therefore guards
+   against an accidental whole-book *duplication*, not a small constant. §14's spool-to-temp budget
+   remains unimplemented and is now recorded as such there. A `#[ignore]`d `huge_book_stress`
+   (600 pages) profiles a larger book on demand.
+6. **MSRV and version.** `Cargo.toml` declares `rust-version = "1.93"` — the highest
+   `rust-version` in the resolved graph (`sevenz-rust2` 0.23; `quantette` 1.90, `askama` 1.88) —
+   replacing the README's stale 1.87/1.70 claims. The crate is bumped to `0.2.0`
+   now that the `kcc-c2e` port is feature-complete.
+
 ## 14. Performance & memory goals
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop (CPU-bound,
   rayon-parallel), comparable to or better than `kindling`'s claimed ~3 s.
-- Peak RSS bounded by `O(cores × page_buffer)` + spooled output, not by total book size in
-  the default path; spool to temp when the encoded output exceeds a budget.
+- Peak RSS is **linear in the decoded book** in the default in-memory path: the input adapter
+  decodes every page up front (§5.1), so memory is `(decoded pages) + (encoded output)` rather
+  than the `O(cores × page_buffer)` + spool originally planned. The spool-to-temp budget was not
+  implemented; §13.17.5 records the deviation and the Phase 12 test pins the factor.
 - No process spawning for image work; no temp tree in the common case.
 - Zero external process invocations at runtime.
 
@@ -1623,9 +1661,27 @@ rasterisation at the KV target, legacy JPEG scan and end-to-end conversion), the
 conditions), a completions/`--legacy-extract`/`--pdf-width` check in `tests/ebook_tests.rs`,
 plus unit tests in `epub.rs`/`pdf.rs`. Decisions recorded in §13.16.
 
-### Phase 12 — Hardening
+### Phase 12 — Hardening (complete)
 - Fuzz/robustness on malformed archives; large-book memory test; cross-platform verification;
   update README and this document; bump version.
+
+**Delivered.**
+- `tests/ebook_robustness_tests.rs` — 10 tests. Malformed input is rejected, never panicked:
+  every truncated prefix of each archive format, deterministic pseudo-random bytes (valid magic
+  prefixes included) across `.cbz/.cbr/.cb7/.cbt/.epub/.pdf`, hostile entry names (`..`,
+  absolute, drive-lettered, backslashes), broken EPUB containers (missing/garbled container,
+  absent OPF, escaping rootfile, empty spine) and unparseable PDFs (rasterise and
+  `--legacy-extract`). A Windows-authored CBZ loads as ordinary nested chapters, and slugified
+  names carry no Windows-reserved characters. Every case runs through `catch_unwind`, so a
+  panic fails with the offending input rather than aborting.
+- `cli.rs` — `--splitter`/`--cropping`/`--inter-panel-crop` are now constrained to KCC's
+  `choices` `0..=2`; an out-of-range value is a clap usage error (§13.17.3).
+- `a_large_book_converts_under_a_memory_ceiling` converts a 128-page book to a complete EPUB
+  and asserts peak RSS stays under 512 MiB via `getrusage`; `huge_book_stress` (600 pages) is
+  `#[ignore]`d for manual profiling (§13.17.5).
+- `Cargo.toml` — `version = "0.2.0"` and `rust-version = "1.93"` (the graph's maximum); the
+  README's Rust badge/requirement and install examples are updated, and a robustness bullet
+  is added to the features list. Decisions recorded in §13.17.
 
 ### Phase R — Off-the-shelf refactor (side phase, no fixed position)
 

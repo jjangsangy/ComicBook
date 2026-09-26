@@ -14,7 +14,9 @@
 //! tome chunking ([`chunk`]), `--file-fusion` and `--delete`; Phase 10 adds
 //! `--webtoon` ([`processing::webtoon`]); Phase 11 adds the EPUB (spine-ordered) and PDF
 //! (embedded-image/rasterised) input adapters ([`input`]) and KCC's
-//! `detectSuboptimalProcessing` warnings.
+//! `detectSuboptimalProcessing` warnings; Phase 12 hardens the pipeline against
+//! malformed/truncated inputs and verifies it scales to a large book (the
+//! `ebook_robustness_tests` suite).
 //!
 //! # Exit codes
 //!
