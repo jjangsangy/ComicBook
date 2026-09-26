@@ -30,6 +30,38 @@ Test suites: `ebook_tests` (CLI/options/profiles), `ebook_input_tests`,
 `ebook_naming_tests`, `ebook_epub_tests`, `ebook_golden_tests`, `ebook_output_tests`,
 `ebook_kindle_tests`, `ebook_chunk_tests`, `ebook_webtoon_tests`, `ebook_robustness_tests`.
 
+## Long-running tests
+
+The image-processing tests run the real pipeline over full-size pages, which is slow in the
+unoptimised build CI uses. The slowest were profiled with
+`RAYON_NUM_THREADS=1 cargo nextest run -j 4` (four tests at a time, one rayon thread each, to
+approximate a four-core runner) and are marked `#[ignore]`, so the default `cargo nextest run` —
+and therefore CI — skips them. The ten marked tests were ~95s of the suite's ~200s of CPU time:
+
+| Test | Suite | Time |
+|:---|:---|---:|
+| `a_large_book_converts_under_a_memory_ceiling` | `ebook_robustness_tests` | 26.0s |
+| `scribe_profile_splits_a_tall_page_into_above_and_below` | `ebook_epub_tests` | 16.5s |
+| `two_panel_and_vertical_4_panel_reshape_the_panel_view` | `ebook_epub_tests` | 7.9s |
+| `test_clamp_single_file_input` | `integration_tests` | 7.3s |
+| `smart_cover_crop_takes_a_single_side_and_the_cover_is_fitted` | `ebook_epub_tests` | 7.3s |
+| `a_tall_scribe_page_splits_at_1920_into_above_and_below` | `ebook::processing::page` | 6.9s |
+| `light_novel_preserves_structure_and_only_resizes_oversized_pages` | `ebook_output_tests` | 6.3s |
+| `wider_devices_use_the_1072_cap_for_the_virtual_height` | `ebook::processing::webtoon` | 5.6s |
+| `a_super_long_panel_splits_with_overlap` | `ebook::processing::webtoon` | 5.5s |
+| `a_custom_cover_is_kept_in_webtoon_mode` | `ebook_webtoon_tests` | 5.1s |
+
+Run them explicitly with `--run-ignored`:
+
+```bash
+# Every ignored test: the long-running set, the stress test, and the
+# `epubcheck` conformance test (which needs `epubcheck` on PATH)
+cargo nextest run --run-ignored ignored-only
+
+# One suite, its ignored tests included (no external tools needed)
+cargo nextest run --run-ignored all --test ebook_webtoon_tests
+```
+
 ## CI
 
 The existing `ubuntu`/`macos`/`windows` matrix installs cargo-nextest

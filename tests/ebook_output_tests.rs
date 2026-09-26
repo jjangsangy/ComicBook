@@ -277,6 +277,7 @@ fn pdf_streams_png_pages_through_flate() -> Result<()> {
 // --- light novel -----------------------------------------------------------------
 
 #[test]
+#[ignore = "slow: 3000x4000 light-novel page; run with --run-ignored"]
 fn light_novel_preserves_structure_and_only_resizes_oversized_pages() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("source");

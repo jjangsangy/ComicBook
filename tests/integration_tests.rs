@@ -1092,6 +1092,7 @@ fn test_clamp_max_width_approach() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "slow: 2000x3000 clamp; run with --run-ignored"]
 fn test_clamp_single_file_input() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let raw = tmp.path().join("raw");

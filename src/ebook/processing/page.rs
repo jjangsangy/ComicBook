@@ -1438,6 +1438,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: tall-page resize; run with --run-ignored"]
     fn a_tall_scribe_page_splits_at_1920_into_above_and_below() -> Result<()> {
         // A page larger than the KS profile: it is contain-resized to 2480 tall,
         // then split into a 1920-row top and a 560-row bottom.

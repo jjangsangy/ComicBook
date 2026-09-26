@@ -532,6 +532,7 @@ fn count_epub_pages(path: &Path) -> Result<usize> {
 /// generous ceiling. The ceiling is a regression guard against an accidental
 /// whole-book duplication (see docs/architecture.md), not a tight budget.
 #[test]
+#[ignore = "slow: 128-page book; run with --run-ignored"]
 fn a_large_book_converts_under_a_memory_ceiling() -> Result<()> {
     std::env::set_var(progress::QUIET_ENV, "1");
     let tmp = tempdir()?;

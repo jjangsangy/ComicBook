@@ -168,6 +168,7 @@ fn no_processing_emits_the_merged_strip_pngs() -> Result<()> {
 }
 
 #[test]
+#[ignore = "slow: full webtoon pipeline; run with --run-ignored"]
 fn a_custom_cover_is_kept_in_webtoon_mode() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("source");

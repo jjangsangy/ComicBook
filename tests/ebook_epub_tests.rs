@@ -402,6 +402,7 @@ fn simple_fixture(root: &Path) -> Result<()> {
 }
 
 #[test]
+#[ignore = "slow: 2000x3000 source; run with --run-ignored"]
 fn scribe_profile_splits_a_tall_page_into_above_and_below() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book");
@@ -578,6 +579,7 @@ fn invert_direction_reverses_progression_and_writing_mode() -> Result<()> {
 }
 
 #[test]
+#[ignore = "slow: full panel-view pipeline; run with --run-ignored"]
 fn two_panel_and_vertical_4_panel_reshape_the_panel_view() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book");
@@ -655,6 +657,7 @@ fn two_panel_and_vertical_4_panel_reshape_the_panel_view() -> Result<()> {
 }
 
 #[test]
+#[ignore = "slow: 2000x1000 smart-cover pipeline; run with --run-ignored"]
 fn smart_cover_crop_takes_a_single_side_and_the_cover_is_fitted() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book");

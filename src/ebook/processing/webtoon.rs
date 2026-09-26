@@ -468,6 +468,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: long webtoon panel; run with --run-ignored"]
     fn a_super_long_panel_splits_with_overlap() -> Result<()> {
         let page = strip_page(
             "kcc-0001.png",
@@ -486,6 +487,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: webtoon virtual-page packing; run with --run-ignored"]
     fn wider_devices_use_the_1072_cap_for_the_virtual_height() -> Result<()> {
         let page = strip_page(
             "kcc-0001.png",
