@@ -292,6 +292,54 @@ fn kept_intermediate_epub_avoids_an_existing_mobi() {
 }
 
 #[test]
+fn azw3_avoids_clobbering_an_existing_file() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book.cbz");
+    fs::write(&source, b"x").unwrap();
+    let azw3 = options(&["-f", "azw3"]);
+
+    // The Kindle file name is derived from the EPUB path, so an existing AZW3
+    // nudges the EPUB name (and therefore the AZW3) to a `_kcc` counter.
+    fs::write(tmp.path().join("book.azw3"), b"x").unwrap();
+    assert_eq!(
+        output_filename(&source, None, ".epub", "", &azw3),
+        tmp.path().join("book_kcc0.epub")
+    );
+}
+
+#[test]
+fn an_explicit_kindle_wanted_file_resolves_to_its_epub() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("book.cbz");
+    fs::write(&source, b"x").unwrap();
+
+    // `-o out.mobi` / `-o out.azw3` name the Kindle file, so the intermediate
+    // EPUB resolves to `out.epub` (its extension is replaced back again).
+    let mobi = options(&["-f", "mobi"]);
+    assert_eq!(
+        output_filename(
+            &source,
+            Some(&tmp.path().join("out.mobi")),
+            ".epub",
+            "",
+            &mobi
+        ),
+        tmp.path().join("out.epub")
+    );
+    let azw3 = options(&["-f", "azw3"]);
+    assert_eq!(
+        output_filename(
+            &source,
+            Some(&tmp.path().join("out.azw3")),
+            ".epub",
+            "",
+            &azw3
+        ),
+        tmp.path().join("out.epub")
+    );
+}
+
+#[test]
 fn directory_source_output_sits_beside_the_directory() {
     let tmp = tempdir().unwrap();
     let source = tmp.path().join("manga");

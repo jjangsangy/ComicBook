@@ -7,7 +7,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use comic_book::archive::{compress_archive, ArchiveKind};
 use comic_book::cli::Cli;
 use comic_book::ebook::input::load_tree;
 use comic_book::ebook::options::Options;
@@ -323,18 +322,6 @@ fn light_novel_reports_a_folder_source_beside_it() {
 
 // --- unimplemented formats -------------------------------------------------------
 
-#[test]
-fn kindle_formats_are_reported_as_unimplemented() {
-    let tmp = tempdir().unwrap();
-    let source = tmp.path().join("source");
-    write_png(&source.join("01.png"), 100, 150, [10, 10, 10]);
-    let archive = tmp.path().join("book.cbz");
-    compress_archive(ArchiveKind::Cbz, &source, &archive).unwrap();
-
-    std::env::set_var(progress::QUIET_ENV, "1");
-    // `azw3` (unlike `mobi`) does not force batch-splitting, so it reaches the
-    // Kindle-output stub rather than the Phase 9 chunking guard.
-    let kindle = options(&["-f", "azw3", "-p", "KV"]);
-    let error = convert_source(&archive, &kindle).unwrap_err().to_string();
-    assert!(error.contains("Phase 8"), "unexpected error: {error}");
-}
+// Kindle (AZW3/MOBI) output lands in Phase 8 and is covered by
+// `tests/ebook_kindle_tests.rs`; the size-cap/batch-split guard those formats
+// still hit is pinned there too.

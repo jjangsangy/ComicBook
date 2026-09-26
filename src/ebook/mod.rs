@@ -9,8 +9,9 @@
 //! ([`metadata`]) and page/chapter naming ([`naming`]); Phase 5 adds the output
 //! builders ([`output`]) and makes `-f epub`/`-f kepub` shippable; Phase 6 completes
 //! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
-//! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`. The Kindle
-//! output (Phase 8) and chunking/fusion/webtoon (Phases 9–10) follow.
+//! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`; Phase 8
+//! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`). Chunking/fusion
+//! (Phase 9) and webtoon (Phase 10) follow.
 //!
 //! # Exit codes
 //!

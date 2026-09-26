@@ -134,8 +134,19 @@ fn defaults_resolve_to_kindle_mobi() {
     assert_eq!(options.jpeg_quality, 85);
     assert_eq!(options.target_size, None);
     assert_eq!(options.batch_split, 1, "MOBI output always splits");
+    assert!(
+        !options.batch_split_explicit,
+        "the forced MOBI split is not a user request"
+    );
     assert!(options.kindle_azw3);
     assert!(!options.kepub);
+}
+
+#[test]
+fn explicit_batch_split_is_recorded() {
+    assert!(resolve(&["book.cbz", "-f", "azw3", "-b", "2"]).batch_split_explicit);
+    assert!(resolve(&["book.cbz", "-f", "azw3", "-b", "1"]).batch_split_explicit);
+    assert!(!resolve(&["book.cbz", "-f", "azw3"]).batch_split_explicit);
 }
 
 #[test]

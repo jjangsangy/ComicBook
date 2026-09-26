@@ -147,6 +147,11 @@ pub struct Options {
     pub format: Format,
     pub doc_type: DocType,
     pub batch_split: u8,
+    /// Whether `--batch-split` was set explicitly, as opposed to being forced by
+    /// the format (MOBI always implies 1, KCC's `checkOptions`). Chunking into
+    /// tomes is Phase 9, so only an explicit request is a reason to bail
+    /// (AGENTS.md §15, Phase 9).
+    pub batch_split_explicit: bool,
     pub spread_shift: bool,
     pub one_page_landscape: bool,
     pub no_kepub: bool,
@@ -413,6 +418,7 @@ impl Options {
             format,
             doc_type: args.output.doc_type,
             batch_split,
+            batch_split_explicit: args.output.batch_split > 0,
             spread_shift: args.output.spread_shift,
             one_page_landscape: args.output.one_page_landscape,
             no_kepub,

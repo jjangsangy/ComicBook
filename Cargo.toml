@@ -68,6 +68,11 @@ pdf-writer = "0.15"
 # `FlateDecode` path). Already in the tree transitively via `png`/`zip`; promoted
 # to a direct dependency (AGENTS.md §7).
 flate2 = "1"
+# Phase 8: AZW3/MOBI encoding. `kindling` (`kindling-mobi`) is an MIT, pure-Rust
+# kindlegen replacement with fixed-layout/comic support, so no external program is
+# needed and the GPL `dualmetafix` is never ported (AGENTS.md §7, §9). Only its
+# builder is used, so our ported KCC pipeline stays in control (§10).
+kindling-mobi = "0.45"
 
 [dev-dependencies]
 libc = "0.2"

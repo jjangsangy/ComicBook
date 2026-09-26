@@ -237,7 +237,7 @@ fn wanted_filename(source: &Path, wanted: &Path, ext: &str, tome_number: &str) -
     }
 
     let wanted_root = strip_extension(wanted);
-    if extension_with_dot(wanted) == ".mobi" && ext == ".epub" {
+    if matches!(extension_with_dot(wanted).as_str(), ".mobi" | ".azw3") && ext == ".epub" {
         return absolute(&append_str(&wanted_root, ext));
     }
 
@@ -267,17 +267,24 @@ fn resolve_collision(filename: PathBuf, ext: &str, options: &Options) -> PathBuf
             counter += 1;
         }
     }
-    // A kept intermediate EPUB must not clobber the MOBI built from it.
-    if options.format == Format::Mobi && ext == ".epub" {
-        let basename = strip_extension(&filename);
-        if !append_str(&basename, ".mobi").is_file() {
-            return filename;
+    // A kept intermediate EPUB must not clobber the Kindle file built from it.
+    let kindle_ext = match options.format {
+        Format::Mobi => Some(".mobi"),
+        Format::Azw3 => Some(".azw3"),
+        _ => None,
+    };
+    if ext == ".epub" {
+        if let Some(kindle_ext) = kindle_ext {
+            let basename = strip_extension(&filename);
+            if !append_str(&basename, kindle_ext).is_file() {
+                return filename;
+            }
+            let mut counter = 0;
+            while append_str(&basename, &format!("_kcc{counter}{kindle_ext}")).is_file() {
+                counter += 1;
+            }
+            return append_str(&basename, &format!("_kcc{counter}{ext}"));
         }
-        let mut counter = 0;
-        while append_str(&basename, &format!("_kcc{counter}.mobi")).is_file() {
-            counter += 1;
-        }
-        return append_str(&basename, &format!("_kcc{counter}{ext}"));
     }
     filename
 }

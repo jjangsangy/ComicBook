@@ -51,6 +51,21 @@ pub fn build_epub(
     source: &Path,
     options: &Options,
 ) -> Result<()> {
+    let entries = build_entries(book, prepared, source, options);
+    package::write_epub(dest, &entries)
+}
+
+/// Build the OEBPS entries (`zip path` → bytes) for `book`.
+///
+/// Split out from [`build_epub`] so the Kindle path (Phase 8) can materialise
+/// the exact same tree into a scratch directory for `kindling`, without a zip
+/// round-trip (AGENTS.md §5.1, §9).
+pub(crate) fn build_entries(
+    book: &ProcessedBook,
+    prepared: &PreparedBook,
+    source: &Path,
+    options: &Options,
+) -> Vec<(String, Vec<u8>)> {
     let uuid = Uuid::new_v4().to_string();
     let modified = modified_timestamp();
 
@@ -181,7 +196,7 @@ pub fn build_epub(
         .into_bytes(),
     ));
 
-    package::write_epub(dest, &zip_entries)
+    zip_entries
 }
 
 /// The current UTC time as KCC's `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`).

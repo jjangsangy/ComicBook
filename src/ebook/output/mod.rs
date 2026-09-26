@@ -1,8 +1,8 @@
 //! Output builders, dispatched by the resolved [`Format`](super::options::Format).
 //!
-//! Phase 5 shipped the fixed-layout EPUB/KePub builder and Phase 7 adds CBZ and
-//! PDF; the Kindle formats land in Phase 8 and size-capped/batch-split output in
-//! Phase 9 (AGENTS.md §15).
+//! Phase 5 shipped the fixed-layout EPUB/KePub builder, Phase 7 added CBZ and
+//! PDF, and Phase 8 adds the Kindle formats (`azw3`/`mobi` via `kindling`);
+//! size-capped/batch-split output lands in Phase 9 (AGENTS.md §15).
 
 pub mod cbz;
 pub mod epub;
@@ -31,8 +31,11 @@ pub fn write_book(
     source: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>> {
-    // Splitting a book into tomes is Phase 9 (AGENTS.md §15).
-    if options.target_size.is_some() || options.batch_split > 0 {
+    // Splitting a book into tomes is Phase 9 (AGENTS.md §15). MOBI forces
+    // `batch_split` on for legacy reasons, but that default is not a user
+    // request and produces a single tome, so only an explicit `--batch-split`
+    // (or a size cap) is a reason to bail.
+    if options.target_size.is_some() || options.batch_split_explicit {
         bail!(
             "size-capped or batch-split output is not implemented yet \
              (AGENTS.md §15, Phase 9)"
@@ -59,7 +62,25 @@ pub fn write_book(
             Ok(vec![dest])
         }
         Format::Mobi | Format::Azw3 => {
-            bail!("Kindle output is not implemented yet (AGENTS.md §15, Phase 8)")
+            // KCC always builds the fixed-layout EPUB first and derives the
+            // Kindle file name from it by replacing the extension
+            // (`makeMOBIFix`); the intermediate EPUB survives only under
+            // `mobi+epub` (AGENTS.md §9).
+            let epub_dest =
+                naming::output_filename(source, options.output.as_deref(), ".epub", "", options);
+            let kindle_ext = if options.format == Format::Azw3 {
+                "azw3"
+            } else {
+                "mobi"
+            };
+            let kindle_dest = epub_dest.with_extension(kindle_ext);
+            kindle::build_kindle(&epub_dest, &kindle_dest, book, prepared, source, options)?;
+
+            let mut written = vec![kindle_dest];
+            if options.keep_epub {
+                written.push(epub_dest);
+            }
+            Ok(written)
         }
         // `Options::resolve` expands these presets before a format reaches here.
         other => bail!("internal error: unresolved output format {other:?}"),

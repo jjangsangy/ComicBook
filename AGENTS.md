@@ -505,6 +505,12 @@ to a direct dependency (§13.7.1's pattern). The Phase 7 round-trip tests parse 
 PDF back with `lopdf = "0.45"` (MIT, pure Rust) as a **dev-dependency** only, so it never
 ships in the binary.
 
+**Added in Phase 8.** `kindling-mobi = "0.45"` (lib `kindling`, MIT, pure Rust) encodes the
+fixed-layout EPUB into `.azw3` (KF8-only) or `.mobi` (dual MOBI7+KF8), replacing `kindlegen`
+and the GPL `dualmetafix` (§9, §13.13.1). It is a *builder* only — the ported KCC pipeline
+still produces the pages, so its own comic pipeline is unused. Its public `mobi_dump` module
+is reused (not a dev-dependency) for the Phase 8 structural readback tests.
+
 **Licence — decided (§13.1).** The KCC repo is distributed under ISC (`kcc/LICENSE.txt`),
 but `kcc/kindlecomicconverter/image.py` and `dualmetafix.py` retain GPL-3 headers (they
 derive from earlier GPL sources). `image.py` is the source of `ComicPage`/`Cover`.
@@ -1101,7 +1107,52 @@ the safety net the swaps rely on.
    CBZ/PDF as well as EPUB and reports the Phase 9 chunking work. Note the two interactions a
    later phase must preserve: MOBI forces `batch_split = 1`, so `-f mobi` reports Phase 9
    before the Phase 8 stub, and a reMarkable profile implies `target_size = 95`, so
-   `-f pdf -p Rmk*` does too.
+   `-f pdf -p Rmk*` does too. **Update (Phase 8):** the guard now tests
+   `options.batch_split_explicit` (a new field recording whether `--batch-split` was actually
+   passed) rather than the resolved value, so the MOBI-forced default no longer blocks
+   `-f mobi`; an explicit `--batch-split` and a size cap still do.
+
+### 13.13 Phase 8 decisions (Kindle output)
+
+1. **`kindling` replaces `kindlegen` + `dualmetafix` is not ported.** `output/kindle.rs`
+   builds the fixed-layout EPUB (the same [`output::epub`] builder, so the emitted documents
+   are byte-identical to `-f epub`) and encodes it with `kindling::mobi::build_mobi_from_extracted`
+   (AGENTS.md §5.4, §9). No subprocess and no sibling binary is invoked; the MIT `kindling`
+   crate is compiled in. The call mirrors `kindling comic`'s own builder flags: no SRCS source
+   embedding, no CMET, no HD container (`no_hd_images = true`, as KCC ships none), no creator
+   tag, no Kindle publishing limits, self-check left on.
+2. **No zip round-trip into `kindling`.** `epub::build_entries` now returns the OEBPS entry
+   list (path → bytes); `build_epub` writes it as a zip, while the Kindle path materialises the
+   same list into a `tempfile` scratch directory and points `kindling` at `OEBPS/content.opf`.
+   That removes the write-zip-then-unzip pass the naive `extract_epub` route would add (§5.1),
+   and the scratch directory is deleted on every exit (success or error).
+3. **`-f azw3` is KF8-only; `-f mobi` is dual MOBI7+KF8.** `Azw3` sets `kf8_only = true`
+   (the `.azw3` extension); every other Kindle format leaves it false (the `.mobi` extension).
+   `-f mobi+epub` keeps the intermediate EPUB, which is written through the normal EPUB packager
+   so it stays a valid fixed-layout EPUB. `-f auto` on a Kindle profile resolves to `Mobi`
+   (Phase 0) and so goes through this same path.
+4. **Naming follows KCC's `makeMOBIFix` tie.** The intermediate EPUB name is resolved first via
+   `naming::output_filename(..., ".epub", ...)` and the Kindle name is derived from it by
+   replacing the extension, exactly as `mobiPath = item.replace('.epub', '.mobi')` does. The
+   Phase 4 collision rule is generalised to `Azw3` as well as `Mobi`, so an existing
+   `X.azw3`/`X.mobi` nudges the intermediate EPUB (and therefore the derived Kindle file) to a
+   `_kcc<N>` name instead of being clobbered; `-o out.mobi`/`-o out.azw3` likewise resolve the
+   intermediate EPUB to `out.epub`.
+5. **`--doc-type` maps onto EXTH 501.** `none` (the default) omits the tag entirely, avoiding
+   the firmware "back-to-library" issue; `ebok`/`pdoc` write `EBOK`/`PDOC` (§9). The Kindle
+   builder emits the OPF metadata it reads as EXTH (creator, language, writing mode, page
+   progression), so `-t`/`-a`/`-m`/`--language` all round-trip into the file.
+6. **Output fidelity pins the container, not the bytes.** `kindling` chooses its own
+   compression seeds and UIDs, so the tests read the file back with `kindling::mobi_dump`
+   (`tests/ebook_kindle_tests.rs`) and assert the structure: `palmdb.type`/`creator`,
+   `mobi.file_version` 8 (KF8-only) vs 6 plus a `kf8.boundary_record` (dual), the EXTH metadata
+   and shelf tag, and the kept EPUB's `mimetype`/OPF. This matches §5.2's "structure and
+   semantics" rule rather than a byte diff against `kindlegen`, which the licence terms also
+   forbid bundling.
+7. **Chunking still lands in Phase 9.** A MOBI is a single tome here even though KCC forces
+   `batch_split = 1`; with no size cap that default produces exactly one tome in KCC too
+   (`chunk_process` only splits past the 400 MB default), so no user-requested behaviour is
+   dropped. An explicit `--batch-split` or `--target-size` reports Phase 9 as before.
 
 ## 14. Performance & memory goals
 
@@ -1324,10 +1375,29 @@ smart-crop cover and `--keep-comicinfo` document, the PDF page count/`MediaBox`/
 colour space and the `FlateDecode` path read back with `lopdf`, and light-novel structure +
 resize), plus unit tests in `pdf.rs`. Decisions recorded in §13.12.
 
-### Phase 8 — Kindle output (AZW3/MOBI) via kindling
+### Phase 8 — Kindle output (AZW3/MOBI) via kindling (complete)
 - Build fixed-layout EPUB → `kindling` → `.azw3` / `.mobi`; `--doc-type`;
   `mobi+epub`; `-f auto` for Kindle profiles.
 - **Exit:** structural readback of produced AZW3/MOBI (or `kindling dump`) + integration test.
+
+**Delivered.**
+- `output/kindle.rs` — `build_kindle`: builds the fixed-layout EPUB (kept under
+  `mobi+epub`), materialises the OEBPS tree into a `tempfile` scratch directory, and
+  encodes it with `kindling`'s `mobi::build_mobi_from_extracted` as KF8-only
+  (`-f azw3`) or dual MOBI7+KF8 (`-f mobi`). `--doc-type` maps to EXTH 501
+  (`none` omits it); no external program is spawned (AGENTS.md §5.4, §9).
+- `output/epub/mod.rs` — `build_entries` returns the OEBPS entry list so the Kindle
+  path can reuse it without a zip round-trip; `build_epub` wraps it.
+- `output/mod.rs` — Kindle dispatch, deriving the Kindle file name from the
+  resolved intermediate-EPUB name (`makeMOBIFix`), and the size-cap guard now keying
+  on the new `Options::batch_split_explicit`.
+- `options.rs` — `batch_split_explicit`; `naming.rs` — the `_kcc<N>` collision rule
+  covers `Azw3` and `-o out.mobi`/`-o out.azw3`.
+
+Tests: `tests/ebook_kindle_tests.rs` (11 tests — KF8-only vs dual container via
+`kindling::mobi_dump`, the kept intermediate EPUB, title/author and writing-mode EXTH
+round-trip, the shelf tag, `-f auto`, Panel View, the AZW3 collision, and the Phase 9
+guard), plus `tests/ebook_naming_tests.rs` additions. Decisions recorded in §13.13.
 
 ### Phase 9 — Chunking, fusion, delete
 - `--target-size`, `--batch-split`, tome titles `[i/n]`, the cover `N/M` label (§13.11.4),
@@ -1567,9 +1637,14 @@ dependencies) for the PDF document skeleton, per §7's candidate table; `flate2 
 (MIT/Apache-2.0, already transitive) for the non-JPEG image samples; and `lopdf = "0.45"`
 (MIT, pure Rust) as a **dev-dependency** for the PDF readback tests. See §7 and §13.12.
 
-**Action for Phase 0 spike:** read `kindling`'s public API (`src/lib.rs`) and build a fixed-layout
-EPUB from §12.2, then confirm it round-trips through `kindling` (or `kindling dump`) with our
-OPF metadata intact before committing to the §9 plan.
+**Adopted in Phase 8.** `kindling-mobi = "0.45"` (lib `kindling`, MIT, pure Rust, edition
+2024 → Rust ≥1.85) for AZW3/MOBI encoding, per §7's candidate table. Its builder consumes our
+fixed-layout EPUB/OPF and emits KF8-only `.azw3` (`kf8_only = true`) or a dual MOBI7+KF8
+`.mobi`; `--doc-type` maps to EXTH 501. Only the builder is used, so our ported KCC pipeline
+stays in control and `dualmetafix` is never ported (§9, §13.13.1). The Phase 8 structural
+readback tests reuse its public `mobi_dump` module. The §20.3 Phase-0 spike action is now
+resolved: the generated fixed-layout EPUB round-trips through `kindling` with our OPF metadata
+intact (verified by `tests/ebook_kindle_tests.rs`).
 
 ### 20.4 Running Python tooling in a throwaway environment
 
