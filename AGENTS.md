@@ -1004,6 +1004,8 @@ the safety net the swaps rely on.
    (Phase 7) and AZW3/MOBI (Phase 8) as not implemented, and `run_ebook` rejects
    `--file-fusion` (Phase 9), `--webtoon` (Phase 10), `--light-novel` (Phase 7) and
    size-capped/batch-split output (Phase 9) rather than silently ignoring them.
+   **Update (Phase 10):** `--webtoon` is now implemented (§13.15); its guard is gone and
+   `convert_prepared` runs [`processing::webtoon::transform`] before `process_tree`.
 8. **`convert_source` is the Phase 5 seam.** `ebook::convert_source` runs
    `prepare_book` → `process_tree` → `cover::make_cover` → `output::write_book` for one source
    and returns the output paths; `run_ebook` loops over the inputs, prints the paths and
@@ -1211,6 +1213,53 @@ the safety net the swaps rely on.
     size-boundary split and its filenames, per-tome labels, dropped bookmarks, fusion (merge, user
     order, ≥2 sources, shared `Covers/` cover) and `--delete`; unit tests cover the packing
     boundary, the above/below unit grouping, flatten and mixed-depth detection.
+
+### 13.15 Phase 10 decisions (webtoon)
+
+1. **The merge/split runs in memory over the `ComicTree`.** [`processing::webtoon::transform`]
+   replaces KCC's `comic2panel.main(['-y', '-x', '-i', '-m', …])` call on the on-disk work tree:
+   every chapter is merged into one strip ([`merge_chapter`]) and split into virtual pages
+   ([`split_chapter`]), and the chapter's pages are replaced with those virtual pages. It runs in
+   `convert_prepared` after `sanitize_tree` and the cover step, exactly where the reference invokes
+   it, so the per-page pipeline then treats the virtual pages as ordinary pages (AGENTS.md §5.1).
+2. **The merge reproduces KCC's canvas quirk.** `mergeDirectory` sizes the canvas from the pages'
+   *original* heights while widening each page to the chapter's most common width with a bicubic
+   `ImageOps.fit`, so a widened page is clipped at the bottom. That observable behaviour is
+   reproduced deliberately (§5.2) and pinned by a unit test (the 800/600/800 fixture yields an
+   800×1500 strip, not 800×1833). Page widths are widened without re-encoding; the merge is not a
+   byte-for-byte copy of the reference when resampling is involved, which is irrelevant because the
+   strip is an intermediate.
+3. **The edge filter reuses `imageproc` and restores Pillow's border ring.** KCC detects panels from
+   `FIND_EDGES` (a 3×3 Laplacian) thresholded at `> 6`. `imageproc::filter::filter` supplies the
+   convolution (§5.3); Pillow's `Image.filter` leaves the 1px border ring *unchanged* (verified
+   against the installed library), whereas `imageproc` pads by continuity, so the ring is copied
+   back from the source luma before `imageproc::contrast::threshold` binarises it. This is a small,
+   documented parity adjustment, not a hand-rolled convolution.
+4. **The panel scan, overlap split and packing are KCC's heuristic, reproduced from behaviour.**
+   The `v_pad / 2` scan, the solid-band test (`detectSolid`, via `fill::bounding_box`-style
+   non-zero extent), the short-start-panel skip, the `1.5 ×`/`2 ×` panel splits with overlap and the
+   `pageLeft` packing are all ported from the documented algorithm (§5.4); the virtual page height
+   uses the reference's 1072px `max_width` cap (`int(h / w * vw)`, or `int(h / 1072 * vw)` when the
+   device is wider than the cap). Short strips (`≤ profile height`) are used whole, and virtual
+   pages `≤ 15px` tall are dropped, both as in the reference.
+5. **Naming keeps the reference's `kcc-NNNN`/`kcc-NNNN-MMMM` scheme.** The merged strip inherits the
+   chapter's first page stem and is named `<stem>.png` (or `<stem>-MMMM.png` when split), so after
+   the per-page pipeline the output is `<chapter>/kcc-0001-0001-kcc-x.jpg` just as KCC writes it.
+   A too-narrow strip (`< 300px`) or a too-tall merge (`> 131072 × 4` px) aborts with KCC's advice.
+6. **Webtoon mode builds no cover unless one is custom.** KCC skips the `Cover` when `webtoon` is
+   set and no sibling `Covers/` override was selected; `convert_prepared` mirrors that (a custom
+   cover is still processed from the override path). The virtual pages retain their encoded PNG as
+   `Page::raw`, so `--no-processing` emits the merged/split PNGs the reference would package
+   (`imgDirectoryProcessing` is skipped under `-n`).
+7. **No new dependency.** The edge convolution comes from `imageproc` (already a dependency), the
+   colour conversion from the ported `color::to_luma601`, and the bicubic fit from the pinned
+   `page::fit` (§13.7.2). No crate supplies KCC's specific panel heuristic.
+8. **Reference values are KCC's own.** `tests/ebook_webtoon_tests.rs` and the `webtoon.rs` unit
+   tests assert the exact virtual-page sizes KCC's `comic2panel` produced for committed synthetic
+   strips (780/525 and three 1080s for KV, three 1253s for KO, the 800×1500 mixed-width merge),
+   plus the end-to-end EPUB (no cover, `--no-processing` PNGs, a `Covers/` override). The strips are
+   checker-boarded so the edge map is deterministic and the values were derived with the throwaway
+   Python environment of §20.4.
 
 ## 14. Performance & memory goals
 
@@ -1482,9 +1531,24 @@ filenames/titles, per-tome cover labels, dropped bookmarks, fusion merge/order/a
 cover and `--delete`), `ebook_kindle_tests.rs`/`ebook_epub_tests.rs` updated to expect
 conversion rather than a "Phase 9" error, plus chunk unit tests. Decisions recorded in §13.14.
 
-### Phase 10 — Webtoon
+### Phase 10 — Webtoon (complete)
 - Port `comic2panel`: merge + panel detection + overlap splitting + virtual pages.
 - **Exit:** webtoon fixture produces expected page count and split points.
+
+**Delivered.**
+- `processing/webtoon.rs` — `transform` ([`merge_chapter`] + [`split_chapter`]): it merges each
+  chapter into a strip at the most common width (reproducing `mergeDirectory`'s undersized-canvas
+  quirk), detects panels from an `imageproc` Laplacian edge map with Pillow's border ring restored,
+  splits over-long panels with overlap, packs the virtual pages at KCC's capped virtual height, and
+  replaces the chapter's pages. `edge_mask`/`detect_panels`/`split_panels`/`pack_pages` are the
+  reference's heuristics; `--no-processing` emits the merged/split PNGs via `Page::raw`.
+- `ebook/mod.rs` — `convert_prepared` now skips the cover in webtoon mode without a custom cover
+  and runs `webtoon::transform` before `process_tree`; the Phase 0 `--webtoon` guard is removed.
+
+Tests: `tests/ebook_webtoon_tests.rs` (3 tests — end-to-end strip split with no cover, the
+`--no-processing` PNG passthrough, and a `Covers/` custom cover), plus `webtoon.rs` unit tests
+pinning the merge and the exact virtual-page sizes KCC produced (780/525, three 1080s, three 1253s,
+800×1500) and the 1072px virtual-height cap. Decisions recorded in §13.15.
 
 ### Phase 11 — PDF/EPUB input, polish
 - PDF input (extract, optional render), EPUB input (spine order), legacy extract,

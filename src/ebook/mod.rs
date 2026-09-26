@@ -11,8 +11,8 @@
 //! the cover pipeline, the Kindle Scribe `-above`/`-below` split and the panel-view/
 //! spread variants; Phase 7 adds `-f cbz`, `-f pdf` and `--light-novel`; Phase 8
 //! adds the Kindle output (`-f azw3`/`-f mobi` via `kindling`); Phase 9 adds
-//! tome chunking ([`chunk`]), `--file-fusion` and `--delete`. Webtoon (Phase 10)
-//! follows.
+//! tome chunking ([`chunk`]), `--file-fusion` and `--delete`; Phase 10 adds
+//! `--webtoon` ([`processing::webtoon`]).
 //!
 //! # Exit codes
 //!
@@ -38,7 +38,7 @@ pub use naming::Sanitized;
 pub use options::{BorderColor, DocType, Format, Options};
 pub use profiles::{DeviceKind, Profile, ProfileData};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// A source loaded, its metadata resolved and its names sanitized.
@@ -69,12 +69,6 @@ pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
 /// Run the `ebook` subcommand.
 pub fn run_ebook(args: EbookArgs) -> Result<()> {
     let options = Options::resolve(&args)?;
-
-    // Webtoon mode changes the pipeline wholesale and lands in Phase 10
-    // (AGENTS.md §15). Bailing beats silently ignoring the flag.
-    if options.webtoon {
-        bail!("--webtoon is not implemented yet (AGENTS.md §15, Phase 10)");
-    }
 
     if options.file_fusion {
         return run_fusion(&options);
@@ -175,14 +169,22 @@ fn assemble(
 /// Process a prepared book and write its output(s).
 ///
 /// The cover is processed from the source before the per-page pass mutates the
-/// first page (cropping), exactly as `makeBook` builds the `Cover` first.
+/// first page (cropping), exactly as `makeBook` builds the `Cover` first. In
+/// webtoon mode without a custom cover KCC builds no cover at all, so the cover
+/// step is skipped; the tree is then merged and panel-split before processing.
 fn convert_prepared(
     mut prepared: PreparedBook,
     source: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>> {
-    let cover =
-        processing::cover::process(&prepared.tree, prepared.cover_override.as_deref(), options)?;
+    let cover = if options.webtoon && prepared.cover_override.is_none() {
+        None
+    } else {
+        processing::cover::process(&prepared.tree, prepared.cover_override.as_deref(), options)?
+    };
+    if options.webtoon {
+        processing::webtoon::transform(&mut prepared.tree, options)?;
+    }
     let mut processed = processing::process_tree(&mut prepared.tree, options)?;
     if let Some(cover) = cover {
         processed.cover = Some(cover.page);
