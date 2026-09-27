@@ -9,6 +9,19 @@ since the previous tag.
 
 ## [Unreleased]
 
+### Build
+
+- The release workflow validates the pushed tag as a SemVer version, stamps `Cargo.toml`'s
+  package version — and the matching `Cargo.lock` entry — from it before building, and then
+  commits the same stamp back to the default branch. Binaries attached to a release now report
+  that release's version from `comic-book --version`, and `main` always declares the last
+  released version, instead of both drifting from a hand-bumped manifest value.
+
+### Fixed
+
+- Re-synced the committed `Cargo.lock` with `Cargo.toml` (both now declare `0.2.3`), so a
+  `--locked` build on `main` no longer fails.
+
 ## [0.2.3] - 2026-09-26
 
 Version-metadata release. The `v0.2.3` tag points at the same commit as `v0.2.2`, and the

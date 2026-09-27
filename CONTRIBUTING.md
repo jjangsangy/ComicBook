@@ -85,24 +85,31 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
 
 ## Releasing
 
-Releases are automated. To publish a new version:
+Releases are automated. The pushed tag is the source of truth for the version, so publishing
+a new version is just a matter of tagging and pushing it:
 
-1. **Bump the version** in `Cargo.toml` and commit the result:
-   ```bash
-   # Cargo.toml: version = "0.2.0"
-   git add Cargo.toml Cargo.lock
-   git commit -m "chore(release): v0.2.0"
-   ```
+```bash
+git tag v0.2.4
+git push origin v0.2.4
+```
 
-2. **Tag and push**:
-   ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
+Bumping the version on `main` first is optional: the workflow stamps the tag's version and
+commits it to the default branch for you.
 
 Pushing a `v*` tag triggers the [`Release` workflow](.github/workflows/release.yml), which:
 
-- Creates a GitHub Release with auto-generated notes. Tags containing a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
-- Builds and attaches binaries for macOS (arm64, x86_64), Linux (x86_64, aarch64; both static musl and glibc) and Windows (x86_64), each with a `.sha256` checksum.
+1. Validates the tag as a version Cargo accepts (failing before anything is published otherwise).
+2. Stamps `Cargo.toml`'s `[package] version` from the tag (`scripts/set-version.sh` /
+   `scripts/set-version.ps1`) and refreshes the matching `Cargo.lock` entry before building, so
+   the compiled binaries report the released tag from `comic-book --version`.
+3. Creates a GitHub Release with auto-generated notes. Tags containing a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
+4. Builds and attaches binaries for macOS (arm64, x86_64), Linux (x86_64, aarch64; both static musl and glibc) and Windows (x86_64), each with a `.sha256` checksum.
+5. Commits the version stamp back to the default branch (`chore(release): vX.Y.Z`), so `main`
+   declares the released version instead of drifting until the next manual bump.
+
+The version-bump commit is pushed with the workflow's `GITHUB_TOKEN`, so it does **not**
+re-trigger CI and it requires the token to be allowed to push to the default branch — branch
+protection that demands pull requests or status checks will reject it, in which case switch that
+last step to open a pull request instead.
 
 The scripts in `scripts/` resolve the latest release automatically, so nothing else needs updating.

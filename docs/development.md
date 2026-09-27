@@ -83,6 +83,12 @@ The existing `ubuntu`/`macos`/`windows` matrix installs cargo-nextest
 fail-fast by default: without the flag a single failure (e.g. on Windows) aborts the run and the
 remaining tests never produce output. The release workflow builds static musl Linux binaries.
 
+On a `v*` tag, that release workflow validates the tag as SemVer, stamps `Cargo.toml`'s
+`[package] version` from it (and refreshes the root `Cargo.lock` entry so the `--locked` build
+succeeds), so every release reports its own version from `comic-book --version`. Once the build
+matrix succeeds it commits the same stamp to the default branch, so `main` always declares the
+last released version.
+
 ## Cross-platform & packaging notes
 
 - All behaviour must compile on Linux, macOS and Windows. Prefer pure-Rust crates; `unrar` and
