@@ -36,6 +36,11 @@ Conscious differences from KCC, all pinned by tests.
   pickles options per worker. This port builds one in-memory `ComicTree` and streams output, so
   at least one full copy of every page is removed. Consequently `--temp-dir` only relocates the
   Kindle builder's scratch directory; the EPUB/CBZ/PDF paths have no temp tree to move.
+- **Two-level progress.** A run with several inputs draws an overall file-progress bar above
+  each file's page bar (`progress::Reporter`, the same overall-plus-children layout `clamp`
+  uses), with `Created …`/warning lines drawn below the bars so the bars stay put; KCC reports
+  per-image progress only. A single input keeps just its page bar, since that already is its
+  overall progress.
 - **`--no-processing` is byte-for-byte.** `Page` retains the source's encoded bytes and media
   type, and pages are emitted with their source extension and `OrderClass::Normal`.
 - **Windows path-length flattening is not reproduced.** KCC flattens a tree when a Windows path

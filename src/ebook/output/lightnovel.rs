@@ -31,14 +31,26 @@ use crate::ebook::{naming, progress};
 const KINDLE_MAX_DIMENSION: u32 = 1920;
 
 /// Convert `source` in light-novel mode, returning the output path(s).
+///
+/// This is the single-file entry point; it reports through a standalone
+/// [`progress::Reporter`]. Batch callers use [`convert_with`].
 pub fn convert(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
+    convert_with(source, options, &progress::Reporter::standalone())
+}
+
+/// [`convert`] with progress reported through `reporter`.
+pub fn convert_with(
+    source: &Path,
+    options: &Options,
+    reporter: &progress::Reporter,
+) -> Result<Vec<PathBuf>> {
     let mut tree = input::load_tree(source, options)?;
     let bounds = resize_bounds(options);
 
     // Parallelise within each chapter and collect in reading order, matching the
     // `os.walk` order KCC's `makeZIP` reproduces. Pages are mutated so each one's
     // pixels are released as soon as it has been resized.
-    let bar = progress::bar(tree.page_count() as u64, "Resizing images");
+    let bar = reporter.child(tree.page_count() as u64, "Resizing images");
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     for chapter in &mut tree.chapters {
         let resized = chapter

@@ -57,7 +57,15 @@ pub struct PreparedBook {
 pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
     let tree = input::load_tree(source, options)?;
     let cover_override = naming::select_cover(source);
-    Ok(assemble(tree, cover_override, source, options, None, false))
+    Ok(assemble(
+        tree,
+        cover_override,
+        source,
+        options,
+        None,
+        false,
+        &progress::Reporter::standalone(),
+    ))
 }
 
 /// Run the `ebook` subcommand.
@@ -68,16 +76,26 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
         return run_fusion(&options);
     }
 
+    // With several inputs, show an overall bar above the per-file bars. A single
+    // input's per-file bar already is its overall progress, so it gets no extra bar.
+    let reporter = if options.inputs.len() > 1 {
+        progress::Reporter::batch(options.inputs.len() as u64, "Overall Progress")
+    } else {
+        progress::Reporter::standalone()
+    };
+
     for source in options.inputs.clone() {
-        let written = convert_source(&source, &options)?;
+        let written = convert_source_with(&source, &options, &reporter)?;
         for path in &written {
-            println!("Created {}", path.display());
+            reporter.println(format!("Created {}", path.display()));
         }
+        reporter.inc();
 
         if options.delete {
             delete_source(&source)?;
         }
     }
+    reporter.finish();
 
     Ok(())
 }
@@ -98,6 +116,7 @@ fn run_fusion(options: &Options) -> Result<()> {
         fusion_options.output = Some(fused.output_dir.clone());
     }
 
+    let reporter = progress::Reporter::standalone();
     let prepared = assemble(
         fused.tree,
         fused.cover,
@@ -105,10 +124,11 @@ fn run_fusion(options: &Options) -> Result<()> {
         &fusion_options,
         Some(&fused.title),
         true,
+        &reporter,
     );
-    let written = convert_prepared(prepared, &fused.source, &fusion_options)?;
+    let written = convert_prepared(prepared, &fused.source, &fusion_options, &reporter)?;
     for path in &written {
-        println!("Created {}", path.display());
+        reporter.println(format!("Created {}", path.display()));
     }
 
     Ok(())
@@ -122,14 +142,23 @@ fn run_fusion(options: &Options) -> Result<()> {
 /// right after extraction and never touches metadata, naming or the cover
 /// (see docs/output.md), so it is dispatched to [`output::lightnovel`] wholesale.
 pub fn convert_source(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
+    convert_source_with(source, options, &progress::Reporter::standalone())
+}
+
+/// [`convert_source`] with progress reported through `reporter`.
+pub fn convert_source_with(
+    source: &Path,
+    options: &Options,
+    reporter: &progress::Reporter,
+) -> Result<Vec<PathBuf>> {
     if options.light_novel {
-        return output::lightnovel::convert(source, options);
+        return output::lightnovel::convert_with(source, options, reporter);
     }
 
     let tree = input::load_tree(source, options)?;
     let cover_override = naming::select_cover(source);
-    let prepared = assemble(tree, cover_override, source, options, None, false);
-    convert_prepared(prepared, source, options)
+    let prepared = assemble(tree, cover_override, source, options, None, false, reporter);
+    convert_prepared(prepared, source, options, reporter)
 }
 
 /// Resolve a tree's metadata, sanitize its names and build the [`PreparedBook`].
@@ -144,12 +173,13 @@ fn assemble(
     options: &Options,
     default_title: Option<&str>,
     fusion: bool,
+    reporter: &progress::Reporter,
 ) -> PreparedBook {
     let metadata = metadata::resolve_with(&tree, source, options, default_title);
     // KCC warns about a likely-degraded conversion after the tree is extracted but
     // before it is renamed (`detectSuboptimalProcessing`).
     for warning in processing::detect_suboptimal_processing(&tree, options) {
-        progress::warn(&warning);
+        reporter.warn(&warning);
     }
     let mut sanitized = naming::sanitize_tree(&mut tree, options);
     if fusion {
@@ -175,6 +205,7 @@ fn convert_prepared(
     mut prepared: PreparedBook,
     source: &Path,
     options: &Options,
+    reporter: &progress::Reporter,
 ) -> Result<Vec<PathBuf>> {
     let cover = if options.webtoon && prepared.cover_override.is_none() {
         None
@@ -184,7 +215,7 @@ fn convert_prepared(
     if options.webtoon {
         processing::webtoon::transform(&mut prepared.tree, options)?;
     }
-    let mut processed = processing::process_tree(&mut prepared.tree, options)?;
+    let mut processed = processing::process_tree_with(&mut prepared.tree, options, reporter)?;
     if let Some(cover) = cover {
         processed.cover = Some(cover.page);
         processed.cover_smart_crop = cover.smart_cropped;

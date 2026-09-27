@@ -41,5 +41,10 @@ cargo nextest run          # standard test runner; use `cargo test` only where n
 - **Output fidelity.** The emitted EPUB/OPF/NCX/NAV/XHTML and MOBI documents are
   device-sensitive: preserve their structure and semantics, and pin any intentional deviation
   with a test (see [docs/output.md](docs/output.md) and [docs/porting.md](docs/porting.md)).
+- **Keep the changelog current.** Every user-visible change (behaviour, CLI surface, output,
+  dependencies, docs) gets an entry under the top `## [Unreleased]` section of
+  [`CHANGELOG.md`](CHANGELOG.md) in the same change, using Keep a Changelog's headings (Added,
+  Changed, Deprecated, Removed, Fixed, Security). The release workflow dates that section into a
+  tagged release, so an accurate changelog is what ships.
 
 When a comment needs to cite a design rationale, reference the relevant file under `docs/`.

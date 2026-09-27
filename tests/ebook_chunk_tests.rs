@@ -1,7 +1,7 @@
-//! Tests for tome chunking, `--file-fusion` and `--delete`: a source splits at the
-//! size boundary (or per subdirectory) into several titled files, fusion merges
-//! inputs into one book, and `--delete` removes the source after a successful
-//! conversion.
+//! Tests for tome chunking, `--file-fusion`, `--delete` and multi-input runs: a
+//! source splits at the size boundary (or per subdirectory) into several titled
+//! files, fusion merges inputs into one book, `--delete` removes the source after a
+//! successful conversion, and several inputs each convert to their own book.
 
 use std::collections::HashMap;
 use std::fs;
@@ -379,5 +379,33 @@ fn delete_removes_the_source_after_a_successful_conversion() -> Result<()> {
 
     assert!(!source.exists(), "the source directory is removed");
     assert!(tmp.path().join("book.epub").is_file());
+    Ok(())
+}
+
+// --- multiple inputs -------------------------------------------------------------
+
+#[test]
+fn multiple_inputs_each_convert_to_their_own_book() -> Result<()> {
+    let tmp = tempdir()?;
+    let first = tmp.path().join("first");
+    let second = tmp.path().join("second");
+    write_png(&first.join("01.png"), 100, 150, [30, 30, 30])?;
+    write_png(&second.join("01.png"), 100, 150, [200, 200, 200])?;
+
+    // The batch path also drives the overall progress bar (hidden under QUIET).
+    std::env::set_var(progress::QUIET_ENV, "1");
+    let cli = args(&[
+        first.to_str().context("utf8 path")?,
+        second.to_str().context("utf8 path")?,
+        "-f",
+        "epub",
+        "-p",
+        "KoE",
+        "--no-kepub",
+    ])?;
+    run_ebook(cli)?;
+
+    assert!(tmp.path().join("first.epub").is_file());
+    assert!(tmp.path().join("second.epub").is_file());
     Ok(())
 }

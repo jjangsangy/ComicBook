@@ -1,5 +1,14 @@
 # Development
 
+## Changelog
+
+Every user-visible change (behaviour, CLI surface, output, dependencies, docs) gets an entry
+under the top `## [Unreleased]` section of [`CHANGELOG.md`](../CHANGELOG.md) in the same change,
+using Keep a Changelog's headings (Added, Changed, Deprecated, Removed, Fixed, Security). The
+release workflow dates that section into the tagged release
+(see [Releasing](../CONTRIBUTING.md#releasing)), so anything left out of the changelog ships
+undocumented.
+
 ## Testing & validation
 
 - **Run tests with `cargo nextest`, not `cargo test`.** [cargo-nextest](https://nexte.st/)

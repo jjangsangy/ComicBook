@@ -46,6 +46,9 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
    - Keep changes focused and minimal.
    - Follow existing code idioms and project conventions.
    - Add unit or integration tests for new functionality in `tests/integration_tests.rs`.
+   - Record any user-visible change under the top `## [Unreleased]` section of
+     [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog headings: Added, Changed, Deprecated,
+     Removed, Fixed, Security) in the same PR.
 
 4. **Verify Your Code Locally**:
    Run the test suite and quality checks before submitting. Tests run with

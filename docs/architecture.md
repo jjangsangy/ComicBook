@@ -78,7 +78,7 @@ src/
     metadata.rs                # ComicInfo.xml parse + metadata resolution
     naming.rs                  # slugify, sanitize/naming, getOutputFilename
     chunk.rs                   # target-size / batch-split tome keeper
-    progress.rs                # indicatif reporting (headless-safe)
+    progress.rs                # indicatif reporting (overall + per-file, headless-safe)
     input/                     # archive / epub / pdf / fusion source adapters
     processing/                # color, fill, crop, interpanel, rainbow, page, cover, webtoon
     output/                    # epub (+ xhtml/opf/nav/package), kepub, cbz, pdf, lightnovel, kindle

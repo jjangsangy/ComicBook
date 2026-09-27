@@ -52,11 +52,24 @@ pub struct ProcessedBook {
 
 /// Process every page of a tree into encoded images.
 ///
+/// This is the single-file entry point; it reports through a standalone
+/// [`progress::Reporter`]. Batch callers use [`process_tree_with`] so the per-file
+/// bar nests under the overall bar.
+pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<ProcessedBook> {
+    process_tree_with(tree, options, &progress::Reporter::standalone())
+}
+
+/// [`process_tree`] with progress reported through `reporter`.
+///
 /// The tree is taken mutably because background detection is cached on each page
 /// for the later cropping phases, mirroring KCC's `ComicPageParser`.
-pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<ProcessedBook> {
+pub fn process_tree_with(
+    tree: &mut ComicTree,
+    options: &Options,
+    reporter: &progress::Reporter,
+) -> Result<ProcessedBook> {
     let size = page::profile_size(options);
-    let bar = progress::bar(tree.page_count() as u64, "Processing images");
+    let bar = reporter.child(tree.page_count() as u64, "Processing images");
 
     let mut chapters = Vec::with_capacity(tree.chapters.len());
     let first_chapter = tree

@@ -6,7 +6,10 @@ comic-book ebook [OPTIONS] <INPUT>...
 
 **Inputs:** one or more comic archives (`.cbz`/`.zip`, `.cbr`/`.rar`, `.cb7`/`.7z`,
 `.cbt`/`.tar`), image folders, or (secondary) `.epub`/`.pdf` files. A folder of comics is
-expanded; `--file-fusion` combines several inputs into one book.
+expanded; `--file-fusion` combines several inputs into one book. When more than one source
+is converted in a run, an overall progress bar tracks the finished files, with each file's
+page bar and the `Created …` status lines drawn beneath it (the bars hold their place as
+the log grows downward).
 
 The `clap` surface is grouped with `#[command(flatten)]` structs mirroring KCC's parser
 groups: **Device**, **Main**, **Processing**, **Output**, **Custom profile**.

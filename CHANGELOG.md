@@ -8,6 +8,23 @@ reconstructed from the repository's release tags (`v*`); each release links to t
 since the previous tag. The release workflow dates the `Unreleased` section into a tagged
 release when a version tag is pushed.
 
+## [Unreleased]
+
+### Added
+
+- A second `Overall Progress` bar for multi-input `ebook` runs: it tracks how many of the input
+  files have been converted and sits above each file's per-file page bar. Both bars share one
+  `indicatif::MultiProgress` through the new `ebook::progress::Reporter`, and status lines
+  (`Created …` and warnings) are drawn below the bars as trailing lines, so the bars hold their
+  place while the text grows downward. A single-input run keeps just its page bar, since that
+  already is its overall progress. Recorded as a conscious deviation from KCC in `docs/porting.md`.
+
+### Docs
+
+- Documented the `ebook` overall progress bar in `docs/cli.md` and `docs/porting.md`.
+- Documented the requirement to record every user-visible change under `## [Unreleased]` in
+  `AGENTS.md`, `CONTRIBUTING.md` and `docs/development.md`.
+
 ## [0.2.6] - 2026-09-27
 
 ### Changed
