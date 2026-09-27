@@ -11,10 +11,9 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use askama::Template;
 
 use super::html_escape;
-use super::templates::{Nav, NavEntry, Ncx};
+use super::templates::{render_lf, Nav, NavEntry, Ncx};
 use super::{text_dir, PageRef};
 
 /// Title for a chapter entry: a bookmark title, the chapter's original basename,
@@ -94,7 +93,7 @@ pub(crate) fn build_ncx(
         uuid,
         navpoints: &navpoints,
     };
-    Ok(view.render()?)
+    render_lf(&view)
 }
 
 /// Build `OEBPS/nav.xhtml`.
@@ -111,5 +110,5 @@ pub(crate) fn build_nav(
         title: &escaped_title,
         entries: &entries,
     };
-    Ok(view.render()?)
+    render_lf(&view)
 }

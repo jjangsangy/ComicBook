@@ -11,12 +11,10 @@
 //! The document skeleton lives in `templates/page.xhtml`; this module computes the
 //! values it interpolates (see docs/dependencies.md).
 
-use askama::Template;
-
 use anyhow::Result;
 
 use super::html_escape;
-use super::templates::{PageXhtml, PanelBox};
+use super::templates::{render_lf, PageXhtml, PanelBox};
 use super::PageRef;
 use crate::ebook::model::PageFlags;
 use crate::ebook::options::Options;
@@ -112,7 +110,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     };
     // askama drops a single trailing newline from every template; KCC's page
     // XHTML is newline terminated (see docs/architecture.md).
-    let mut out = view.render()?;
+    let mut out = render_lf(&view)?;
     out.push('\n');
     Ok(out.into_bytes())
 }

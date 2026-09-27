@@ -6,7 +6,11 @@
 //! behaviour-preserving.
 //!
 //! The only volatile fields are the `dc:identifier`/`dtb:uid` UUID and the
-//! `dcterms:modified` timestamp; both are normalised before comparison.
+//! `dcterms:modified` timestamp; both are normalised before comparison. The
+//! committed references' line endings are normalised too, because git rewrites
+//! them to CRLF on Windows; the generated documents themselves are pinned to LF
+//! (see `output/epub/templates.rs::render_lf`), so a CRLF regression in the
+//! output still fails.
 //!
 //! Regenerate the references (only when an intentional format change is made):
 //!
@@ -195,12 +199,17 @@ fn check_scenario(scenario: &Scenario) -> Result<()> {
             continue;
         }
 
-        let expected = fs::read_to_string(&path).with_context(|| {
-            format!(
-                "missing golden {} — run UPDATE_GOLDEN=1 to capture it",
-                path.display()
-            )
-        })?;
+        let expected = fs::read_to_string(&path)
+            .with_context(|| {
+                format!(
+                    "missing golden {} — run UPDATE_GOLDEN=1 to capture it",
+                    path.display()
+                )
+            })?
+            // A CRLF checkout on Windows must not fail the comparison; the
+            // generated side stays verbatim so it is still required to be LF.
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
         assert_eq!(
             normalized, expected,
             "generated {name} differs from the golden reference"

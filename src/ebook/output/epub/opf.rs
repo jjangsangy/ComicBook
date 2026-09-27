@@ -15,9 +15,8 @@
 use std::path::Path;
 
 use anyhow::Result;
-use askama::Template;
 
-use super::templates::{Opf, OpfItem, SpineItem, StyleCss};
+use super::templates::{render_lf, Opf, OpfItem, SpineItem, StyleCss};
 use super::{html_escape, images_dir, text_dir, unique_id, PageRef};
 use crate::ebook::metadata::BookMetadata;
 use crate::ebook::options::Options;
@@ -138,7 +137,7 @@ pub(crate) fn build_opf(
     };
     // askama drops a single trailing newline from every template; KCC's OPF is
     // newline terminated (see docs/architecture.md).
-    let mut out = view.render()?;
+    let mut out = render_lf(&view)?;
     out.push('\n');
     Ok(out)
 }
@@ -187,7 +186,7 @@ pub(crate) fn style_css(options: &Options) -> Result<String> {
         scribe: options.kindle_scribe_azw3,
         panel: options.is_kindle && options.panel_view,
     };
-    Ok(view.render()?)
+    render_lf(&view)
 }
 
 /// The `page-spread-*` property for each spine item (KCC's two-pass algorithm).

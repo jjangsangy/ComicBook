@@ -16,7 +16,34 @@
 //! `keep_trailing_newline = false`). KCC's OPF and page XHTML are newline
 //! terminated, so their wrappers restore it; the NCX and NAV are not.
 
+use anyhow::Result;
 use askama::Template;
+
+/// Render an askama view with the template file's line endings boiled down to LF.
+///
+/// askama embeds each template file verbatim, so a CRLF checkout (Git for
+/// Windows' `core.autocrlf`, or a Windows text-mode editor) would otherwise leak
+/// `\r\n` into the emitted documents and make the EPUB differ from other
+/// platforms. The documents are device-sensitive, so their bytes are pinned to LF
+/// here instead of depending on how `templates/` happened to be checked out (see
+/// docs/output.md).
+pub(crate) fn render_lf<T: Template>(view: &T) -> Result<String> {
+    Ok(normalize_lf(view.render()?))
+}
+
+/// Fold a rendered document's line endings down to LF.
+fn normalize_lf(mut out: String) -> String {
+    if !out.contains('\r') {
+        return out;
+    }
+    // askama's `keep_trailing_newline = false` drops the `\n` of a trailing CRLF
+    // pair but leaves the `\r`; remove it so a CRLF template renders exactly like
+    // an LF one before the remaining line endings are normalised.
+    if out.ends_with('\r') {
+        out.pop();
+    }
+    out.replace("\r\n", "\n").replace('\r', "\n")
+}
 
 /// One page's XHTML (`buildHTML`).
 #[derive(Template)]
@@ -136,4 +163,28 @@ pub(crate) struct StyleCss {
     pub scribe: bool,
     /// The Panel View CSS block.
     pub panel: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_lf;
+
+    #[test]
+    fn lf_documents_are_left_untouched() {
+        let text = "a\nb\n".to_string();
+        assert_eq!(normalize_lf(text.clone()), text);
+    }
+
+    #[test]
+    fn crlf_documents_are_folded_to_lf() {
+        assert_eq!(normalize_lf("a\r\nb\r\n".to_string()), "a\nb\n");
+    }
+
+    #[test]
+    fn the_carriage_return_askama_leaves_at_the_end_is_dropped() {
+        // `keep_trailing_newline = false` strips the `\n` of a trailing CRLF but
+        // leaves the `\r`, so the CRLF render must not gain a stray final newline.
+        assert_eq!(normalize_lf("a\r\nb\r".to_string()), "a\nb");
+        assert_eq!(normalize_lf("a\r\n\r".to_string()), "a\n");
+    }
 }

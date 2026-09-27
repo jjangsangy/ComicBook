@@ -41,6 +41,11 @@ OEBPS/content.opf
 IDs and timestamps come from crates (`uuid` v4 for `dc:identifier`/`dtb:uid`, `time` for
 `dcterms:modified`), not hand-rolled code.
 
+Line endings are pinned to `\n`: askama embeds `templates/` verbatim, so a CRLF checkout (Git for
+Windows' `core.autocrlf`, or a Windows text-mode editor) would otherwise leak `\r\n` into the
+documents. Every template is rendered through `output/epub/templates.rs::render_lf`, so the emitted
+EPUB is byte-identical on Linux, macOS and Windows.
+
 ## CBZ / PDF / light-novel
 
 - **CBZ** (`output/cbz.rs`) — writes the processed `EncodedPage` payloads (whose sanitized

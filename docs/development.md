@@ -14,9 +14,11 @@
 - **Fixture/golden tests:** commit small `CBZ`/`CBR`/`CB7`/`CBT` inputs and assert structure by
   parsing the output back (mimetype first + stored; OPF spine; XHTML image refs; image
   dimensions). `tests/ebook_golden_tests.rs` compares generated EPUB documents byte-for-byte
-  against committed references (only the UUID and `dcterms:modified` are normalised); regenerate
-  with `UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests` only for an intentional
-  format change.
+  against committed references (the UUID and `dcterms:modified` are normalised, and the references'
+  line endings are normalised to LF so a CRLF checkout does not matter — the generated documents
+  themselves are pinned to LF, see [output.md](output.md)); regenerate with
+  `UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests` only for an intentional format
+  change.
 - **Reference values from KCC.** Some fixtures (`tests/fixtures/crop/`, the webtoon virtual-page
   sizes) pin values produced by KCC itself; the inputs and returned values are committed, so the
   tests assert exact equality instead of a tolerance.
