@@ -6,6 +6,7 @@
 //! already-compressed images); we keep the same method so the archive layout stays
 //! comparable.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -21,7 +22,7 @@ pub(crate) const MIMETYPE: &str = "application/epub+zip";
 ///
 /// `entries` are `(zip path, bytes)` pairs other than `mimetype`, which is always
 /// written first and uncompressed as the EPUB specification requires.
-pub(crate) fn write_epub(dest: &Path, entries: &[(String, Vec<u8>)]) -> Result<()> {
+pub(crate) fn write_epub(dest: &Path, entries: &[(String, Cow<'_, [u8]>)]) -> Result<()> {
     if let Some(parent) = dest.parent().filter(|path| !path.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create {}", parent.display()))?;
@@ -37,7 +38,7 @@ pub(crate) fn write_epub(dest: &Path, entries: &[(String, Vec<u8>)]) -> Result<(
 
     for (name, bytes) in entries {
         zip.start_file(name.as_str(), options)?;
-        zip.write_all(bytes)?;
+        zip.write_all(&bytes[..])?;
     }
 
     zip.finish()?;

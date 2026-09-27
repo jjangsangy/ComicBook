@@ -9,6 +9,7 @@
 //! encodes are the ones our own ported KCC pipeline produced, not its comic
 //! pipeline's.
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
 
@@ -127,14 +128,15 @@ fn create_scratch(source: &Path, options: &Options) -> Result<tempfile::TempDir>
 }
 
 /// Materialise the OEBPS entries under `root`.
-fn write_tree(root: &Path, entries: &[(String, Vec<u8>)]) -> Result<()> {
+fn write_tree(root: &Path, entries: &[(String, Cow<'_, [u8]>)]) -> Result<()> {
     for (name, bytes) in entries {
         let path = root.join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create {}", parent.display()))?;
         }
-        fs::write(&path, bytes).with_context(|| format!("Failed to write {}", path.display()))?;
+        fs::write(&path, &bytes[..])
+            .with_context(|| format!("Failed to write {}", path.display()))?;
     }
     Ok(())
 }

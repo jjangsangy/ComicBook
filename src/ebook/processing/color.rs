@@ -154,9 +154,21 @@ pub(crate) fn luma601(r: u8, g: u8, b: u8) -> u8 {
 ///
 /// This is the Rust equivalent of Pillow's `convert("L")`, which KCC relies on
 /// for its grayscale output, autocontrast range and fill detection.
+///
+/// An already-8-bit source is mapped directly rather than routed through a cloned
+/// RGB buffer, which keeps the conversion to a single extra allocation (a full
+/// image copy otherwise dominates a page's peak working set).
 pub(crate) fn to_luma601(image: &DynamicImage) -> GrayImage {
-    let rgb = image.to_rgb8();
-    imageproc::map::map_pixels(&rgb, |p| Luma([luma601(p[0], p[1], p[2])]))
+    match image {
+        DynamicImage::ImageLuma8(gray) => gray.clone(),
+        DynamicImage::ImageRgb8(rgb) => {
+            imageproc::map::map_pixels(rgb, |p| Luma([luma601(p[0], p[1], p[2])]))
+        }
+        other => {
+            let rgb = other.to_rgb8();
+            imageproc::map::map_pixels(&rgb, |p| Luma([luma601(p[0], p[1], p[2])]))
+        }
+    }
 }
 
 fn clamp_u8(value: f64) -> u8 {

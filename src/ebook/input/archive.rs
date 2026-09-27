@@ -17,7 +17,6 @@
 //! straight into the in-memory tree.
 
 use anyhow::{bail, Context, Result};
-use image::DynamicImage;
 use std::cmp::Ordering;
 use std::path::Path;
 
@@ -58,7 +57,7 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
             return Ok(());
         }
         if is_ebook_image(name) {
-            pages.push(decode_page(name, data)?);
+            pages.push(load_page(name, data)?);
         }
         Ok(())
     })?;
@@ -85,25 +84,38 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
 pub(crate) struct LoadedPage {
     /// Book-relative source path (before redundant-root stripping).
     pub(crate) name: String,
-    pub(crate) image: DynamicImage,
     pub(crate) media_type: Option<MediaType>,
+    /// Encoded source bytes, retained for the lazy decode and `--no-processing`.
     pub(crate) raw: Vec<u8>,
+    /// Dimensions read from the codec header, without a full decode.
+    pub(crate) dimensions: (u32, u32),
 }
 
-/// Decode one encoded image entry into a [`LoadedPage`].
+/// Read one encoded image entry into a [`LoadedPage`].
 ///
-/// Keeps the source bytes on the page so `--no-processing` can emit them
-/// untouched (see docs/porting.md); the media type is inferred from the name's
-/// extension, which is how the OPF manifest later learns the payload's type.
-pub(crate) fn decode_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
-    let image = image::load_from_memory(data)
+/// Only the codec header is parsed here: the pixel decode is deferred to
+/// processing (see [`crate::ebook::model::Page`]), so ingest does not allocate a
+/// decoded image per page. The media type is inferred from the name's extension,
+/// which is how the OPF manifest later learns the payload's type.
+pub(crate) fn load_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
+    let dimensions = image_dimensions(data)
         .with_context(|| format!("Image file {name} could not be decoded"))?;
     Ok(LoadedPage {
         name: name.to_string(),
-        image,
         media_type: image_extension(name).and_then(|ext| MediaType::from_extension(&ext)),
         raw: data.to_vec(),
+        dimensions,
     })
+}
+
+/// The `(width, height)` of an encoded image, read from its header.
+fn image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .context("image format could not be detected")?;
+    reader
+        .into_dimensions()
+        .context("image dimensions could not be read")
 }
 
 /// Group decoded pages into naturally ordered chapters and finish a [`ComicTree`].
@@ -195,7 +207,8 @@ fn group_into_chapters(mut pages: Vec<LoadedPage>) -> Vec<Chapter> {
         let page = Page {
             source_name: loaded.name,
             rel_path: file_name,
-            image: loaded.image,
+            image: None,
+            dimensions: loaded.dimensions,
             background: Default::default(),
             flags: Default::default(),
             raw: Some(loaded.raw),

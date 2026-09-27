@@ -13,6 +13,7 @@ pub mod xhtml;
 
 mod templates;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -67,14 +68,18 @@ pub fn build_epub(
 /// Split out from [`build_epub`] so the Kindle path can materialise
 /// the exact same tree into a scratch directory for `kindling`, without a zip
 /// round-trip (see docs/architecture.md and docs/output.md).
-pub(crate) fn build_entries(
-    book: &ProcessedBook,
+///
+/// Page images are borrowed from the [`ProcessedBook`], so building the entry list
+/// does not duplicate the encoded book in memory; only the small derived documents
+/// (XHTML/NCX/NAV/OPF) are owned.
+pub(crate) fn build_entries<'a>(
+    book: &'a ProcessedBook,
     prepared: &PreparedBook,
     source: &Path,
     options: &Options,
     title: &str,
     drop_bookmarks: bool,
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> Result<Vec<(String, Cow<'a, [u8]>)>> {
     let uuid = Uuid::new_v4().to_string();
     let modified = modified_timestamp();
 
@@ -133,17 +138,17 @@ pub(crate) fn build_entries(
 
     let cover = book.cover.as_ref().map(|cover| cover.bytes.as_slice());
 
-    let mut zip_entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut zip_entries: Vec<(String, Cow<'a, [u8]>)> = Vec::new();
     zip_entries.push((
         "META-INF/container.xml".to_string(),
-        opf::CONTAINER_XML.as_bytes().to_vec(),
+        Cow::Borrowed(opf::CONTAINER_XML.as_bytes()),
     ));
     zip_entries.push((
         "OEBPS/Text/style.css".to_string(),
-        opf::style_css(options)?.into_bytes(),
+        Cow::Owned(opf::style_css(options)?.into_bytes()),
     ));
     if let Some(bytes) = cover {
-        zip_entries.push(("OEBPS/Images/cover.jpg".to_string(), bytes.to_vec()));
+        zip_entries.push(("OEBPS/Images/cover.jpg".to_string(), Cow::Borrowed(bytes)));
     }
     // Every processed page — including a Scribe `-below` companion — is written to
     // `OEBPS/Images`, whether or not it is a spine item.
@@ -153,7 +158,7 @@ pub(crate) fn build_entries(
             let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
             zip_entries.push((
                 format!("OEBPS/{}/{}", images_dir(dir), file),
-                page.bytes.clone(),
+                Cow::Borrowed(page.bytes.as_slice()),
             ));
         }
     }
@@ -161,48 +166,54 @@ pub(crate) fn build_entries(
         let bytes = xhtml::build_xhtml(page, options)?;
         zip_entries.push((
             format!("OEBPS/{}/{}.xhtml", text_dir(page.image_dir), page.stem),
-            bytes,
+            Cow::Owned(bytes),
         ));
     }
 
     zip_entries.push((
         "OEBPS/toc.ncx".to_string(),
-        nav::build_ncx(
-            title,
-            &entries,
-            &filelist,
-            &prepared.sanitized.chapter_titles,
-            &page_titles,
-            &options.language,
-            &uuid,
-        )?
-        .into_bytes(),
+        Cow::Owned(
+            nav::build_ncx(
+                title,
+                &entries,
+                &filelist,
+                &prepared.sanitized.chapter_titles,
+                &page_titles,
+                &options.language,
+                &uuid,
+            )?
+            .into_bytes(),
+        ),
     ));
     zip_entries.push((
         "OEBPS/nav.xhtml".to_string(),
-        nav::build_nav(
-            title,
-            &entries,
-            &filelist,
-            &prepared.sanitized.chapter_titles,
-            &page_titles,
-        )?
-        .into_bytes(),
+        Cow::Owned(
+            nav::build_nav(
+                title,
+                &entries,
+                &filelist,
+                &prepared.sanitized.chapter_titles,
+                &page_titles,
+            )?
+            .into_bytes(),
+        ),
     ));
     zip_entries.push((
         "OEBPS/content.opf".to_string(),
-        opf::build_opf(
-            title,
-            &filelist,
-            cover.is_some(),
-            source,
-            &prepared.metadata,
-            &options.language,
-            &uuid,
-            &modified,
-            options,
-        )?
-        .into_bytes(),
+        Cow::Owned(
+            opf::build_opf(
+                title,
+                &filelist,
+                cover.is_some(),
+                source,
+                &prepared.metadata,
+                &options.language,
+                &uuid,
+                &modified,
+                options,
+            )?
+            .into_bytes(),
+        ),
     ));
 
     Ok(zip_entries)

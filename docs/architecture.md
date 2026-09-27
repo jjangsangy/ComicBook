@@ -97,12 +97,13 @@ no runtime template file.
 struct ComicTree { chapters: Vec<Chapter>, cover: Option<CoverSource>, comicinfo: Option<Vec<u8>> }
 struct Chapter { name: String, pages: Vec<Page> }   // name = image-root-relative dir path ("" = root)
 struct Page {
-    source_name: String,        // book-relative source path (redundant root dir stripped)
-    rel_path: String,           // chapter-relative file name
-    image: DynamicImage,        // decoded pixels
-    background: Background,     // White | Black
-    flags: PageFlags,           // Rotated, BlackBackground, Above/Below, OrderClass
-    raw: Option<Vec<u8>>,       // original encoded bytes (for --no-processing)
+    source_name: String,         // book-relative source path (redundant root dir stripped)
+    rel_path: String,            // chapter-relative file name
+    image: Option<DynamicImage>, // decoded pixels, present only while processing
+    dimensions: (u32, u32),      // header dimensions, available without decoding
+    background: Background,      // White | Black
+    flags: PageFlags,            // Rotated, BlackBackground, Above/Below, OrderClass
+    raw: Option<Vec<u8>>,        // original encoded bytes (lazy decode source, --no-processing)
     source_media_type: Option<MediaType>,
 }
 enum Background { White, Black }
@@ -124,6 +125,9 @@ struct EncodedPage {            // one processed/encoded page (a spread can yiel
   `"Chapter 1/Sub"`, …); each path component is slugified on output.
 - `Page::source_name` is book-relative after an archive's single redundant root directory is
   stripped, so equivalent CBZ/folder inputs load identically.
+- `Page::image` is `None` until the page is processed; `Page::raw` holds the encoded source
+  bytes and `Page::dimensions` the header dimensions. A page may instead be *pixel-only*
+  (`image` set, `raw` `None`) when it was synthesized by the webtoon merge.
 - `processing` turns each `Page` into one or more `EncodedPage`s; the tree then feeds chunking
   and the output builders.
 
@@ -134,13 +138,20 @@ struct EncodedPage {            // one processed/encoded page (a spread can yiel
 1. **Work in memory.** KCC extracts to a temp tree, copies again for fusion, and pickles
    options per `multiprocessing` task. This port builds one in-memory `ComicTree` and streams
    output from it, removing at least one full copy of every page.
-2. **Parallelise with `rayon`** over pages (CPU-bound image work) — no subprocesses, no pickling.
-3. **Stream output.** The EPUB zip is built as an ordered entry list: `mimetype` first
-   (stored), then images, then the derived XHTML/NCX/NAV/OPF.
-4. **Reuse** `fast_image_resize` (SIMD) and the existing `crate::archive` reader/writer rather
+2. **Decode lazily.** Ingest reads only each page's *header* (for its dimensions) and keeps the
+   encoded bytes; the pixels are decoded on demand during processing and released as soon as the
+   page has been encoded. A book therefore never holds its decoded pages at once — only the
+   encoded source, the encoded output and one in-flight page per `rayon` worker (see
+   [Performance & memory goals](#performance--memory-goals)).
+3. **Parallelise with `rayon`** over pages (CPU-bound image work) — no subprocesses, no pickling.
+4. **Stream output.** The EPUB zip is built as an ordered entry list: `mimetype` first
+   (stored), then images, then the derived XHTML/NCX/NAV/OPF. The page images are borrowed by
+   the entry list, so packaging does not duplicate the encoded book.
+5. **Reuse** `fast_image_resize` (SIMD) and the existing `crate::archive` reader/writer rather
    than shelling out.
-5. **Skip work when possible.** `--no-processing` copies original bytes; already-small images
-   skip resampling; a page needing no transform or format change is emitted byte-for-byte.
+6. **Skip work when possible.** `--no-processing` copies original bytes and never decodes;
+   already-small images skip resampling; a page needing no transform or format change is emitted
+   byte-for-byte; a light-novel page that already fits is copied without decoding.
 
 ### Output fidelity
 
@@ -154,9 +165,12 @@ document specs themselves are in [output.md](output.md).
 
 - Convert a 200-page CBZ to EPUB in single-digit seconds on a modern laptop
   (`rayon`-parallel), comparable to or better than `kindling`'s claimed ~3 s.
-- Peak RSS is **linear in the decoded book**: every page is decoded up front, so memory is
-  `(decoded pages) + (encoded output)`. The originally-planned spool-to-temp budget was not
-  implemented; the hardening memory test pins the factor instead (see
-  [development.md](development.md)).
+- Peak RSS is **linear in the encoded book, not the decoded book**: ingest keeps each page's
+  encoded bytes and header dimensions only, processing decodes one page per `rayon` worker and
+  releases it immediately, and packaging borrows the encoded pages. Peak memory is therefore
+  `(encoded source) + (encoded output) + (in-flight decoded pages)`, independent of the page
+  count; `--no-processing` and light-novel pages that already fit are never decoded at all. The
+  hardening memory test pins this (see [development.md](development.md)).
 - No process spawning for image work and no temp tree in the common case — zero external
-  process invocations at runtime.
+  process invocations at runtime (the Kindle path spools the intermediate EPUB to a scratch
+  directory only because `kindling` reads it from disk).

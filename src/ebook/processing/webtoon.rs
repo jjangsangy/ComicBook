@@ -19,7 +19,7 @@
 //! untouched). Everything else — the panel scan, the overlap split and the packing —
 //! is KCC's own heuristic, reproduced from the documented behaviour.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use image::{DynamicImage, GenericImageView, GrayImage, Luma, Rgb, RgbImage};
 use imageproc::contrast::{threshold, ThresholdType};
 use imageproc::filter::filter;
@@ -55,7 +55,7 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
         if chapter.pages.is_empty() {
             continue;
         }
-        let merged = merge_chapter(&chapter.pages)?;
+        let merged = merge_chapter(&mut chapter.pages)?;
         // The merged strip is written back under the first page's sanitized stem
         // (`os.path.splitext(first)[0]`), then saved as PNG; the virtual pages keep
         // that stem and get a `-NNNN` suffix.
@@ -71,9 +71,12 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
 /// `ImageOps.fit`; the canvas is sized from the pages' *original* heights, so a page
 /// widened by the fit is clipped at the bottom — a reference quirk that is
 /// reproduced deliberately (see docs/architecture.md).
-fn merge_chapter(pages: &[Page]) -> Result<DynamicImage> {
+///
+/// Each page's pixels are decoded on demand and released as soon as it has been
+/// blitted, so only the source bytes plus the growing canvas are retained.
+fn merge_chapter(pages: &mut [Page]) -> Result<DynamicImage> {
     let target_width = most_common_width(pages);
-    let target_height: u32 = pages.iter().map(|page| page.image.height()).sum();
+    let target_height: u32 = pages.iter().map(|page| page.dimensions().1).sum();
     if u64::from(target_height) > MAX_MERGED_HEIGHT {
         bail!(
             "Webtoon strip is too tall at {target_height} px ({target_width} px wide); \
@@ -83,8 +86,15 @@ fn merge_chapter(pages: &[Page]) -> Result<DynamicImage> {
 
     let mut canvas = RgbImage::from_pixel(target_width, target_height, Rgb([0, 0, 0]));
     let mut y: i64 = 0;
-    for page in pages {
-        let rgb = page.image.to_rgb8();
+    for page in pages.iter_mut() {
+        page.ensure_decoded()?;
+        let image = page
+            .take_image()
+            .context("webtoon page has no decoded image")?;
+        let rgb = match image {
+            DynamicImage::ImageRgb8(buffer) => buffer,
+            other => other.to_rgb8(),
+        };
         let resized = if rgb.width() != target_width {
             let height = (f64::from(rgb.height())
                 * (f64::from(target_width) / f64::from(rgb.width())))
@@ -112,16 +122,16 @@ fn most_common_width(pages: &[Page]) -> u32 {
     let mut best = 0;
     let mut best_count = 0;
     for (index, page) in pages.iter().enumerate() {
-        let width = page.image.width();
+        let width = page.dimensions().0;
         if pages[..index]
             .iter()
-            .any(|earlier| earlier.image.width() == width)
+            .any(|earlier| earlier.dimensions().0 == width)
         {
             continue;
         }
         let count = pages
             .iter()
-            .filter(|candidate| candidate.image.width() == width)
+            .filter(|candidate| candidate.dimensions().0 == width)
             .count();
         if count > best_count {
             best_count = count;
@@ -189,10 +199,12 @@ fn page_from(image: DynamicImage, source_name: String) -> Page {
     let rel_path = source_name
         .rsplit_once('/')
         .map_or_else(|| source_name.clone(), |(_, file)| file.to_string());
+    let dimensions = image.dimensions();
     Page {
         source_name,
         rel_path,
-        image,
+        image: Some(image),
+        dimensions,
         background: Background::White,
         flags: PageFlags::default(),
         raw: None,
@@ -413,10 +425,12 @@ mod tests {
     }
 
     fn strip_page(name: &str, image: DynamicImage) -> Page {
+        let dimensions = image.dimensions();
         Page {
             source_name: name.to_string(),
             rel_path: name.to_string(),
-            image,
+            image: Some(image),
+            dimensions,
             background: Background::White,
             flags: PageFlags::default(),
             raw: None,
@@ -425,10 +439,7 @@ mod tests {
     }
 
     fn split_sizes(pages: &[Page]) -> Vec<(u32, u32)> {
-        pages
-            .iter()
-            .map(|page| (page.image.width(), page.image.height()))
-            .collect()
+        pages.iter().map(|page| page.dimensions()).collect()
     }
 
     /// The three-panel fixture: pages pack into two virtual pages (KCC: 780 + 525).
@@ -448,7 +459,7 @@ mod tests {
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
         );
-        let merged = merge_chapter(&[page])?;
+        let merged = merge_chapter(&mut [page])?;
         let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 500)]);
         assert_eq!(pages[0].source_name, "kcc-0001.png");
@@ -458,7 +469,7 @@ mod tests {
     #[test]
     fn three_panels_pack_into_two_virtual_pages() -> Result<()> {
         let page = strip_page("kcc-0001.png", checker_strip(800, SEGMENTS_A));
-        let merged = merge_chapter(&[page])?;
+        let merged = merge_chapter(&mut [page])?;
         assert_eq!(merged.dimensions(), (800, 2150));
         let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 780), (800, 525)]);
@@ -474,7 +485,7 @@ mod tests {
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
-        let merged = merge_chapter(&[page])?;
+        let merged = merge_chapter(&mut [page])?;
         let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         // The KV profile (1072x1448) gives a virtual height of 1080, so the 2500px
         // panel becomes three 1080px parts.
@@ -493,7 +504,7 @@ mod tests {
             "kcc-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
-        let merged = merge_chapter(&[page])?;
+        let merged = merge_chapter(&mut [page])?;
         // KO is 1264px wide, so the virtual height is 1680 / 1072 * 800 = 1253.
         let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KO"])?)?;
         assert_eq!(
@@ -512,7 +523,7 @@ mod tests {
     fn mixed_widths_are_fitted_to_the_most_common_width() -> Result<()> {
         // 800, 600, 800: the middle page is widened to 800, but the canvas is sized
         // from the original heights, so the last page is clipped (KCC's `mergeDirectory`).
-        let pages = [
+        let mut pages = [
             strip_page(
                 "kcc-0001.png",
                 checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
@@ -526,7 +537,7 @@ mod tests {
                 checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
             ),
         ];
-        let merged = merge_chapter(&pages)?;
+        let merged = merge_chapter(&mut pages)?;
         assert_eq!(merged.dimensions(), (800, 1500));
         Ok(())
     }

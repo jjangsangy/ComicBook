@@ -16,8 +16,8 @@ pub mod webtoon;
 
 pub use page::process_page;
 
-use anyhow::Result;
-use image::{DynamicImage, GenericImageView};
+use anyhow::{bail, Context, Result};
+use image::DynamicImage;
 use rayon::prelude::*;
 
 use crate::ebook::model::{ComicTree, EncodedPage, Page};
@@ -69,11 +69,15 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
             .par_iter_mut()
             .enumerate()
             .map(|(page_index, page)| {
-                if !options.no_processing {
-                    let is_first_page = first_chapter == Some(chapter_index) && page_index == 0;
-                    prepare_page(page, options, is_first_page);
-                }
-                let result = page::process_page(page, options, size);
+                let is_first_page = first_chapter == Some(chapter_index) && page_index == 0;
+                let result = if options.no_processing {
+                    // Passthrough needs only the source bytes and the header
+                    // dimensions, so the page is never decoded; its bytes are moved
+                    // into the output rather than copied.
+                    page::passthrough_in_place(page, options)
+                } else {
+                    process_page_owned(page, options, size, is_first_page)
+                };
                 bar.inc(1);
                 result
             })
@@ -96,6 +100,21 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
     })
 }
 
+/// Prepare one page (background/crop) and encode it, releasing the decoded
+/// pixels before returning so peak memory stays bounded to the in-flight batch.
+fn process_page_owned(
+    page: &mut Page,
+    options: &Options,
+    size: (u32, u32),
+    is_first_page: bool,
+) -> Result<Vec<crate::ebook::model::EncodedPage>> {
+    prepare_page(page, options, is_first_page)?;
+    let image = page
+        .take_image()
+        .context("page has no decoded image after prepare")?;
+    page::process_decoded(page, image, options, size)
+}
+
 /// Detect the background and crop a page before it is split and encoded.
 ///
 /// This mirrors KCC's `ComicPageParser.__init__`: the fill is detected first, the
@@ -103,32 +122,26 @@ pub fn process_tree(tree: &mut ComicTree, options: &Options) -> Result<Processed
 /// override), then the inter-panel crop. A colour first page (the cover) is left
 /// untouched, and webtoon mode skips the margin/page-number crops but still runs
 /// the inter-panel pass, exactly as the reference does.
-fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) {
-    page.background = fill::fill_check(&page.image);
+fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Result<()> {
+    page.ensure_decoded()?;
+    let image = match page.image.as_mut() {
+        Some(image) => image,
+        None => bail!("page has no decoded image to prepare"),
+    };
+
+    page.background = fill::fill_check(image);
     let background = page.background;
 
-    if is_first_page && is_colour_page(&page.image, options) {
-        return;
+    if is_first_page && is_colour_page(image, options) {
+        return Ok(());
     }
 
     let power = f64::from(options.cropping_power);
     let minimum = f64::from(options.cropping_minimum);
     if !options.webtoon {
         match options.cropping {
-            2 => crop::crop_page_number(
-                &mut page.image,
-                power,
-                minimum,
-                options.preserve_margin,
-                background,
-            ),
-            1 => crop::crop_margin(
-                &mut page.image,
-                power,
-                minimum,
-                options.preserve_margin,
-                background,
-            ),
+            2 => crop::crop_page_number(image, power, minimum, options.preserve_margin, background),
+            1 => crop::crop_margin(image, power, minimum, options.preserve_margin, background),
             _ => {}
         }
     }
@@ -139,13 +152,12 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) {
         } else {
             interpanel::Direction::Both
         };
-        page.image = interpanel::crop_empty_inter_panel(
-            &page.image,
-            direction,
-            INTER_PANEL_KEEP,
-            background,
-        );
+        let cropped =
+            interpanel::crop_empty_inter_panel(image, direction, INTER_PANEL_KEEP, background);
+        *image = cropped;
     }
+
+    Ok(())
 }
 
 /// Whether a page is detected as colour, for the first-page crop exemption.
@@ -179,7 +191,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
             if !already_processed && file_stem(&page.rel_path).contains("-kcc") {
                 already_processed = true;
             }
-            let (width, height) = page.image.dimensions();
+            let (width, height) = page.dimensions();
             image_number += 1;
             if options.profile_data.width > width && options.profile_data.height > height {
                 image_smaller += 1;

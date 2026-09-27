@@ -45,7 +45,7 @@ pub fn process(
         Some(path) => {
             image::open(path).with_context(|| format!("Failed to read cover {}", path.display()))?
         }
-        None => match first_page_image(tree) {
+        None => match first_page_image(tree)? {
             Some(image) => image,
             None => return Ok(None),
         },
@@ -270,12 +270,16 @@ fn crop_main_cover(image: &mut DynamicImage, right_to_left: bool) -> bool {
     true
 }
 
-/// The first page of the first non-empty chapter.
-fn first_page_image(tree: &ComicTree) -> Option<DynamicImage> {
-    tree.chapters
+/// The first page of the first non-empty chapter, decoded on demand.
+fn first_page_image(tree: &ComicTree) -> Result<Option<DynamicImage>> {
+    match tree
+        .chapters
         .iter()
         .find_map(|chapter| chapter.pages.first())
-        .map(|page| page.image.clone())
+    {
+        Some(page) => Ok(Some(page.to_decoded()?)),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -304,7 +308,8 @@ mod tests {
         let page = Page {
             source_name: "kcc-0001.png".to_string(),
             rel_path: "kcc-0001.png".to_string(),
-            image,
+            image: Some(image),
+            dimensions: (width, height),
             background: crate::ebook::model::Background::White,
             flags: PageFlags::default(),
             raw: None,

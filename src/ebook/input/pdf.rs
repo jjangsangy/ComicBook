@@ -16,7 +16,6 @@
 //! a documented deviation.
 
 use anyhow::{bail, Context, Result};
-use image::{DynamicImage, RgbaImage};
 use pdfboss_core::Document;
 use pdfboss_render::{extract_page_images, render_page, Pixmap};
 use std::path::Path;
@@ -108,19 +107,19 @@ fn render_zoom(
     }
 }
 
-/// Turn a [`Pixmap`] into a page, retaining its PNG encoding so
-/// `--no-processing` emits it untouched.
+/// Turn a [`Pixmap`] into a page, retaining only its PNG encoding and its
+/// dimensions so `--no-processing` emits it untouched and ingest does not pin the
+/// decoded pixels (which the lazy pipeline re-decodes on demand).
 fn pixmap_page(name: String, pixmap: Pixmap) -> Result<LoadedPage> {
+    let dimensions = (pixmap.width, pixmap.height);
     let raw = pixmap
         .encode_png()
         .map_err(|error| anyhow::anyhow!("Failed to encode PDF page: {error}"))?;
-    let image = RgbaImage::from_raw(pixmap.width, pixmap.height, pixmap.data)
-        .context("PDF page pixmap has inconsistent dimensions")?;
     Ok(LoadedPage {
         name,
-        image: DynamicImage::ImageRgba8(image),
         media_type: Some(MediaType::Png),
         raw,
+        dimensions,
     })
 }
 
@@ -154,7 +153,7 @@ fn legacy_extract(source: &Path) -> Result<ComicTree> {
             continue;
         }
         let name = format!("jpg{}.jpg", pages.len());
-        pages.push(super::archive::decode_page(&name, &pdf[start..end])?);
+        pages.push(super::archive::load_page(&name, &pdf[start..end])?);
     }
 
     if pages.is_empty() {

@@ -34,7 +34,7 @@ fn tree_shape(tree: &ComicTree) -> Vec<ChapterShape> {
                 .pages
                 .iter()
                 .map(|page| {
-                    let (width, height) = page.image.dimensions();
+                    let (width, height) = page.dimensions();
                     (page.rel_path.clone(), width, height)
                 })
                 .collect();
@@ -373,5 +373,39 @@ fn jp2_and_avif_entries_are_ignored() -> Result<()> {
         Err(error) => error,
     };
     assert!(err.to_string().contains("No images detected"));
+    Ok(())
+}
+
+/// Ingest must not decode page pixels: the tree carries the encoded source bytes
+/// and the header dimensions only, and the first decode is deferred to processing
+/// (see docs/architecture.md). This pins the lazy-ingest contract that keeps peak
+/// memory independent of the decoded book size.
+#[test]
+fn ingest_defers_page_decoding() -> Result<()> {
+    let tmp = tempdir()?;
+    let source = tmp.path().join("src");
+    write_png(&source.join("page1.png"), 40, 30)?;
+    write_png(&source.join("page2.png"), 20, 10)?;
+
+    let archive = tmp.path().join("book.cbz");
+    compress_archive(ArchiveKind::Cbz, &source, &archive)?;
+
+    let tree = load_tree(&archive, &options()?)?;
+    let pages = &tree.chapters[0].pages;
+    assert_eq!(pages.len(), 2);
+    for page in pages {
+        assert!(
+            page.decoded().is_none(),
+            "ingest decoded {} before processing",
+            page.source_name
+        );
+        assert!(page.raw.is_some(), "the source bytes are retained");
+    }
+
+    // The dimensions come from the codec header, so they are available without a
+    // full decode, and match what the on-demand decode produces.
+    assert_eq!(pages[0].dimensions(), (40, 30));
+    assert_eq!(pages[1].dimensions(), (20, 10));
+    assert_eq!(pages[0].to_decoded()?.dimensions(), (40, 30));
     Ok(())
 }

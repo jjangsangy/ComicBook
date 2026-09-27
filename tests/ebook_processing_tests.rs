@@ -113,10 +113,51 @@ fn fixture_book_snapshot() -> Result<()> {
     Ok(())
 }
 
+/// Processing decodes each page in flight and releases its pixels afterwards, so
+/// the source tree never retains a decoded book (see docs/architecture.md).
+#[test]
+fn processing_releases_decoded_pixels() -> Result<()> {
+    std::env::set_var(comic_book::ebook::progress::QUIET_ENV, "1");
+
+    let tmp = tempdir()?;
+    let source = tmp.path().join("source");
+    for index in 0..6u32 {
+        write_png(
+            &source.join(format!("page{index:02}.png")),
+            80,
+            120,
+            [20, 40, 60],
+        )?;
+    }
+    let archive = tmp.path().join("book.cbz");
+    compress_archive(ArchiveKind::Cbz, &source, &archive)?;
+
+    let mut tree = load_tree(&archive, &options(&[])?)?;
+    for chapter in &tree.chapters {
+        for page in &chapter.pages {
+            assert!(page.decoded().is_none(), "ingest decoded a page");
+        }
+    }
+
+    let book = process_tree(&mut tree, &options(&["-p", "KoE"])?)?;
+    assert_eq!(book.page_count, 6);
+
+    // The decoded pixels were released as each page was encoded.
+    for chapter in &tree.chapters {
+        for page in &chapter.pages {
+            assert!(
+                page.decoded().is_none(),
+                "page {} retained its decoded pixels",
+                page.rel_path
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn no_processing_copies_source_bytes_verbatim() -> Result<()> {
     std::env::set_var(comic_book::ebook::progress::QUIET_ENV, "1");
-
     let tmp = tempdir()?;
     let source = tmp.path().join("source");
     write_png(&source.join("01-page.png"), 100, 150, [10, 10, 10])?;

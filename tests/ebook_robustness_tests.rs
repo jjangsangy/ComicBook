@@ -570,3 +570,81 @@ fn huge_book_stress() -> Result<()> {
     }
     Ok(())
 }
+
+/// The decoded-bytes size of a `width`x`height` RGB page.
+///
+/// This is the amount the pre-lazy pipeline retained for *every* source page (an
+/// `ImageRgb8` buffer), so it is the unit the streaming test below measures peak
+/// memory against.
+fn decoded_rgb_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 3
+}
+
+/// Build a `pages`-page source whose pages are all the same encoded image.
+///
+/// The image is encoded once and the bytes copied per file, so building the input
+/// costs one PNG encode rather than `pages` of them.
+fn build_uniform_source(root: &Path, pages: u32, width: u32, height: u32) -> Result<PathBuf> {
+    let source = root.join("source");
+    fs::create_dir_all(&source)?;
+    let mut bytes = Vec::new();
+    DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb([12, 128, 200]))).write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )?;
+    for index in 0..pages {
+        fs::write(source.join(format!("page{index:04}.png")), &bytes)?;
+    }
+    Ok(source)
+}
+
+/// A large book is ingested and repackaged without ever holding its decoded
+/// pixels, so peak memory tracks the archive size rather than the decoded book.
+///
+/// Ingest reads each page's header for its dimensions and keeps only the encoded
+/// bytes ([`Page`](comic_book::ebook::model::Page) decodes lazily), and
+/// `--no-processing` copies those bytes straight through. Peak memory here is
+/// therefore a small fraction of the decoded book: decoding every page up front —
+/// as the pipeline did before lazy ingest — could not pass this ceiling. The test
+/// is deliberately `--no-processing` so it pins the *ingest* cost without paying
+/// the (debug-slow) resampler. `--run-ignored` only.
+#[test]
+#[ignore = "slow: 256 large pages; run with --run-ignored"]
+fn ingest_and_repack_stay_far_below_the_decoded_book_size() -> Result<()> {
+    std::env::set_var(progress::QUIET_ENV, "1");
+    let tmp = tempdir()?;
+    let (width, height, pages) = (1024, 1400, 256);
+    let source = build_uniform_source(tmp.path(), pages, width, height)?;
+
+    // Loading alone must not decode: the tree carries the bytes and dimensions.
+    let tree = load_tree(&source, &options(&[])?)?;
+    assert_eq!(tree.page_count(), pages as usize);
+    for chapter in &tree.chapters {
+        for page in &chapter.pages {
+            assert!(
+                page.decoded().is_none(),
+                "ingest decoded {}",
+                page.source_name
+            );
+        }
+    }
+
+    let written = convert_catching(&source, &options(&["-f", "epub", "--no-processing"])?)??;
+    assert_eq!(written.len(), 1);
+    assert_eq!(count_epub_pages(&written[0])?, pages as usize);
+
+    let decoded = decoded_rgb_bytes(width, height) * u64::from(pages);
+    if let Some(peak) = peak_rss_bytes() {
+        eprintln!(
+            "peak RSS for {pages} x {width}x{height} (--no-processing): {} MiB \
+             (decoded book {} MiB)",
+            peak >> 20,
+            decoded >> 20
+        );
+        assert!(
+            peak < decoded / 10,
+            "peak RSS {peak} bytes is not clearly below the {decoded}-byte decoded book"
+        );
+    }
+    Ok(())
+}

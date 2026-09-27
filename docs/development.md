@@ -38,7 +38,7 @@ The image-processing tests run the real pipeline over full-size pages, which is 
 unoptimised build CI uses. The slowest were profiled with
 `RAYON_NUM_THREADS=1 cargo nextest run -j 4` (four tests at a time, one rayon thread each, to
 approximate a four-core runner) and are marked `#[ignore]`, so the default `cargo nextest run` —
-and therefore CI — skips them. The ten marked tests were ~95s of the suite's ~200s of CPU time:
+and therefore CI — skips them.
 
 | Test | Suite | Time |
 |:---|:---|---:|
@@ -52,6 +52,18 @@ and therefore CI — skips them. The ten marked tests were ~95s of the suite's ~
 | `wider_devices_use_the_1072_cap_for_the_virtual_height` | `ebook::processing::webtoon` | 5.6s |
 | `a_super_long_panel_splits_with_overlap` | `ebook::processing::webtoon` | 5.5s |
 | `a_custom_cover_is_kept_in_webtoon_mode` | `ebook_webtoon_tests` | 5.1s |
+
+The memory guards in `ebook_robustness_tests` are also `#[ignore]`:
+
+| Test | What it pins |
+|:---|:---|
+| `ingest_and_repack_stay_far_below_the_decoded_book_size` | A 256-page `--no-processing` run peaks far below the decoded book (quick: one encode plus a byte copy per page). |
+| `a_large_book_converts_under_a_memory_ceiling` | A full 128-page conversion under a generous ceiling (the original hardening guard). |
+| `huge_book_stress` | The same for 600 pages; prints peak RSS for manual profiling. |
+
+The lazy-decode contract itself is pinned by the cheap, always-on
+`ingest_defers_page_decoding` (`ebook_input_tests`) and `processing_releases_decoded_pixels`
+(`ebook_processing_tests`) tests.
 
 Run them explicitly with `--run-ignored`:
 
@@ -91,7 +103,7 @@ remaining tests never produce output. The release workflow builds static musl Li
 | `kindling` API does not fit our EPUB | AZW3 blocked | verified by the Kindle structural tests; it is an accepted dependency |
 | Fidelity drift in OPF/spread logic | device breakage | port the algorithm exactly; assert with tests; no casual "improvements" |
 | Cropping/panel algorithms differ subtly | visible artifacts | fixture-based box/panel assertions tuned to KCC output |
-| Memory blow-up on huge books | OOM | streaming pipeline; memory regression test (peak RSS is linear in the decoded book) |
+| Memory blow-up on huge books | OOM | lazy decode (peak RSS is linear in the *encoded* book); memory regression tests |
 | New dependencies hurt musl/Windows builds | build/release | prefer pure Rust; validate in the CI matrix before adopting |
 
 ## Glossary

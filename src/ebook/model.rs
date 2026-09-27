@@ -3,8 +3,16 @@
 //! The pipeline is built around a [`ComicTree`] of chapters and pages rather
 //! than KCC's double temp-directory tree, so a source is decoded once and never
 //! copied through the filesystem in the common case.
+//!
+//! To keep peak memory linear in the *output* rather than in the decoded book, a
+//! [`Page`] does not decode its pixels at ingest: it carries the encoded source
+//! bytes plus the header dimensions, and [`Page::ensure_decoded`] decodes on
+//! demand. The processing pass releases each page's pixels again as soon as it
+//! has been encoded, so only the in-flight pages (one per `rayon` worker) are
+//! ever decoded at once.
 
-use image::DynamicImage;
+use anyhow::{Context, Result};
+use image::{DynamicImage, GenericImageView};
 use std::path::PathBuf;
 
 /// Detected page background, used for fill/crop decisions.
@@ -99,7 +107,14 @@ pub struct PageFlags {
     pub below: bool,
 }
 
-/// A single decoded source page.
+/// A single source page.
+///
+/// The pixels are decoded lazily: [`Page::image`] is `None` between ingest and
+/// processing (and again once a processed page has been encoded), while
+/// [`Page::raw`] holds the encoded source bytes and [`Page::dimensions`] the
+/// header dimensions. This bounds peak memory to the encoded book plus the few
+/// pages a `rayon` batch is actively decoding, instead of the whole decoded book
+/// (see docs/architecture.md).
 #[derive(Debug, Clone)]
 pub struct Page {
     /// Source path within the book's image tree (see [`crate::ebook::input`]).
@@ -110,18 +125,78 @@ pub struct Page {
     pub source_name: String,
     /// Chapter-relative path (the file name within [`Chapter::name`]).
     pub rel_path: String,
-    /// Decoded pixels.
-    pub image: DynamicImage,
+    /// Decoded pixels, or `None` until the page is processed.
+    ///
+    /// Exists only while the page is being transformed/encoded; see the type
+    /// docs. A page may instead be *pixel-only* (webtoon strips): then `image` is
+    /// `Some` and `raw` is `None`.
+    pub image: Option<DynamicImage>,
+    /// The source image's dimensions, read from the codec header at ingest so an
+    /// undersized-page check does not need to decode the whole image.
+    pub dimensions: (u32, u32),
     pub background: Background,
     pub flags: PageFlags,
     /// The source's original encoded bytes.
     ///
-    /// Retained so `--no-processing` can emit the page byte-for-byte instead of
-    /// re-encoding the decoded pixels (see docs/architecture.md). `None` for trees built
-    /// without a source payload.
+    /// Retained as the lazy decode source and so `--no-processing` can emit the
+    /// page byte-for-byte instead of re-encoding the decoded pixels (see
+    /// docs/architecture.md). `None` for a page that exists only as pixels (the
+    /// webtoon merge) or once `--no-processing` has moved the bytes into its
+    /// output page.
     pub raw: Option<Vec<u8>>,
     /// Media type of [`Page::raw`], inferred from the source extension.
     pub source_media_type: Option<MediaType>,
+}
+
+impl Page {
+    /// The source image's dimensions, available without decoding.
+    pub fn dimensions(&self) -> (u32, u32) {
+        self.dimensions
+    }
+
+    /// The decoded pixels, if this page has already been decoded.
+    pub fn decoded(&self) -> Option<&DynamicImage> {
+        self.image.as_ref()
+    }
+
+    /// Decode the source bytes into [`Page::image`] if not already decoded.
+    ///
+    /// A page backed by pixels (webtoon output, test helpers) is returned as-is;
+    /// a page backed only by [`Page::raw`] is decoded once and cached until
+    /// [`Page::take_image`] releases it.
+    pub fn ensure_decoded(&mut self) -> Result<&DynamicImage> {
+        if self.image.is_none() {
+            let raw = self
+                .raw
+                .as_deref()
+                .context("page holds neither decoded pixels nor source bytes")?;
+            let decoded = image::load_from_memory(raw).context("image could not be decoded")?;
+            self.dimensions = decoded.dimensions();
+            self.image = Some(decoded);
+        }
+        self.image.as_ref().context("page has no decoded image")
+    }
+
+    /// Decode into an owned image without caching the result.
+    ///
+    /// Used by one-off passes (the cover) that must not pin a decoded book.
+    pub fn to_decoded(&self) -> Result<DynamicImage> {
+        match &self.image {
+            Some(image) => Ok(image.clone()),
+            None => {
+                let raw = self
+                    .raw
+                    .as_deref()
+                    .context("page holds neither decoded pixels nor source bytes")?;
+                image::load_from_memory(raw).context("image could not be decoded")
+            }
+        }
+    }
+
+    /// Release the decoded pixels, keeping any encoded source bytes.
+    pub fn take_image(&mut self) -> Option<DynamicImage> {
+        self.image.take()
+    }
 }
 
 /// A chapter (a source subdirectory, or the single implicit chapter of a file).

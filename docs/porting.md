@@ -111,9 +111,14 @@ documented (unreachable-in-KCC) fit, and the webtoon merge canvas quirk plus Pil
   malformed inputs through `catch_unwind`; the contract is *error, never panic*.
 - `--splitter`/`--cropping`/`--inter-panel-crop` are constrained to `0..=2` (a clap usage error
   otherwise), matching KCC's `choices`.
-- **The large-book test is a memory regression guard**: peak RSS is linear in the decoded book
-  (the spool-to-temp budget was not implemented), so the ceiling guards against accidental
-  whole-book duplication rather than a small constant.
+- **The large-book tests are memory regression guards**: pages are decoded lazily and released
+  as they are encoded, so peak RSS is linear in the *encoded* book, not the decoded one. The
+  ceilings guard against accidentally retaining the decoded book (or duplicating the archive)
+  rather than against a small constant.
+- **Undecodable images are rejected during processing, not ingest.** Ingest reads the codec
+  header for dimensions and defers the full decode, so a page whose header parses but whose
+  pixels do not is reported by the processing pass; `--no-processing` never decodes and so, like
+  KCC's `removeNonImages`, only checks the extension.
 - **MSRV is 1.93**, the highest `rust-version` in the resolved dependency graph.
 
 ## Off-the-shelf refactor (Phase R)

@@ -59,14 +59,35 @@ struct Payload {
 }
 
 /// Process one decoded page into its encoded output page(s).
+///
+/// Used by tests and one-off callers; the tree pipeline hands its pixels in
+/// directly through [`process_decoded`] so it never holds two decoded copies.
 pub fn process_page(page: &Page, options: &Options, size: (u32, u32)) -> Result<Vec<EncodedPage>> {
     if options.no_processing {
         return passthrough(page, options);
     }
 
+    let image = page
+        .decoded()
+        .context("page has no decoded image to process")?
+        .clone();
+    process_decoded(page, image, options, size)
+}
+
+/// Encode a page whose decoded pixels have already been moved out of the tree.
+///
+/// Taking ownership lets the common (non-split) path move its RGB buffer straight
+/// into the transform instead of cloning it, which halves the per-page working
+/// set (see docs/architecture.md).
+pub(crate) fn process_decoded(
+    page: &Page,
+    image: DynamicImage,
+    options: &Options,
+    size: (u32, u32),
+) -> Result<Vec<EncodedPage>> {
     let fill = page_fill(page, options);
     let mut out = Vec::new();
-    for payload in split_check(&page.image, options, size) {
+    for payload in split_check(image, options, size) {
         out.extend(encode_payload(payload, options, size, page, fill)?);
     }
     Ok(out)
@@ -77,13 +98,43 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
     let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
     let bytes = match &page.raw {
         Some(raw) => raw.clone(),
-        // Trees built without a source payload still round-trip through the codec.
-        None => encode_dynamic(&page.image, media_type, options.jpeg_quality)?,
+        // Trees built without a source payload (webtoon strips) still round-trip
+        // through the codec.
+        None => {
+            let image = page
+                .decoded()
+                .context("page has neither source bytes nor decoded pixels")?;
+            encode_dynamic(image, media_type, options.jpeg_quality)?
+        }
     };
-    let (width, height) = page.image.dimensions();
-    Ok(vec![EncodedPage {
-        // Under `--no-processing` KCC never runs `ComicPage`, so the sanitized
-        // name keeps no `-kcc-x` order suffix (see docs/porting.md).
+    Ok(vec![passthrough_page(page, media_type, bytes)])
+}
+
+/// The tree pipeline's `--no-processing`: like [`passthrough`], but the source
+/// bytes are *moved* out of the page (the tree does not need them again), so the
+/// archive is not duplicated while the output is assembled (see
+/// docs/architecture.md).
+pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result<Vec<EncodedPage>> {
+    let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
+    let bytes = match page.raw.take() {
+        Some(raw) => raw,
+        None => {
+            let image = page
+                .decoded()
+                .context("page has neither source bytes nor decoded pixels")?;
+            encode_dynamic(image, media_type, options.jpeg_quality)?
+        }
+    };
+    Ok(vec![passthrough_page(page, media_type, bytes)])
+}
+
+/// The untouched-source [`EncodedPage`].
+///
+/// Under `--no-processing` KCC never runs `ComicPage`, so the sanitized name keeps
+/// no `-kcc-x` order suffix (see docs/porting.md).
+fn passthrough_page(page: &Page, media_type: MediaType, bytes: Vec<u8>) -> EncodedPage {
+    let (width, height) = page.dimensions();
+    EncodedPage {
         name: unsuffixed_name(&page.source_name, media_type),
         order_class: OrderClass::Normal,
         media_type,
@@ -91,7 +142,7 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
         width,
         height,
         flags: PageFlags::default(),
-    }])
+    }
 }
 
 /// The padding colour: an explicit `--black-borders`/`--white-borders` wins over
@@ -105,31 +156,35 @@ pub fn page_fill(page: &Page, options: &Options) -> Background {
 }
 
 /// Classify a page, returning the payloads the spread splitter produced.
-fn split_check(image: &DynamicImage, options: &Options, size: (u32, u32)) -> Vec<Payload> {
+///
+/// Takes the decoded image by value so the common path can move it into its
+/// single [`Payload`] rather than cloning; split/rotate paths still read from the
+/// borrowed image to derive their outputs.
+fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<Payload> {
     let (width, height) = image.dimensions();
     let (dst_width, dst_height) = size;
     let right_to_left = options.right_to_left;
     let landscape_mismatch = (width > height) != (dst_width > dst_height);
 
     if options.maximize_strips {
-        return vec![maximize_strips(image, right_to_left)];
+        return vec![maximize_strips(&image, right_to_left)];
     }
     if options.webtoon {
         return vec![Payload {
             order: OrderClass::Normal,
-            image: image.clone(),
+            image,
             rotated: false,
         }];
     }
     if landscape_mismatch && width <= dst_height && height <= dst_width && options.splitter == 1 {
-        return vec![rotate_payload(image, options)];
+        return vec![rotate_payload(&image, options)];
     }
     if landscape_mismatch && f64::from(width) / f64::from(height) > SPLIT_THRESHOLD {
         let ratio = f64::from(width) / f64::from(height);
         let mut payloads = Vec::new();
 
         if options.splitter != 1 && ratio < BISECT_THRESHOLD {
-            let (first, second) = bisect(image, right_to_left);
+            let (first, second) = bisect(&image, right_to_left);
             payloads.push(Payload {
                 order: OrderClass::SplitLeft,
                 image: first,
@@ -142,14 +197,14 @@ fn split_check(image: &DynamicImage, options: &Options, size: (u32, u32)) -> Vec
             });
         }
         if options.splitter > 0 || (options.splitter == 0 && ratio >= BISECT_THRESHOLD) {
-            payloads.push(rotate_payload(image, options));
+            payloads.push(rotate_payload(&image, options));
         }
         return payloads;
     }
 
     vec![Payload {
         order: OrderClass::Normal,
-        image: image.clone(),
+        image,
         rotated: false,
     }]
 }
@@ -241,12 +296,23 @@ fn encode_payload(
     fill: Background,
 ) -> Result<Vec<EncodedPage>> {
     let original_is_grayscale = is_grayscale_image(&payload.image);
-    let rgb = payload.image.to_rgb8();
-    let color = color_check(&rgb, original_is_grayscale, options);
+    // `color_check` short-circuits to `false` for a grayscale source without ever
+    // looking at the pixels, so keep the luma plane instead of expanding it to RGB
+    // and back — one less full-image copy for the common manga scan.
+    let (image, color) = if original_is_grayscale {
+        (payload.image, false)
+    } else {
+        let rgb = match payload.image {
+            DynamicImage::ImageRgb8(buffer) => buffer,
+            other => other.to_rgb8(),
+        };
+        let color = color_check(&rgb, false, options);
+        (DynamicImage::ImageRgb8(rgb), color)
+    };
     let color_output = color && options.force_color;
 
     let image = prepare_image(
-        DynamicImage::ImageRgb8(rgb),
+        image,
         options,
         size,
         payload.order,
@@ -334,7 +400,9 @@ fn prepare_image(
     color_output: bool,
 ) -> Result<DynamicImage> {
     gamma_correct(&mut image, options, color);
-    if !color_output {
+    if !color_output && !matches!(image, DynamicImage::ImageLuma8(_)) {
+        // `to_luma601` is the identity on an L8 plane, so skipping the round-trip
+        // keeps a grayscale page's working set to one buffer.
         image = DynamicImage::ImageLuma8(to_luma601(&image));
     }
     autocontrast_image(&mut image, options, color);
@@ -1121,7 +1189,12 @@ mod tests {
         Page {
             source_name: "page.png".to_string(),
             rel_path: "page.png".to_string(),
-            image: DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(color))),
+            image: Some(DynamicImage::ImageRgb8(RgbImage::from_pixel(
+                width,
+                height,
+                Rgb(color),
+            ))),
+            dimensions: (width, height),
             background: Background::White,
             flags: PageFlags::default(),
             raw: None,
@@ -1136,7 +1209,7 @@ mod tests {
     #[test]
     fn normal_page_is_passed_through() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(100, 150));
-        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
         Ok(())
     }
@@ -1146,7 +1219,7 @@ mod tests {
         // 1.5:1 landscape against a portrait profile sits between the split and
         // bisect thresholds, so it is bisected rather than rotated.
         let image = DynamicImage::ImageRgb8(RgbImage::new(300, 200));
-        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, (1072, 1448));
         assert_eq!(
             order_of(&payloads),
             vec![OrderClass::SplitLeft, OrderClass::SplitRight]
@@ -1161,7 +1234,7 @@ mod tests {
     fn wide_spread_at_bisect_is_rotated() -> Result<()> {
         // 2.5:1 exceeds BISECT_THRESHOLD, so the spread only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(payloads[0].rotated);
         // Rotated 90°: dimensions swap.
@@ -1173,7 +1246,7 @@ mod tests {
     fn rotate_first_puts_the_rotated_spread_first() -> Result<()> {
         // 2.5:1 exceeds the bisect threshold, so it only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&["--rotate-first"])?, (1072, 1448));
+        let payloads = split_check(image, &options(&["--rotate-first"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateFirst]);
         Ok(())
     }
@@ -1181,7 +1254,7 @@ mod tests {
     #[test]
     fn no_rotate_keeps_the_spread_upright() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(&image, &options(&["--no-rotate"])?, (1072, 1448));
+        let payloads = split_check(image, &options(&["--no-rotate"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(!payloads[0].rotated);
         assert_eq!(payloads[0].image.dimensions(), (500, 200));
@@ -1197,8 +1270,8 @@ mod tests {
                 Rgb([255, 0, 0])
             }
         }));
-        let ltr = split_check(&image, &options(&[])?, (1072, 1448));
-        let rtl = split_check(&image, &options(&["--manga"])?, (1072, 1448));
+        let ltr = split_check(image.clone(), &options(&[])?, (1072, 1448));
+        let rtl = split_check(image, &options(&["--manga"])?, (1072, 1448));
         // Left-to-right reads left half first; right-to-left reads right half.
         assert_eq!(ltr[0].image.get_pixel(0, 0)[0], 0);
         assert_eq!(rtl[0].image.get_pixel(0, 0)[0], 255);
@@ -1208,7 +1281,7 @@ mod tests {
     #[test]
     fn maximize_strips_stacks_the_halves() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(400, 100));
-        let payloads = split_check(&image, &options(&["--maximize-strips"])?, (1072, 1448));
+        let payloads = split_check(image, &options(&["--maximize-strips"])?, (1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
         assert_eq!(payloads[0].image.dimensions(), (200, 200));
         Ok(())

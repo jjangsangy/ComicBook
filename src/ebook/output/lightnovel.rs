@@ -32,17 +32,18 @@ const KINDLE_MAX_DIMENSION: u32 = 1920;
 
 /// Convert `source` in light-novel mode, returning the output path(s).
 pub fn convert(source: &Path, options: &Options) -> Result<Vec<PathBuf>> {
-    let tree = input::load_tree(source, options)?;
+    let mut tree = input::load_tree(source, options)?;
     let bounds = resize_bounds(options);
 
     // Parallelise within each chapter and collect in reading order, matching the
-    // `os.walk` order KCC's `makeZIP` reproduces.
+    // `os.walk` order KCC's `makeZIP` reproduces. Pages are mutated so each one's
+    // pixels are released as soon as it has been resized.
     let bar = progress::bar(tree.page_count() as u64, "Resizing images");
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    for chapter in &tree.chapters {
+    for chapter in &mut tree.chapters {
         let resized = chapter
             .pages
-            .par_iter()
+            .par_iter_mut()
             .map(|page| {
                 let name = page.source_name.clone();
                 let result = resize_page(page, bounds, options).map(|bytes| (name, bytes));
@@ -79,16 +80,20 @@ fn resize_bounds(options: &Options) -> (u32, u32) {
 /// Resize one page if it exceeds the bounds, returning the bytes to archive.
 ///
 /// A page that already fits is emitted untouched (KCC only calls `img.save` inside
-/// its size check, so the file on disk is left as it was).
-fn resize_page(page: &Page, bounds: (u32, u32), options: &Options) -> Result<Vec<u8>> {
-    let (width, height) = (page.image.width(), page.image.height());
+/// its size check, so the file on disk is left as it was); such a page is never
+/// decoded.
+fn resize_page(page: &mut Page, bounds: (u32, u32), options: &Options) -> Result<Vec<u8>> {
+    let (width, height) = page.dimensions();
     if width <= bounds.0 && height <= bounds.1 {
         if let Some(raw) = &page.raw {
             return Ok(raw.clone());
         }
     }
 
-    let mut image = page.image.clone();
+    page.ensure_decoded()?;
+    let mut image = page
+        .take_image()
+        .context("light-novel page has no decoded image")?;
     if !options.force_color {
         image = grayscale(image);
     }

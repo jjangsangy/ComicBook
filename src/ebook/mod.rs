@@ -189,6 +189,9 @@ fn convert_prepared(
         processed.cover = Some(cover.page);
         processed.cover_smart_crop = cover.smart_cropped;
     }
+    // The output builders read only the *encoded* book, so the decoded-source tree
+    // (source bytes and any residual pixels) can be released before packaging.
+    prepared.tree = ComicTree::new();
     output::write_book(processed, &prepared, source, options)
 }
 

@@ -24,7 +24,7 @@ use crate::archive::{open_reader, ArchiveKind};
 use crate::ebook::model::ComicTree;
 use crate::ebook::options::Options;
 
-use super::archive::{build_tree, decode_page, LoadedPage};
+use super::archive::{build_tree, load_page, LoadedPage};
 
 /// The chosen image of each spine page, named `"<i><ext>"`, in spine order.
 type OrderedImages = Vec<(String, Vec<u8>)>;
@@ -42,7 +42,7 @@ pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
         Some(images) => Ok(build_tree(
             images
                 .into_iter()
-                .map(|(name, data)| decode_page(&name, &data))
+                .map(|(name, data)| load_page(&name, &data))
                 .collect::<Result<Vec<LoadedPage>>>()?,
             None,
             false,
