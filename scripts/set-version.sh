@@ -12,13 +12,15 @@
 #
 # `--changelog` additionally rolls CHANGELOG.md's top `## [Unreleased]` section
 # over to the released version: the heading is dated and retitled
-# `## [<version>] - <YYYY-MM-DD>`, and the link references at the foot of the
-# file are updated (`[Unreleased]` now compares from the new tag, and a
-# `[<version>]` entry is added comparing from the previous release — the first
-# dated heading below `Unreleased`). The flag is deliberately opt-in: only the
-# `bump-version` job, which commits the released version back to the default
-# branch, passes it. The per-target build jobs stamp a throwaway checkout and
-# must leave the changelog alone.
+# `## [<version>] - <YYYY-MM-DD>`, a fresh empty `## [Unreleased]` heading is
+# re-opened above it so the next release has a section to accumulate changes
+# under, and the link references at the foot of the file are updated
+# (`[Unreleased]` now compares from the new tag, and a `[<version>]` entry is
+# added comparing from the previous release — the first dated heading below
+# `Unreleased`). The flag is deliberately opt-in: only the `bump-version` job,
+# which commits the released version back to the default branch, passes it. The
+# per-target build jobs stamp a throwaway checkout and must leave the changelog
+# alone.
 #
 # Usage:
 #   scripts/set-version.sh v0.2.4               # the leading "v" is optional
@@ -141,6 +143,10 @@ trap 'rm -f "$changelog_tmp"' EXIT
 
 awk -v v="$version" -v date="$today" -v prev="$prev_tag" -v base="$base_url" '
 	/^## \[Unreleased\]/ && !heading {
+		# Re-open an empty Unreleased section above the dated release so the
+		# next release still has a heading to record its changes under.
+		print "## [Unreleased]"
+		print ""
 		print "## [" v "] - " date
 		heading = 1
 		next

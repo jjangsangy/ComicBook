@@ -8,6 +8,14 @@ reconstructed from the repository's release tags (`v*`); each release links to t
 since the previous tag. The release workflow dates the `Unreleased` section into a tagged
 release when a version tag is pushed.
 
+## [Unreleased]
+
+### Fixed
+
+- `scripts/set-version.sh` and `scripts/set-version.ps1` (with `--changelog` / `-Changelog`) now
+  re-open an empty `## [Unreleased]` heading above the dated release, so the default branch keeps a
+  section for the next release's entries instead of losing it on roll-over.
+
 ## [0.2.7] - 2026-09-27
 
 ### Added

@@ -111,9 +111,9 @@ Pushing a `v*` tag triggers the [`Release` workflow](.github/workflows/release.y
 4. Builds and attaches binaries for macOS (arm64, x86_64), Linux (x86_64, aarch64; both static musl and glibc) and Windows (x86_64), each with a `.sha256` checksum.
 5. Commits the version stamp back to the default branch (`chore(release): vX.Y.Z`), so `main`
    declares the released version instead of drifting until the next manual bump. The same commit
-   rolls the changelog's top `## [Unreleased]` section over to the released version (dating it and
-   updating its compare links); only this default-branch step passes `--changelog`, so the build
-   jobs above never touch `CHANGELOG.md`.
+   rolls the changelog's top `## [Unreleased]` section over to the released version (dating it,
+   re-opening an empty `## [Unreleased]` above it, and refreshing its compare links); only this
+   default-branch step passes `--changelog`, so the build jobs above never touch `CHANGELOG.md`.
 
 The version-bump commit is pushed with the workflow's `GITHUB_TOKEN`, so it does **not**
 re-trigger CI and it requires the token to be allowed to push to the default branch — branch
