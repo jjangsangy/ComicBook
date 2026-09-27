@@ -16,7 +16,7 @@ use image::{DynamicImage, GrayImage, Luma, Rgb, RgbImage};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
-use crate::ebook::processing::crop::to_gray;
+use crate::ebook::processing::color::luma_view;
 
 /// Frequencies at or above this many cycles/pixel are eligible (0.5 is Nyquist).
 const FREQ_THRESHOLD: f64 = 0.30;
@@ -33,9 +33,16 @@ const ATTENUATION: f64 = 0.10;
 /// which also selects the YUV or grayscale path.
 pub fn erase_rainbow_artifacts(image: &DynamicImage, is_color: bool) -> DynamicImage {
     if is_color {
-        DynamicImage::ImageRgb8(erase_color(&image.to_rgb8()))
+        // Borrow the plane when it is already RGB8; only other pixel types pay
+        // for the conversion.
+        match image.as_rgb8() {
+            Some(rgb) => DynamicImage::ImageRgb8(erase_color(rgb)),
+            None => DynamicImage::ImageRgb8(erase_color(&image.to_rgb8())),
+        }
     } else {
-        DynamicImage::ImageLuma8(erase_gray(&to_gray(image)))
+        // `luma_view` borrows an existing `L8` plane instead of cloning it; the
+        // FFT below reads it pixel by pixel and allocates its own buffer either way.
+        DynamicImage::ImageLuma8(erase_gray(&luma_view(image)))
     }
 }
 

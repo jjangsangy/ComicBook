@@ -41,8 +41,9 @@ external binary. Avoid crates that pull platform binaries (e.g. `pdfium-render`/
 | `askama` | compiled-in EPUB document skeletons (`templates/`) | MIT OR Apache-2.0 |
 | `uuid` (v4) | EPUB `dc:identifier`/`dtb:uid` | MIT OR Apache-2.0 |
 | `time` | `dcterms:modified` timestamp | MIT OR Apache-2.0 |
-| `imageproc` | grayscale, blur, edges, threshold, statistics | MIT |
+| `imageproc` | histogram statistics, the webtoon 3×3 edge convolution, in-place subpixel LUTs and rectangle fills | MIT |
 | `quantette` | fixed-palette quantisation + Floyd–Steinberg dithering | MIT OR Apache-2.0 |
+| `wide` | portable SIMD lanes for the per-pixel kernels `imageproc` leaves scalar (`processing/kernels.rs`) | MIT OR Apache-2.0 |
 | `png` | indexed/palette PNG output (`image` cannot write indexed PNG) | MIT OR Apache-2.0 |
 | `rustfft` | moiré FFT | MIT OR Apache-2.0 |
 | `slug` (+ `deunicode`) | chapter slugification | MIT |
@@ -63,6 +64,14 @@ declared as a dev-dependency so tests can read the EPUB container back.
 `quantette`'s `kmeans` default is disabled because only its `CustomPalette` path is used.
 `askama`'s `config` feature is what enables `path = "…"` templates; those extra crates are
 build-time only, so the runtime dependency is just `itoa`.
+
+`imageproc`'s `map`/`stats`/`contrast` helpers are scalar and `map_pixels` even allocates a `Vec`
+per pixel, which dominated a conversion's profile; the hot ones are replaced by the hand-written
+SIMD kernels in [`processing/kernels.rs`](../src/ebook/processing/kernels.rs) (see
+[processing.md](processing.md)). `wide` is already in the tree transitively via `quantette`, so
+promoting it to a direct dependency adds no new code to the build. The remaining `imageproc` calls
+are the ones with no vector analogue (a histogram scatter, a 3×3 convolution and small drawing
+primitives).
 
 ## Clean-room re-implementation and licensing
 

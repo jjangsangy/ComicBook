@@ -10,13 +10,15 @@
 
 use std::collections::BTreeSet;
 
-use image::{DynamicImage, GrayImage, ImageBuffer, Pixel, Primitive};
+use image::{DynamicImage, GrayImage, ImageBuffer, Pixel};
 
 use crate::ebook::model::Background;
+use crate::ebook::processing::color::luma_view;
 use crate::ebook::processing::crop::{
-    autocontrast_cutoff, binarize, box_blur_1, group_close_values, invert, threshold_from_power,
-    to_gray, CROP_CUTOFF, INTERPANEL_POWER,
+    autocontrast_cutoff_in_place, binarize_owned, group_close_values, threshold_from_power,
+    CROP_CUTOFF, INTERPANEL_POWER,
 };
+use crate::ebook::processing::kernels;
 
 /// Which gutters to collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,22 +40,19 @@ fn kept_span(start: i64, end: i64, keep: f64) -> (i64, i64) {
 
 /// The indices of the empty rows/columns that should be removed.
 fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize> {
-    let (width, height) = bw.dimensions();
+    let (_, height) = bw.dimensions();
 
-    let mut empties: Vec<i64> = Vec::new();
-    if horizontal {
-        for y in 0..height {
-            if (0..width).all(|x| bw.get_pixel(x, y)[0] == 0) {
-                empties.push(i64::from(y));
-            }
-        }
+    let empties: Vec<i64> = if horizontal {
+        kernels::empty_rows(bw)
+            .into_iter()
+            .map(|y| y as i64)
+            .collect()
     } else {
-        for x in 0..width {
-            if (0..height).all(|y| bw.get_pixel(x, y)[0] == 0) {
-                empties.push(i64::from(x));
-            }
-        }
-    }
+        kernels::empty_columns(bw)
+            .into_iter()
+            .map(|x| x as i64)
+            .collect()
+    };
 
     // The reference uses `img.size[1]` (the height) for the border test in both
     // directions; see the module docs.
@@ -95,25 +94,28 @@ where
     if remove_rows {
         let kept: Vec<usize> = (0..height).filter(|y| !remove.contains(y)).collect();
         let stride = width * channels;
-        let mut out = Vec::with_capacity(kept.len() * stride);
-        for &y in &kept {
-            out.extend_from_slice(&raw[y * stride..(y + 1) * stride]);
+        // Build the target buffer directly instead of `from_raw`ing a `Vec` and
+        // cloning the source in the (unreachable) length-mismatch branch.
+        let mut out = ImageBuffer::new(width as u32, kept.len() as u32);
+        let pixels: &mut [P::Subpixel] = &mut out;
+        for (target_y, &y) in kept.iter().enumerate() {
+            pixels[target_y * stride..(target_y + 1) * stride]
+                .copy_from_slice(&raw[y * stride..(y + 1) * stride]);
         }
-        ImageBuffer::from_raw(width as u32, kept.len() as u32, out)
-            .unwrap_or_else(|| source.clone())
+        out
     } else {
         let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
         let out_width = kept.len();
-        let mut out = vec![P::Subpixel::DEFAULT_MIN_VALUE; out_width * height * channels];
+        let mut out = ImageBuffer::new(out_width as u32, height as u32);
+        let pixels: &mut [P::Subpixel] = &mut out;
         for y in 0..height {
             for (target_x, &x) in kept.iter().enumerate() {
                 let from = (y * width + x) * channels;
                 let to = (y * out_width + target_x) * channels;
-                out[to..to + channels].copy_from_slice(&raw[from..from + channels]);
+                pixels[to..to + channels].copy_from_slice(&raw[from..from + channels]);
             }
         }
-        ImageBuffer::from_raw(out_width as u32, height as u32, out)
-            .unwrap_or_else(|| source.clone())
+        out
     }
 }
 
@@ -149,25 +151,35 @@ pub fn crop_empty_inter_panel(
     keep: f64,
     background: Background,
 ) -> DynamicImage {
-    let gray = to_gray(image);
-    let gray = if background == Background::White {
-        gray
-    } else {
-        invert(&gray)
-    };
-    let gray = box_blur_1(&autocontrast_cutoff(&gray, CROP_CUTOFF));
-    let bw = binarize(&gray, threshold_from_power(INTERPANEL_POWER));
+    // One owned grayscale buffer, inverted/autocontrasted/blurred in place instead
+    // of allocating a fresh full-image copy at every pass.
+    let mut gray = luma_view(image).into_owned();
+    if background != Background::White {
+        kernels::invert_in_place(&mut gray);
+    }
+    autocontrast_cutoff_in_place(&mut gray, CROP_CUTOFF);
+    kernels::box_blur_1_in_place(&mut gray);
+    let bw = binarize_owned(gray, threshold_from_power(INTERPANEL_POWER));
 
-    let mut result = image.clone();
-    if matches!(direction, Direction::Horizontal | Direction::Both) {
-        let remove = empty_sections(&bw, keep, true);
-        result = remove_lines(&result, &remove, true);
+    let horizontal = matches!(direction, Direction::Horizontal | Direction::Both);
+    let vertical = matches!(direction, Direction::Vertical | Direction::Both);
+
+    // Only clone when a direction needs the untouched original; `remove_lines`
+    // already allocates the cropped buffer.
+    if horizontal && vertical {
+        let rows = empty_sections(&bw, keep, true);
+        let columns = empty_sections(&bw, keep, false);
+        let first = remove_lines(image, &rows, true);
+        remove_lines(&first, &columns, false)
+    } else if horizontal {
+        let rows = empty_sections(&bw, keep, true);
+        remove_lines(image, &rows, true)
+    } else if vertical {
+        let columns = empty_sections(&bw, keep, false);
+        remove_lines(image, &columns, false)
+    } else {
+        image.clone()
     }
-    if matches!(direction, Direction::Vertical | Direction::Both) {
-        let remove = empty_sections(&bw, keep, false);
-        result = remove_lines(&result, &remove, false);
-    }
-    result
 }
 
 #[cfg(test)]

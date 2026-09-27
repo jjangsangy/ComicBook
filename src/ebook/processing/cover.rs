@@ -52,7 +52,8 @@ pub fn process(
     };
 
     // `Cover.process`: RGB → autocontrast → optional grayscale → smart crop → fit.
-    let mut image = DynamicImage::ImageRgb8(source.to_rgb8());
+    // `into_rgb8` reuses the decoded buffer when the source is already RGB.
+    let mut image = DynamicImage::ImageRgb8(source.into_rgb8());
     page::autocontrast_preserve_tone(&mut image);
     if !options.force_color {
         image = DynamicImage::ImageLuma8(to_luma601(&image));
@@ -68,7 +69,8 @@ pub fn process(
     let image = if options.cover_fill && !options.kindle_scribe_azw3 {
         page::fit(&image, size, Method::Lanczos)?
     } else {
-        page::thumbnail(&image, size, Method::Lanczos)?
+        // `thumbnail` takes ownership so an already-small cover is not copied.
+        page::thumbnail(image, size, Method::Lanczos)?
     };
 
     // The OPF advertises the cover as `image/jpeg`, so it is always JPEG whatever
@@ -125,9 +127,10 @@ pub fn labelled(
         .context("Failed to decode the cover for the tome label")?;
     // `Cover.process` leaves the cover as 8-bit grey (or RGB under `--force-color`),
     // so keep whichever of the two the JPEG carried.
-    let mut image = match decoded {
-        DynamicImage::ImageLuma8(_) => decoded,
-        other => DynamicImage::ImageRgb8(other.to_rgb8()),
+    let mut image = if matches!(decoded, DynamicImage::ImageLuma8(_)) {
+        decoded
+    } else {
+        DynamicImage::ImageRgb8(decoded.into_rgb8())
     };
     draw_label(&mut image, &format!("{tome}/{total}"));
     let (width, height) = (image.width(), image.height());

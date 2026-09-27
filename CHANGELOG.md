@@ -9,6 +9,39 @@ since the previous tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Vectorised the per-pixel hotspots of the `ebook` image pipeline. The scalar, allocating helpers
+  (`imageproc::map::map_pixels` allocated a `Vec` *per pixel*, and dominated the profile) are
+  replaced by the `wide`-based SIMD kernels in `src/ebook/processing/kernels.rs`: luma min/max,
+  planar inversion and thresholding, the 3-tap box blur, bounding boxes/rectangle counts, row and
+  column emptiness and the autocontrast stretch LUT. Every kernel is bit-identical to the scalar
+  code it replaces (integer arithmetic only).
+- Removed redundant image copies across the pipeline: grayscale planes are borrowed instead of
+  cloned (`color::luma_view`), the resizer reads straight from the source buffer via
+  `fast_image_resize::images::ImageRef`, contrast LUTs are applied in place, already-RGB buffers
+  are borrowed for WebP/PNG/GIF encoding and `into_rgb8` replaces `to_rgb8` where ownership is
+  available.
+- Removed the remaining whole-buffer copies on the non-default paths: the moiré eraser borrows an
+  existing RGB/L8 plane instead of converting it, a short webtoon strip is moved into its page, a
+  light-novel page that already fits is moved into the archive instead of cloned, the cover
+  thumbnail is moved when it already fits, and PDF verbatim JPEGs are borrowed through a `Cow`
+  rather than copied per page.
+- Threaded ownership through the crop preparation: the grayscale plane is inverted, autocontrasted
+  and box-blurred **in place** (`autocontrast_cutoff_in_place`, `kernels::box_blur_1_in_place`)
+  instead of allocating a fresh full-image copy at each pass, and the EPUB spine walk shares each
+  chosen image with `Arc` rather than copying it out of the container map.
+- Added the `wide` dependency (already transitively present via `quantette`) and the
+  `examples/gen_bench.rs` input generator plus `scripts/bench.sh` / `scripts/flamegraph.py`
+  profiling aids, and the `examples/alloc_count.rs` allocator counter with
+  `scripts/memory_bench.sh` for baseline-vs-worktree memory comparisons.
+
+### Docs
+
+- Documented the SIMD kernels and the float-fidelity rule that keeps the Rec.601 grayscale and
+  `colorCheck` weights scalar in `docs/processing.md`, the dependency in `docs/dependencies.md`,
+  and the profiling workflow in `docs/development.md`.
+
 ## [0.2.4] - 2026-09-26
 
 Release-automation release: the version now comes from the pushed tag instead of a

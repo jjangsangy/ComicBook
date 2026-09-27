@@ -21,13 +21,13 @@
 
 use anyhow::{bail, Context, Result};
 use image::{DynamicImage, GenericImageView, GrayImage, Luma, Rgb, RgbImage};
-use imageproc::contrast::{threshold, ThresholdType};
 use imageproc::filter::filter;
 use imageproc::kernel::Kernel;
 
 use crate::ebook::model::{Background, ComicTree, MediaType, Page, PageFlags};
 use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
+use crate::ebook::processing::kernels;
 use crate::ebook::processing::page::{self, Method};
 
 /// The reference caps the virtual page width at 1072 px (`max_width`), regardless of
@@ -60,7 +60,7 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
         // (`os.path.splitext(first)[0]`), then saved as PNG; the virtual pages keep
         // that stem and get a `-NNNN` suffix.
         let stem = split_stem(&chapter.pages[0].source_name);
-        chapter.pages = split_chapter(&merged, &stem, options)?;
+        chapter.pages = split_chapter(merged, &stem, options)?;
     }
     Ok(())
 }
@@ -107,7 +107,9 @@ fn merge_chapter(pages: &mut [Page]) -> Result<DynamicImage> {
         } else {
             DynamicImage::ImageRgb8(rgb)
         };
-        image::imageops::replace(&mut canvas, &resized.to_rgb8(), 0, y);
+        // `fit` preserves the RGB8 type, so this converts nothing.
+        let resized = resized.into_rgb8();
+        image::imageops::replace(&mut canvas, &resized, 0, y);
         y += i64::from(resized.height());
     }
     Ok(DynamicImage::ImageRgb8(canvas))
@@ -150,11 +152,14 @@ fn split_stem(source_name: &str) -> String {
 }
 
 /// Split a merged strip into virtual pages (KCC's `splitImage`).
-fn split_chapter(merged: &DynamicImage, stem: &str, options: &Options) -> Result<Vec<Page>> {
+///
+/// Takes the strip by value so the short-strip path can move it into its single
+/// page instead of cloning the whole (potentially huge) buffer.
+fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<Vec<Page>> {
     let (width, height) = merged.dimensions();
     if height <= options.profile_data.height {
         // Shorter than the device: the strip is used as a single page (`<stem>.png`).
-        return Ok(vec![page_from(merged.clone(), format!("{stem}.png"))]);
+        return Ok(vec![page_from(merged, format!("{stem}.png"))]);
     }
     if width < MIN_STRIP_WIDTH {
         bail!(
@@ -163,7 +168,7 @@ fn split_chapter(merged: &DynamicImage, stem: &str, options: &Options) -> Result
         );
     }
 
-    let panels = detect_panels(merged);
+    let panels = detect_panels(&merged);
     let virtual_height = virtual_height(width, options);
     let split = split_panels(&panels, virtual_height);
     let units = pack_pages(&split, virtual_height);
@@ -179,7 +184,7 @@ fn split_chapter(merged: &DynamicImage, stem: &str, options: &Options) -> Result
         let mut target_y = 0i64;
         for &index in unit {
             let (top, bottom, _) = split[index];
-            let panel = merged.crop_imm(0, top, width, bottom - top).to_rgb8();
+            let panel = merged.crop_imm(0, top, width, bottom - top).into_rgb8();
             image::imageops::replace(&mut canvas, &panel, 0, target_y);
             target_y += i64::from(split[index].2);
         }
@@ -285,17 +290,7 @@ fn detect_panels(image: &DynamicImage) -> Vec<Panel> {
 /// Pillow's `Image.crop` zero-fills below the strip, and `detectSolid` reads a
 /// uniformly-black band as solid, so a band that overhangs the bottom is black-padded.
 fn band_is_solid(mask: &GrayImage, x0: u32, y0: u32, x1: u32, y1: u32, height: u32) -> bool {
-    let mut has_white = false;
-    let mut has_black = y1 > height;
-    for y in y0..y1.min(height) {
-        for x in x0..x1 {
-            if mask.get_pixel(x, y)[0] != 0 {
-                has_white = true;
-            } else {
-                has_black = true;
-            }
-        }
-    }
+    let (has_white, has_black) = kernels::band_white_black(mask, x0, y0, x1, y1, height);
     !has_white || !has_black
 }
 
@@ -326,7 +321,9 @@ fn edge_mask(image: &DynamicImage) -> GrayImage {
         }
     }
 
-    threshold(&luma, EDGE_THRESHOLD, ThresholdType::Binary)
+    // Threshold in place: `imageproc::contrast::threshold` would clone the map.
+    kernels::threshold_in_place(&mut luma, EDGE_THRESHOLD, false);
+    luma
 }
 
 /// Split over-long panels, with overlap, until each is at most `virtual_height`.
@@ -460,7 +457,7 @@ mod tests {
             checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
         );
         let merged = merge_chapter(&mut [page])?;
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 500)]);
         assert_eq!(pages[0].source_name, "kcc-0001.png");
         Ok(())
@@ -471,7 +468,7 @@ mod tests {
         let page = strip_page("kcc-0001.png", checker_strip(800, SEGMENTS_A));
         let merged = merge_chapter(&mut [page])?;
         assert_eq!(merged.dimensions(), (800, 2150));
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 780), (800, 525)]);
         assert_eq!(pages[0].source_name, "kcc-0001-0001.png");
         assert_eq!(pages[1].source_name, "kcc-0001-0002.png");
@@ -486,7 +483,7 @@ mod tests {
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
         let merged = merge_chapter(&mut [page])?;
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
         // The KV profile (1072x1448) gives a virtual height of 1080, so the 2500px
         // panel becomes three 1080px parts.
         assert_eq!(
@@ -506,7 +503,7 @@ mod tests {
         );
         let merged = merge_chapter(&mut [page])?;
         // KO is 1264px wide, so the virtual height is 1680 / 1072 * 800 = 1253.
-        let pages = split_chapter(&merged, "kcc-0001", &options(&["-p", "KO"])?)?;
+        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KO"])?)?;
         assert_eq!(
             split_sizes(&pages),
             vec![(800, 1253), (800, 1253), (800, 1253)]

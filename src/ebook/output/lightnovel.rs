@@ -85,8 +85,10 @@ fn resize_bounds(options: &Options) -> (u32, u32) {
 fn resize_page(page: &mut Page, bounds: (u32, u32), options: &Options) -> Result<Vec<u8>> {
     let (width, height) = page.dimensions();
     if width <= bounds.0 && height <= bounds.1 {
-        if let Some(raw) = &page.raw {
-            return Ok(raw.clone());
+        // The tree is dropped once every page has been archived, so the source
+        // bytes can be *moved* into the output instead of cloned.
+        if let Some(raw) = page.raw.take() {
+            return Ok(raw);
         }
     }
 

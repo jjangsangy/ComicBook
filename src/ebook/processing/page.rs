@@ -25,10 +25,12 @@ use image::{
 use quantette::deps::palette::Srgb;
 use quantette::{dither::FloydSteinberg, ImageRef, PaletteSize, Pipeline, QuantizeMethod};
 use std::array;
+use std::borrow::Cow;
 
-use super::color::{color_check, luma601, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb};
+use super::color::{color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb};
 use crate::ebook::model::{Background, EncodedPage, MediaType, OrderClass, Page, PageFlags};
 use crate::ebook::options::{BorderColor, Format, Options};
+use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
 
 /// Split a page wider than this multiple of the target aspect ratio (see docs/processing.md).
@@ -177,7 +179,7 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
         }];
     }
     if landscape_mismatch && width <= dst_height && height <= dst_width && options.splitter == 1 {
-        return vec![rotate_payload(&image, options)];
+        return vec![rotate_payload(image, options)];
     }
     if landscape_mismatch && f64::from(width) / f64::from(height) > SPLIT_THRESHOLD {
         let ratio = f64::from(width) / f64::from(height);
@@ -197,7 +199,7 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
             });
         }
         if options.splitter > 0 || (options.splitter == 0 && ratio >= BISECT_THRESHOLD) {
-            payloads.push(rotate_payload(&image, options));
+            payloads.push(rotate_payload(image, options));
         }
         return payloads;
     }
@@ -215,8 +217,8 @@ fn maximize_strips(image: &DynamicImage, right_to_left: bool) -> Payload {
     let (width, height) = image.dimensions();
     let half = width / 2;
 
-    let left = image.crop_imm(0, 0, half, height).to_rgb8();
-    let right = image.crop_imm(half, 0, half, height).to_rgb8();
+    let left = image.crop_imm(0, 0, half, height).into_rgb8();
+    let right = image.crop_imm(half, 0, half, height).into_rgb8();
     let (first, second) = if right_to_left {
         (&right, &left)
     } else {
@@ -235,27 +237,26 @@ fn maximize_strips(image: &DynamicImage, right_to_left: bool) -> Payload {
 }
 
 /// The rotated-spread payload (`-kcc-a`/`-kcc-d`).
-fn rotate_payload(image: &DynamicImage, options: &Options) -> Payload {
-    Payload {
-        order: if options.rotate_first {
-            OrderClass::RotateFirst
-        } else {
-            OrderClass::RotateLast
-        },
-        image: rotate_spread(image, options),
-        rotated: !options.no_rotate,
-    }
-}
-
-/// Rotate a double-page spread 90°, in the direction KCC picked.
-fn rotate_spread(image: &DynamicImage, options: &Options) -> DynamicImage {
-    if options.no_rotate {
-        return image.clone();
-    }
-    if options.rotate_right {
+///
+/// Takes the image by value: under `--no-rotate` the page is passed through
+/// unchanged, so it can be moved instead of copied.
+fn rotate_payload(image: DynamicImage, options: &Options) -> Payload {
+    let order = if options.rotate_first {
+        OrderClass::RotateFirst
+    } else {
+        OrderClass::RotateLast
+    };
+    let rotated = if options.no_rotate {
+        image
+    } else if options.rotate_right {
         image.rotate90()
     } else {
         image.rotate270()
+    };
+    Payload {
+        order,
+        image: rotated,
+        rotated: !options.no_rotate,
     }
 }
 
@@ -475,8 +476,8 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
     }
 
     // "Extremely low contrast is probably intentional": 255 - 32 * 3.
-    let range = luma_range(image);
-    if range.max - range.min < 255 - 32 * 3 {
+    let (min, max) = luma_range(image);
+    if max - min < 255 - 32 * 3 {
         return;
     }
 
@@ -485,17 +486,16 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
     }
 
     // Pillow's autocontrast recomputes the range on the current pixels.
-    let range = luma_range(image);
-    if range.min >= range.max {
+    let (min, max) = luma_range(image);
+    if min >= max {
         return;
     }
-    stretch_contrast(image, range.min, range.max);
+    stretch_contrast(image, min, max);
 }
 
 /// The Rec. 601 luma minimum and maximum of an image.
-fn luma_range(image: &DynamicImage) -> imageproc::stats::MinMax<u8> {
-    let gray = to_luma601(image);
-    imageproc::stats::min_max(&gray)[0]
+fn luma_range(image: &DynamicImage) -> (u8, u8) {
+    kernels::luma_min_max(image).unwrap_or((0, 0))
 }
 
 /// Pillow's unconditional `ImageOps.autocontrast(preserve_tone=True)`: stretch
@@ -506,28 +506,28 @@ fn luma_range(image: &DynamicImage) -> imageproc::stats::MinMax<u8> {
 /// `--color-autocontrast`. A flat image is left untouched (Pillow's zero-width
 /// range would divide by zero).
 pub(crate) fn autocontrast_preserve_tone(image: &mut DynamicImage) {
-    let range = luma_range(image);
-    if range.min >= range.max {
+    let (min, max) = luma_range(image);
+    if min >= max {
         return;
     }
-    stretch_contrast(image, range.min, range.max);
+    stretch_contrast(image, min, max);
 }
 
 /// Stretch `[min, max]` to `[0, 255]` in every channel, preserving tone.
+///
+/// Equivalent to `imageproc::contrast::stretch_contrast` with a 0..255 output
+/// range (its formula depends only on the input value), but precomputed as a LUT
+/// and applied in place so the reference call's extra clone and per-pixel
+/// division both disappear.
 fn stretch_contrast(image: &mut DynamicImage, min: u8, max: u8) {
+    let lut = kernels::stretch_contrast_lut(min, max);
     match image {
-        DynamicImage::ImageLuma8(buffer) => {
-            let stretched = imageproc::contrast::stretch_contrast(buffer, min, max, 0, 255);
-            *buffer = stretched;
-        }
-        DynamicImage::ImageRgb8(buffer) => {
-            let stretched = imageproc::contrast::stretch_contrast(buffer, min, max, 0, 255);
-            *buffer = stretched;
-        }
+        DynamicImage::ImageLuma8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
+        DynamicImage::ImageRgb8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
         other => {
-            let rgb = other.to_rgb8();
-            let stretched = imageproc::contrast::stretch_contrast(&rgb, min, max, 0, 255);
-            *other = DynamicImage::ImageRgb8(stretched);
+            let mut rgb = other.to_rgb8();
+            kernels::apply_lut_in_place(&mut rgb, &lut);
+            *other = DynamicImage::ImageRgb8(rgb);
         }
     }
 }
@@ -537,20 +537,41 @@ fn autolevel_image(image: &mut DynamicImage, color: bool) {
     let black_point = black_point(image, color);
 
     if color {
-        let rgb = image.to_rgb8();
-        let leveled = RgbImage::from_fn(rgb.width(), rgb.height(), |x, y| {
-            let pixel = rgb.get_pixel(x, y);
-            let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-            let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
-            Rgb([r, g, b])
-        });
-        *image = DynamicImage::ImageRgb8(leveled);
+        // Level the plane in place when it is already RGB; only other pixel
+        // types pay for the `to_rgb8` conversion and a fresh buffer.
+        match image {
+            DynamicImage::ImageRgb8(buffer) => {
+                for pixel in buffer.pixels_mut() {
+                    let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+                    let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
+                    *pixel = Rgb([r, g, b]);
+                }
+            }
+            other => {
+                let mut rgb = other.to_rgb8();
+                for pixel in rgb.pixels_mut() {
+                    let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+                    let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
+                    *pixel = Rgb([r, g, b]);
+                }
+                *other = DynamicImage::ImageRgb8(rgb);
+            }
+        }
     } else {
-        let gray = to_luma601(image);
-        let leveled = GrayImage::from_fn(gray.width(), gray.height(), |x, y| {
-            Luma([gray.get_pixel(x, y)[0].max(black_point)])
-        });
-        *image = DynamicImage::ImageLuma8(leveled);
+        match image {
+            DynamicImage::ImageLuma8(buffer) => {
+                for value in buffer.iter_mut() {
+                    *value = (*value).max(black_point);
+                }
+            }
+            other => {
+                let mut gray = to_luma601(other);
+                for value in gray.iter_mut() {
+                    *value = (*value).max(black_point);
+                }
+                *other = DynamicImage::ImageLuma8(gray);
+            }
+        }
     }
 }
 
@@ -559,15 +580,26 @@ fn black_point(image: &DynamicImage, color: bool) -> u8 {
     let mut histogram = [0u32; 256];
 
     if color {
-        let rgb = image.to_rgb8();
-        for pixel in rgb.pixels() {
-            let (y, _, _) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-            histogram[y as usize] += 1;
+        if let Some(rgb) = image.as_rgb8() {
+            for pixel in rgb.pixels() {
+                let (y, _, _) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+                histogram[y as usize] += 1;
+            }
+        } else {
+            let rgb = image.to_rgb8();
+            for pixel in rgb.pixels() {
+                let (y, _, _) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+                histogram[y as usize] += 1;
+            }
+        }
+    } else if let Some(gray) = image.as_luma8() {
+        for value in gray.iter() {
+            histogram[*value as usize] += 1;
         }
     } else {
         let gray = to_luma601(image);
-        for pixel in gray.pixels() {
-            histogram[pixel[0] as usize] += 1;
+        for value in gray.iter() {
+            histogram[*value as usize] += 1;
         }
     }
 
@@ -702,7 +734,10 @@ where
     P: Pixel<Subpixel = u8> + 'static,
 {
     let (src_w, src_h) = source.dimensions();
-    let src = FastImage::from_vec_u8(src_w, src_h, source.as_raw().clone(), pixel_type)?;
+    // Borrow the source samples instead of copying them into an owned image:
+    // `ImageRef` implements `IntoImageView`, so the resizer reads straight from
+    // the caller's buffer (no full-image duplicate, see docs/architecture.md).
+    let src = fast_image_resize::images::ImageRef::new(src_w, src_h, source.as_raw(), pixel_type)?;
     let mut dst = FastImage::new(width, height, pixel_type);
     let options = ResizeOptions::new().resize_alg(alg);
     Resizer::new().resize(&src, &mut dst, &options)?;
@@ -747,17 +782,20 @@ pub(crate) fn contain(
 
 /// Pillow's `Image.thumbnail`: shrink to fit `size`, preserving aspect, never
 /// enlarging (a no-op when the image already fits). Used for the cover.
+///
+/// Takes the image by value so a thumbnail that is already small enough can be
+/// returned untouched instead of copied.
 pub(crate) fn thumbnail(
-    image: &DynamicImage,
+    image: DynamicImage,
     size: (u32, u32),
     method: Method,
 ) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     if width <= size.0 && height <= size.1 {
-        return Ok(image.clone());
+        return Ok(image);
     }
     let (target_w, target_h) = contain_size(width, height, size);
-    resize_to(image, target_w, target_h, method)
+    resize_to(&image, target_w, target_h, method)
 }
 
 /// Pillow's `ImageOps.contain` size calculation (`get_contain_resolution`; kept
@@ -840,10 +878,11 @@ fn filled_like(template: &DynamicImage, width: u32, height: u32, value: u8) -> D
 
 // --- encoding -------------------------------------------------------------------
 
-/// One page prepared for a PNG writer.
-enum PreparedPng {
-    Gray(GrayImage),
-    Rgb(RgbImage),
+/// One page prepared for a PNG writer. The pixel buffer is borrowed from the
+/// pipeline image whenever it already has the right type, so no copy is made.
+enum PreparedPng<'a> {
+    Gray(Cow<'a, GrayImage>),
+    Rgb(Cow<'a, RgbImage>),
     Indexed(Quantized),
 }
 
@@ -865,8 +904,7 @@ fn encode_image(
 
     if png_branch {
         if options.webp_output {
-            let rgb = image.to_rgb8();
-            return Ok((MediaType::WebP, encode_webp_lossless(&rgb)));
+            return Ok((MediaType::WebP, encode_webp_lossless(&rgb_view(image))));
         }
         if options.kindle_azw3 {
             return Ok((MediaType::Gif, encode_gif(image)?));
@@ -876,22 +914,22 @@ fn encode_image(
             // Grayscale page under `--force-png`: optionally quantise to the
             // profile palette, then fall back to grayscale where KCC does.
             if options.no_quantize {
-                PreparedPng::Gray(to_luma601(image))
+                PreparedPng::Gray(luma_view(image))
             } else {
-                let quantized = quantize(&image.to_rgb8(), options.profile_data.palette)?;
+                let quantized = quantize(&rgb_view(image), options.profile_data.palette)?;
                 if matches!(options.format, Format::Pdf)
                     || (options.profile == Profile::Kdx
                         && options.format == Format::Cbz
                         && !options.custom_profile)
                     || options.png_legacy
                 {
-                    PreparedPng::Gray(quantized_to_luma(&quantized))
+                    PreparedPng::Gray(Cow::Owned(quantized_to_luma(&quantized)))
                 } else {
                     PreparedPng::Indexed(quantized)
                 }
             }
         } else {
-            PreparedPng::Rgb(image.to_rgb8())
+            PreparedPng::Rgb(rgb_view(image))
         };
 
         let bytes = match &prepared {
@@ -913,10 +951,9 @@ fn encode_image(
     }
 
     if options.webp_output {
-        let rgb = image.to_rgb8();
         return Ok((
             MediaType::WebP,
-            encode_webp_lossy(&rgb, options.jpeg_quality),
+            encode_webp_lossy(&rgb_view(image), options.jpeg_quality),
         ));
     }
     Ok((MediaType::Jpeg, encode_jpeg(image, options.jpeg_quality)?))
@@ -1047,7 +1084,7 @@ fn pack_indices(indices: &[u8], width: u32, height: u32, depth: png::BitDepth) -
 
 fn encode_gif(image: &DynamicImage) -> Result<Vec<u8>> {
     // `image`'s GIF encoder rejects L8, and GIF is palette-based anyway.
-    let rgb = image.to_rgb8();
+    let rgb = rgb_view(image);
     let mut buffer = Vec::new();
     {
         let mut encoder = GifEncoder::new(&mut buffer);
@@ -1090,7 +1127,7 @@ pub(crate) fn encode_dynamic(
                 ExtendedColorType::L8,
             ),
             other => {
-                let rgb = other.to_rgb8();
+                let rgb = rgb_view(other);
                 encode_png(
                     rgb.as_raw(),
                     rgb.width(),
@@ -1100,7 +1137,15 @@ pub(crate) fn encode_dynamic(
             }
         },
         MediaType::Gif => encode_gif(image),
-        MediaType::WebP => Ok(encode_webp_lossy(&image.to_rgb8(), quality)),
+        MediaType::WebP => Ok(encode_webp_lossy(&rgb_view(image), quality)),
+    }
+}
+
+/// A borrowed RGB view of `image`, converting only when the pixel type differs.
+fn rgb_view(image: &DynamicImage) -> Cow<'_, RgbImage> {
+    match image.as_rgb8() {
+        Some(rgb) => Cow::Borrowed(rgb),
+        None => Cow::Owned(image.to_rgb8()),
     }
 }
 

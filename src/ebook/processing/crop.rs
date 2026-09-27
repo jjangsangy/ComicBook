@@ -20,11 +20,10 @@
 //!   same "reproduce the reference" rule applies.
 
 use image::{DynamicImage, GrayImage, ImageBuffer, Luma, Pixel};
-use imageproc::contrast::ThresholdType;
 
 use crate::ebook::model::Background;
-use crate::ebook::processing::color::to_luma601;
-use crate::ebook::processing::fill::bounding_box;
+use crate::ebook::processing::color::luma_view;
+use crate::ebook::processing::kernels;
 
 /// Height of the window inspected for a page number, as a fraction of the page
 /// height.
@@ -141,20 +140,6 @@ pub fn merge_boxes(mut boxes: Vec<IndexBox>, dx: f64, dy: f64) -> Vec<IndexBox> 
 
 // --- low-level image helpers ----------------------------------------------------
 
-/// Any decoded image as an 8-bit grayscale image, matching Pillow's
-/// `ImageOps.grayscale` (which is a no-op on an already-`L` image).
-pub(crate) fn to_gray(image: &DynamicImage) -> GrayImage {
-    match image {
-        DynamicImage::ImageLuma8(gray) => gray.clone(),
-        _ => to_luma601(image),
-    }
-}
-
-/// `255 - value` for every pixel.
-pub(crate) fn invert(image: &GrayImage) -> GrayImage {
-    imageproc::map::map_pixels(image, |pixel| Luma([255 - pixel[0]]))
-}
-
 /// Drop `cut` samples from each end of a 256-bin histogram (Pillow's
 /// `autocontrast` trim; shared with `color.rs`).
 pub(crate) fn trim_histogram_ends(histogram: &mut [u64; 256], cut: u64) {
@@ -187,10 +172,14 @@ pub(crate) fn trim_histogram_ends(histogram: &mut [u64; 256], cut: u64) {
     }
 }
 
-/// Pillow's `ImageOps.autocontrast(image, cutoff)`: drop `cutoff` percent of the
-/// samples from each end of the histogram, then stretch the remainder to
+/// Pillow's `ImageOps.autocontrast(image, cutoff)`, in place: drop `cutoff` percent
+/// of the samples from each end of the histogram, then stretch the remainder to
 /// `[0, 255]` with a truncated (not rounded) linear map.
-pub(crate) fn autocontrast_cutoff(image: &GrayImage, cutoff: f64) -> GrayImage {
+///
+/// The histogram is read from the buffer before the LUT is applied, so the
+/// transform needs no output allocation (a caller that already owns the buffer
+/// pays nothing).
+pub(crate) fn autocontrast_cutoff_in_place(image: &mut GrayImage, cutoff: f64) {
     let mut histogram: [u64; 256] = imageproc::stats::histogram(image).channels[0].map(u64::from);
 
     if cutoff != 0.0 {
@@ -215,67 +204,42 @@ pub(crate) fn autocontrast_cutoff(image: &GrayImage, cutoff: f64) -> GrayImage {
         _ => std::array::from_fn(|index| index as u8),
     };
 
-    imageproc::map::map_pixels(image, |pixel| Luma([lut[pixel[0] as usize]]))
-}
-
-/// Pillow's `ImageFilter.BoxBlur(1)`: a horizontal then vertical 3-tap box
-/// average, each rounded, with edge pixels replicated.
-///
-/// The two passes are *not* equivalent to a single 3x3 average because each pass
-/// rounds; the reference rounds per pass, so we do too. Kept bespoke; see
-/// docs/dependencies.md.
-pub(crate) fn box_blur_1(image: &GrayImage) -> GrayImage {
-    let (width, height) = image.dimensions();
-    if width == 0 || height == 0 {
-        return image.clone();
-    }
-
-    let mut horizontal = GrayImage::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let left = x.saturating_sub(1);
-            let right = (x + 1).min(width - 1);
-            let sum = u32::from(image.get_pixel(left, y)[0])
-                + u32::from(image.get_pixel(x, y)[0])
-                + u32::from(image.get_pixel(right, y)[0]);
-            horizontal.put_pixel(x, y, Luma([((sum + 1) / 3) as u8]));
-        }
-    }
-
-    let mut vertical = GrayImage::new(width, height);
-    for y in 0..height {
-        let top = y.saturating_sub(1);
-        let bottom = (y + 1).min(height - 1);
-        for x in 0..width {
-            let sum = u32::from(horizontal.get_pixel(x, top)[0])
-                + u32::from(horizontal.get_pixel(x, y)[0])
-                + u32::from(horizontal.get_pixel(x, bottom)[0]);
-            vertical.put_pixel(x, y, Luma([((sum + 1) / 3) as u8]));
-        }
-    }
-
-    vertical
+    // `imageproc::map::map_pixels` allocated a `Vec` per pixel; one in-place LUT
+    // pass keeps this to a single buffer.
+    kernels::apply_lut_in_place(image, &lut);
 }
 
 /// `255` where `value <= threshold`, else `0` (KCC's `point` threshold).
 pub(crate) fn binarize(image: &GrayImage, threshold: f64) -> GrayImage {
+    let mut out = image.clone();
+    binarize_in_place(&mut out, threshold);
+    out
+}
+
+/// [`binarize`] on an owned buffer, avoiding the clone when the caller is done
+/// with the grayscale source.
+pub(crate) fn binarize_owned(mut image: GrayImage, threshold: f64) -> GrayImage {
+    binarize_in_place(&mut image, threshold);
+    image
+}
+
+/// Threshold a grayscale buffer in place (the SIMD `imageproc::contrast::threshold`
+/// equivalent).
+fn binarize_in_place(image: &mut GrayImage, threshold: f64) {
     // A negative (or NaN) threshold matches no pixel; the `u8` cast would otherwise
     // saturate a large `--cropping-power` threshold to 0 and match every black pixel.
     if threshold.is_nan() || threshold < 0.0 {
-        return GrayImage::new(image.width(), image.height());
+        image.fill(0);
+        return;
     }
-    imageproc::contrast::threshold(
-        image,
-        threshold.min(255.0) as u8,
-        ThresholdType::BinaryInverted,
-    )
+    kernels::threshold_in_place(image, threshold.min(255.0) as u8, true);
 }
 
 /// The bounding box of the non-zero pixels, as Pillow's `getbbox` returns it
 /// (`(left, upper, right, lower)`, `right`/`lower` exclusive), or `None` when the
 /// image is entirely zero.
 fn bbox_nonzero(image: &GrayImage) -> Option<(u32, u32, u32, u32)> {
-    bounding_box(image, |value| value != 0)
+    kernels::bbox_nonzero(image)
 }
 
 /// Pillow's `Image.crop`: the requested rectangle, with out-of-bounds pixels
@@ -333,24 +297,14 @@ fn crop_padded(
 /// The non-zero pixel count and total area of `[left, right) x [upper, lower)`,
 /// clipped to the image.
 fn count_nonzero(image: &GrayImage, left: i64, upper: i64, right: i64, lower: i64) -> (u64, u64) {
-    let width = image.width() as i64;
-    let height = image.height() as i64;
+    let count = kernels::count_nonzero(image, left, upper, right, lower);
+    let width = i64::from(image.width());
+    let height = i64::from(image.height());
     let left = left.max(0);
     let upper = upper.max(0);
-    let right = right.min(width);
-    let lower = lower.min(height);
-
-    let mut count = 0u64;
-    let mut area = 0u64;
-    for y in upper..lower {
-        for x in left..right {
-            area += 1;
-            if image.get_pixel(x as u32, y as u32)[0] != 0 {
-                count += 1;
-            }
-        }
-    }
-
+    let right = right.min(width).max(left);
+    let lower = lower.min(height).max(upper);
+    let area = (right - left) as u64 * (lower - upper) as u64;
     (count, area)
 }
 
@@ -468,13 +422,16 @@ pub(crate) fn crop_rounded(
 
 /// The grayscale preparation shared by every crop variant.
 fn prepared_gray(image: &DynamicImage, background: Background) -> GrayImage {
-    let gray = to_gray(image);
-    let gray = if background == Background::White {
-        gray
-    } else {
-        invert(&gray)
-    };
-    box_blur_1(&autocontrast_cutoff(&gray, CROP_CUTOFF))
+    // Take ownership of one grayscale buffer and transform it in place. The
+    // invert / autocontrast / blur passes would otherwise each allocate a full
+    // copy; the common grayscale source only pays the one conversion copy.
+    let mut gray = luma_view(image).into_owned();
+    if background != Background::White {
+        kernels::invert_in_place(&mut gray);
+    }
+    autocontrast_cutoff_in_place(&mut gray, CROP_CUTOFF);
+    kernels::box_blur_1_in_place(&mut gray);
+    gray
 }
 
 /// The tightest margin crop box, or `None` when the page has no detectable ink.
@@ -484,7 +441,7 @@ pub fn margin_bbox(
     background: Background,
 ) -> Option<(u32, u32, u32, u32)> {
     let gray = prepared_gray(image, background);
-    let mut bw = binarize(&gray, threshold_from_power(power));
+    let mut bw = binarize_owned(gray, threshold_from_power(power));
     ignore_pixels_near_edge(&mut bw);
     bbox_nonzero(&bw)
 }
@@ -710,7 +667,8 @@ mod tests {
         // Pillow's BoxBlur(1) turns a lone 255 into a 3x3 block of 28s.
         let mut image = gray(7, 7, 0);
         image.put_pixel(3, 3, Luma([255]));
-        let blurred = box_blur_1(&image);
+        let mut blurred = image.clone();
+        kernels::box_blur_1_in_place(&mut blurred);
         for y in 2..=4 {
             for x in 2..=4 {
                 assert_eq!(blurred.get_pixel(x, y)[0], 28, "at {x},{y}");
@@ -726,7 +684,8 @@ mod tests {
         for y in 0..5 {
             image.put_pixel(0, y, Luma([255]));
         }
-        let blurred = box_blur_1(&image);
+        let mut blurred = image.clone();
+        kernels::box_blur_1_in_place(&mut blurred);
         for y in 0..5 {
             assert_eq!(blurred.get_pixel(0, y)[0], 170);
             assert_eq!(blurred.get_pixel(1, y)[0], 85);
@@ -742,7 +701,8 @@ mod tests {
         values.extend(std::iter::repeat_n(201u8, 1000));
         let image = GrayImage::from_raw(1, values.len() as u32, values).context("1xN buffer")?;
 
-        let stretched = autocontrast_cutoff(&image, 1.0);
+        let mut stretched = image.clone();
+        autocontrast_cutoff_in_place(&mut stretched, 1.0);
         assert_eq!(stretched.get_pixel(0, 0)[0], 0, "the 1 is clamped to black");
         assert_eq!(stretched.get_pixel(0, 1)[0], 0, "200 becomes black");
         assert_eq!(
@@ -755,8 +715,8 @@ mod tests {
 
     #[test]
     fn autocontrast_leaves_a_flat_image_alone() {
-        let image = gray(4, 4, 123);
-        let stretched = autocontrast_cutoff(&image, 1.0);
+        let mut stretched = gray(4, 4, 123);
+        autocontrast_cutoff_in_place(&mut stretched, 1.0);
         assert!(stretched.pixels().all(|pixel| pixel[0] == 123));
     }
 

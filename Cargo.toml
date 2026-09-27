@@ -36,6 +36,12 @@ infer = "0.22.0"
 # Floyd-Steinberg dithering. Both are MIT/Apache-2.0 and pure Rust.
 imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
 quantette = { version = "0.6", default-features = false, features = ["image", "threads"] }
+# Portable SIMD lane types for the per-pixel kernels that `imageproc` leaves
+# scalar (`processing/kernels.rs`). MIT OR Apache-2.0, pure Rust; lowers to NEON
+# on aarch64, SSE2 on x86_64 and a portable fallback elsewhere. Already in the
+# tree transitively via `quantette`, promoted to a direct dependency
+# (see docs/dependencies.md).
+wide = "1.7"
 # Palette (indexed) PNG output; the `image` crate cannot write an indexed PNG.
 png = "0.18"
 # The moiré eraser (`--erase-rainbow`) transforms the luminance plane with a 2D

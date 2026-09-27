@@ -76,6 +76,69 @@ cargo nextest run --run-ignored ignored-only
 cargo nextest run --run-ignored all --test ebook_webtoon_tests
 ```
 
+## Profiling
+
+Optimise what the profile says is hot, not what looks slow. Generate a deterministic input and
+trace a real conversion:
+
+```bash
+cargo run --release --example gen_bench -- target/bench/bench.cbz 400 1600 2400
+```
+
+A few hundred pages is enough that the process outlives the sampler; keep runs to a handful of
+seconds so the CPU does not thermally throttle and distort the comparison. `scripts/bench.sh`
+wraps the generation and timing (report `user`, the total CPU work).
+
+On macOS, attach `sample` while a conversion runs and read its **"Sort by top of stack"** (the
+leaf/self-time distribution) and **"Call graph"** (the call tree):
+
+```bash
+./target/release/comic-book ebook target/bench/bench.cbz -f epub -o target/bench/out &
+sample <pid> 5 -file target/bench/sample.txt
+python3 scripts/flamegraph.py target/bench/sample.txt target/bench/flame.svg
+```
+
+On Linux, `perf record -g` or `cargo flamegraph` give the same shape. `scripts/flamegraph.py`
+demangles Rust symbols through `c++filt`.
+
+The check that matters is that a change moves the hot path: the pre-`kernels.rs` trace is led by
+`malloc`/`free` (from `imageproc::map::map_pixels`' per-pixel `Vec`), and the trace after the SIMD
+and clone-removal pass is led by the JPEG codec and `fast_image_resize`, i.e. work that cannot be
+removed.
+
+### Memory
+
+A change can lower CPU time and still raise memory, so measure both. The dev-only
+`alloc_count` example (a counting global allocator) reports, for one conversion, the
+number of allocation calls, the total bytes requested and the peak live heap:
+
+```bash
+cargo build --release --example alloc_count
+./target/release/examples/alloc_count target/bench/bench.cbz target/bench/out --force-png
+```
+
+Any arguments after the output directory are forwarded to `ebook`, so every scenario can be
+measured. `scripts/memory_bench.sh [baseline-worktree] [input.cbz]` runs the default EPUB,
+`--force-png`, `--webtoon`, `-f pdf`, `--light-novel` and `--no-processing` runs against a
+baseline git worktree (`target/bench/base3` is the checkout the clone-removal pass used), which
+is the fastest way to answer "did this raise peak memory?" against a known-good tree.
+
+Allocation count and requested bytes are stable, reproducible signals; peak live is noisier, so
+run it a few times and read the direction. On the 40-page `gen_bench` input (1600x2400), the
+SIMD + clone-removal pass moved every scenario the right way — before (`cf5b9be`) → after:
+
+| scenario | allocations | allocated MiB | peak live MiB |
+|:---|:---|---:|---:|
+| `epub` (default) | 222,442,184 → 125,463 | 2,577.8 → 1,124.4 | 147 → 117 |
+| `--force-png` | 222,445,501 → 128,781 | 3,217.1 → 1,763.7 | 197 → 167 |
+| `--webtoon` | 464,198,522 → 144,574 | 5,827.5 → 3,058.8 | 1,302 → 1,046 |
+| `-f pdf` | 222,440,548 → 123,788 | 2,683.2 → 1,222.0 | 160 → 131 |
+| `--light-novel` | 15,459,373 → 99,257 | 604.2 → 425.7 | 110 → 91 |
+| `--no-processing` | 7,685,619 → 5,573 | 102.1 → 67.8 | 47 → 36 |
+
+The `ebook_robustness_tests` memory ceilings above pin the contract; the allocator example is
+how a new clone or an accidental `to_owned` is caught before it reaches them.
+
 ## CI
 
 The existing `ubuntu`/`macos`/`windows` matrix installs cargo-nextest

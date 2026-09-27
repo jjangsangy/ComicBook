@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fast_image_resize::images::Image as FastImage;
+use fast_image_resize::images::ImageRef;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image::{DynamicImage, GenericImageView, RgbImage};
 use std::fs;
@@ -38,9 +39,18 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
 /// mismatch that the dimensions taken from the source make impossible; fall back
 /// to the original image on that error rather than panicking.
 pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicImage {
-    let rgb = img.to_rgb8();
+    // Borrow the samples when the source is already RGB8 instead of cloning them
+    // into an owned `RgbImage`; only other pixel types pay for the conversion.
+    let owned;
+    let rgb = match img.as_rgb8() {
+        Some(rgb) => rgb,
+        None => {
+            owned = img.to_rgb8();
+            &owned
+        }
+    };
     let (w, h) = (rgb.width(), rgb.height());
-    let Ok(src_image) = FastImage::from_vec_u8(w, h, rgb.into_raw(), PixelType::U8x3) else {
+    let Ok(src_image) = ImageRef::new(w, h, rgb.as_raw(), PixelType::U8x3) else {
         return img.clone();
     };
     let mut dst_image = FastImage::new(new_w, new_h, PixelType::U8x3);
@@ -114,7 +124,14 @@ pub fn save_image_as_webp<P: AsRef<Path>>(
     dest_path: P,
     quality: f32,
 ) -> Result<()> {
-    let rgb = img.to_rgb8();
+    let owned;
+    let rgb = match img.as_rgb8() {
+        Some(rgb) => rgb,
+        None => {
+            owned = img.to_rgb8();
+            &owned
+        }
+    };
     let encoder = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
     let memory = encoder.encode(quality);
     if let Some(parent) = dest_path

@@ -10,7 +10,9 @@
 //! `Image.convert("YCbCr")`. Kept bespoke (see docs/dependencies.md): the coefficients are
 //! pinned to JFIF/Rec. 601 by the tests below.
 
-use image::{DynamicImage, GrayImage, Luma, RgbImage};
+use std::borrow::Cow;
+
+use image::{DynamicImage, GrayImage, RgbImage};
 
 use crate::ebook::options::Options;
 use crate::ebook::processing::crop::trim_histogram_ends;
@@ -157,18 +159,37 @@ pub(crate) fn luma601(r: u8, g: u8, b: u8) -> u8 {
 ///
 /// An already-8-bit source is mapped directly rather than routed through a cloned
 /// RGB buffer, which keeps the conversion to a single extra allocation (a full
-/// image copy otherwise dominates a page's peak working set).
+/// image copy otherwise dominates a page's peak working set). Read-only callers
+/// should prefer [`luma_view`], which borrows an `L8` plane outright.
 pub(crate) fn to_luma601(image: &DynamicImage) -> GrayImage {
     match image {
         DynamicImage::ImageLuma8(gray) => gray.clone(),
-        DynamicImage::ImageRgb8(rgb) => {
-            imageproc::map::map_pixels(rgb, |p| Luma([luma601(p[0], p[1], p[2])]))
-        }
-        other => {
-            let rgb = other.to_rgb8();
-            imageproc::map::map_pixels(&rgb, |p| Luma([luma601(p[0], p[1], p[2])]))
-        }
+        DynamicImage::ImageRgb8(rgb) => rgb_to_luma(rgb),
+        other => rgb_to_luma(&other.to_rgb8()),
     }
+}
+
+/// A borrowed or freshly converted Rec. 601 grayscale view of `image`.
+///
+/// Avoids the full-image `L8` copy [`to_luma601`] would make when the caller
+/// only needs to read the plane (fill detection, contrast range, crop prep).
+pub(crate) fn luma_view(image: &DynamicImage) -> Cow<'_, GrayImage> {
+    match image.as_luma8() {
+        Some(gray) => Cow::Borrowed(gray),
+        None => Cow::Owned(to_luma601(image)),
+    }
+}
+
+/// Rec. 601 RGB → `L8`, written into an exactly-sized output buffer (no
+/// per-pixel allocation and no `Vec` growth, unlike `imageproc::map::map_pixels`).
+fn rgb_to_luma(rgb: &RgbImage) -> GrayImage {
+    let (width, height) = rgb.dimensions();
+    let raw = rgb.as_raw();
+    let mut out = Vec::with_capacity(raw.len() / 3);
+    for pixel in rgb.as_raw().as_chunks::<3>().0 {
+        out.push(luma601(pixel[0], pixel[1], pixel[2]));
+    }
+    GrayImage::from_raw(width, height, out).unwrap_or_else(|| GrayImage::new(width, height))
 }
 
 fn clamp_u8(value: f64) -> u8 {

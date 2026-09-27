@@ -605,6 +605,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "webp",
+ "wide",
  "zip",
 ]
 

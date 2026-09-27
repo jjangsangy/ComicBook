@@ -9,6 +9,7 @@
 //! The document skeleton is written with the pure-Rust `pdf-writer` crate, which
 //! also emits the cross-reference table and trailer (see docs/dependencies.md).
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 
@@ -116,26 +117,29 @@ pub fn build_pdf(
 }
 
 /// An image ready to be embedded as an image XObject.
-struct PdfImage {
+struct PdfImage<'a> {
     filter: Filter,
-    /// The (possibly compressed) stream payload.
-    data: Vec<u8>,
+    /// The (possibly compressed) stream payload: borrowed from the page when its
+    /// JPEG can be embedded verbatim, owned when it had to be re-encoded.
+    data: Cow<'a, [u8]>,
     /// One component (`DeviceGray`) versus three (`DeviceRGB`).
     gray: bool,
 }
 
-impl PdfImage {
+impl<'a> PdfImage<'a> {
     /// Prepare one processed page for embedding.
     ///
     /// A JPEG whose header declares a gray or RGB 8-bit image is embedded verbatim
     /// through `DCTDecode`. Anything else (PNG/GIF/WebP, a `--no-processing` CMYK
     /// JPEG, an exotic colour type) is decoded and its raw samples `FlateDecode`d.
-    fn encode(page: &EncodedPage) -> Result<PdfImage> {
+    fn encode(page: &'a EncodedPage) -> Result<PdfImage<'a>> {
         if page.media_type == MediaType::Jpeg {
             if let Some(components) = jpeg_components(&page.bytes) {
                 return Ok(PdfImage {
                     filter: Filter::DctDecode,
-                    data: page.bytes.clone(),
+                    // Borrow the page's bytes rather than copying the whole JPEG
+                    // into the writer's input buffer.
+                    data: Cow::Borrowed(&page.bytes),
                     gray: components == 1,
                 });
             }
@@ -148,19 +152,19 @@ impl PdfImage {
 }
 
 /// Encode decoded pixels as a `FlateDecode`d 8-bit gray or RGB stream.
-fn raw_image(image: &DynamicImage) -> Result<PdfImage> {
+fn raw_image(image: &DynamicImage) -> Result<PdfImage<'static>> {
     if is_gray(image.color()) {
         let gray = image.to_luma8();
         Ok(PdfImage {
             filter: Filter::FlateDecode,
-            data: deflate(gray.as_raw())?,
+            data: Cow::Owned(deflate(gray.as_raw())?),
             gray: true,
         })
     } else {
         let rgb = image.to_rgb8();
         Ok(PdfImage {
             filter: Filter::FlateDecode,
-            data: deflate(rgb.as_raw())?,
+            data: Cow::Owned(deflate(rgb.as_raw())?),
             gray: false,
         })
     }

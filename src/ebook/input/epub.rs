@@ -19,6 +19,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::archive::{open_reader, ArchiveKind};
 use crate::ebook::model::ComicTree;
@@ -27,7 +28,9 @@ use crate::ebook::options::Options;
 use super::archive::{build_tree, load_page, LoadedPage};
 
 /// The chosen image of each spine page, named `"<i><ext>"`, in spine order.
-type OrderedImages = Vec<(String, Vec<u8>)>;
+///
+/// Shared by `Arc` so an image referenced by several spine pages is copied once.
+type OrderedImages = Vec<(String, Arc<[u8]>)>;
 
 /// Load an EPUB source into a [`ComicTree`] in spine order.
 pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
@@ -53,13 +56,15 @@ pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
 }
 
 /// Read every file entry of the EPUB container into memory.
-fn read_container(source: &Path) -> Result<HashMap<String, Vec<u8>>> {
+fn read_container(source: &Path) -> Result<HashMap<String, Arc<[u8]>>> {
     let mut reader = open_reader(ArchiveKind::Cbz, source)?;
     let mut scratch = Vec::new();
     let mut files = HashMap::new();
     reader.read_entries(&mut scratch, &mut |name, is_dir, data| {
         if !is_dir {
-            files.insert(name.to_string(), data.to_vec());
+            // One copy out of the reader's scratch buffer; the spine walk then
+            // shares the chosen entries by `Arc` instead of copying them again.
+            files.insert(name.to_string(), Arc::from(data));
         }
         Ok(())
     })?;
@@ -69,7 +74,7 @@ fn read_container(source: &Path) -> Result<HashMap<String, Vec<u8>>> {
 /// Walk the EPUB's OPF spine and return the chosen image of each page, named
 /// `"<i><ext>"` in spine order (KCC's `f"{i}{ext}"`), or `None` when no page
 /// yields an image.
-fn spine_images(files: &HashMap<String, Vec<u8>>) -> Result<Option<OrderedImages>> {
+fn spine_images(files: &HashMap<String, Arc<[u8]>>) -> Result<Option<OrderedImages>> {
     let container = files
         .get("META-INF/container.xml")
         .context("EPUB container is missing META-INF/container.xml")?;
@@ -140,7 +145,7 @@ fn spine_images(files: &HashMap<String, Vec<u8>>) -> Result<Option<OrderedImages
             if super::archive::is_ebook_image(&image_path) {
                 if let Some(data) = files.get(&image_path) {
                     let ext = extension_of(&image_path);
-                    ordered.push((format!("{}{}", ordered.len(), ext), data.clone()));
+                    ordered.push((format!("{}{}", ordered.len(), ext), Arc::clone(data)));
                 }
             }
         }

@@ -10,17 +10,18 @@
 use image::{DynamicImage, GrayImage};
 
 use crate::ebook::model::Background;
-use crate::ebook::processing::color::to_luma601;
+use crate::ebook::processing::color::luma_view;
+use crate::ebook::processing::kernels;
 
 /// Threshold between black and white; values `>= 128` are white.
 const THRESHOLD: u8 = 128;
 
 /// Detect the dominant background colour of a page.
 pub fn fill_check(image: &DynamicImage) -> Background {
-    let mask = to_luma601(image);
+    let mask = luma_view(image);
 
-    let white_box = bounding_box(&mask, |value| value >= THRESHOLD);
-    let black_box = bounding_box(&mask, |value| value < THRESHOLD);
+    let white_box = kernels::bbox_ge(&mask, THRESHOLD);
+    let black_box = kernels::bbox_lt(&mask, THRESHOLD);
 
     let white_area = white_box.map(box_area).unwrap_or(0);
     let black_area = black_box.map(box_area).unwrap_or(0);
@@ -53,32 +54,6 @@ pub fn fill_check(image: &DynamicImage) -> Background {
 /// `right`/`bottom` exclusive, as Pillow's `getbbox` returns them).
 fn box_area((left, top, right, bottom): (u32, u32, u32, u32)) -> u64 {
     u64::from(right - left) * u64::from(bottom - top)
-}
-
-/// The bounding box of every pixel satisfying `predicate`, or `None` when none do
-/// (shared with `crop.rs`'s `getbbox`; see docs/dependencies.md).
-pub(crate) fn bounding_box(
-    mask: &GrayImage,
-    predicate: impl Fn(u8) -> bool,
-) -> Option<(u32, u32, u32, u32)> {
-    let (width, height) = mask.dimensions();
-    let mut min_x = width;
-    let mut min_y = height;
-    let mut max_x = 0;
-    let mut max_y = 0;
-    let mut found = false;
-
-    for (x, y, pixel) in mask.enumerate_pixels() {
-        if predicate(pixel[0]) {
-            found = true;
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x);
-            max_y = max_y.max(y);
-        }
-    }
-
-    found.then_some((min_x, min_y, max_x + 1, max_y + 1))
 }
 
 /// Sum the border-strip histogram votes (KCC's tie-breaker).
@@ -117,18 +92,18 @@ fn border_fill(mask: &GrayImage) -> i64 {
 
 /// The histogram vote for the rectangle `[left, right) x [top, bottom)`.
 fn strip_vote(mask: &GrayImage, left: u32, top: u32, right: u32, bottom: u32) -> i64 {
-    let mut black = 0u64;
-    let mut white = 0u64;
-
-    for y in top..bottom {
-        for x in left..right {
-            if mask.get_pixel(x, y)[0] < THRESHOLD {
-                black += 1;
-            } else {
-                white += 1;
-            }
-        }
-    }
+    let black = kernels::count_lt(
+        mask,
+        i64::from(left),
+        i64::from(top),
+        i64::from(right),
+        i64::from(bottom),
+        THRESHOLD,
+    );
+    let width = i64::from(right) - i64::from(left);
+    let height = i64::from(bottom) - i64::from(top);
+    let area = (width.max(0) * height.max(0)) as u64;
+    let white = area - black;
 
     match (black, white) {
         (0, _) => -1,

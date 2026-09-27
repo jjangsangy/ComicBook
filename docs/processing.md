@@ -50,6 +50,33 @@ moiré erase → quantize/convert → encode.
     diagonal frequencies ≥ 0.30 cycles/px around 135°±10° (and perpendicular) by 0.10, inverse
     FFT, clip. The grayscale path operates on `L` directly.
 
+## SIMD kernels
+
+The per-pixel hotspots that `imageproc` leaves scalar — and where its `map_pixels` allocated a
+`Vec` per pixel — live in `processing/kernels.rs` and are vectorised with the portable `wide`
+lane types (NEON on aarch64, SSE2 on x86_64, portable fallback elsewhere):
+
+- Rec.601 luma min/max, a 16-lane reduction, for the autocontrast range.
+- In-place inversion and binary threshold of `L8` planes.
+- The 3-tap `BoxBlur(1)`, horizontal then vertical, with the exact `(a + b + c + 1) / 3` rounding.
+- Bounding boxes (`>= t`, `< t`, non-zero) and rectangle counts, via 16-lane compare bitmasks.
+- Row/column emptiness (inter-panel crop) and the webtoon band's white/black test.
+- The autocontrast stretch as one 256-entry LUT, replacing a per-pixel integer division.
+
+Two rules constrain what may be vectorised:
+
+1. **Bit-exactness.** Every kernel does integer arithmetic that reproduces the scalar reference
+exactly (the box-blur divide is an exact magic multiply, the stretch LUT applies the same integer
+formula). Nothing reassociates a pinned float computation.
+2. **Pinned float weights stay scalar.** The Rec.601 grayscale conversion and `colorCheck`'s Cb/Cr
+histograms keep their `f64` per-pixel arithmetic: their decimal weights are pinned to
+Pillow/KCC, and a fixed-point reimplementation rounds differently from the `f64` result on the
+exact-half inputs (~0.02 % of RGB triples). Their loops are allocation-free but deliberately not
+vectorised, so the emitted pages do not change.
+
+The kernels are pinned against scalar references by the tests in `kernels.rs`, so a vectorisation
+bug fails a test instead of silently changing an image.
+
 ## Fidelity rules
 
 KCC/Pillow quirks that are reproduced deliberately (each pinned by tests; the full rationale is

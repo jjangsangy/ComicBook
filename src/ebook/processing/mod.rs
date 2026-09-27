@@ -10,6 +10,7 @@ pub mod cover;
 pub mod crop;
 pub mod fill;
 pub mod interpanel;
+pub mod kernels;
 pub mod page;
 pub mod rainbow;
 pub mod webtoon;
@@ -162,7 +163,15 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Resu
 
 /// Whether a page is detected as colour, for the first-page crop exemption.
 fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
-    color::color_check(&image.to_rgb8(), page::is_grayscale_image(image), options)
+    // A grayscale source is never colour (KCC's `colorCheck` shortcut), so skip
+    // the RGB conversion entirely for the common manga scan.
+    if page::is_grayscale_image(image) {
+        return false;
+    }
+    match image.as_rgb8() {
+        Some(rgb) => color::color_check(rgb, false, options),
+        None => color::color_check(&image.to_rgb8(), false, options),
+    }
 }
 
 /// KCC's `detectSuboptimalProcessing`: warnings about a source that is likely to
