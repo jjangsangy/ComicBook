@@ -35,8 +35,9 @@ OEBPS/content.opf
   `page-list`; `ComicInfo.xml` bookmarks become the navigation entries.
 - **Packaging** (`output/epub/package.rs`): `mimetype` first and stored, every other entry
   stored (KCC's payloads are already compressed images).
-- **KePub** (`output/kepub.rs`): the same documents with a `.kepub.epub` extension and
-  `rendition:page-spread-*` properties (the `isKobo` branch of the spread-property algorithm).
+- **KePub** (`output/kepub.rs`): the same documents with a `.kepub.epub` extension
+  (`--kepub-short-ext` trims it to `.kepub`) and `rendition:page-spread-*` properties (the
+  `isKobo` branch of the spread-property algorithm).
 
 IDs and timestamps come from crates (`uuid` v4 for `dc:identifier`/`dtb:uid`, `time` for
 `dcterms:modified`), not hand-rolled code.

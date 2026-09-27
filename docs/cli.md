@@ -92,6 +92,7 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 | `--language` | `--language <bcp47>` | default `en-US` |
 | `-f/--format` | `-f/--format <FMT>` | see [Formats](#formats) |
 | `--nokepub` | `--no-kepub` | `.epub` instead of `.kepub.epub` |
+| — | `--kepub-short-ext` | single `.kepub` instead of `.kepub.epub` (requires KePub output) |
 | `-b/--batchsplit` | `-b/--batch-split <0\|1\|2>` | |
 | `--spreadshift` | `--spread-shift` | |
 | `--onepagelandscape` | `--one-page-landscape` | |
@@ -108,7 +109,7 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 |:---|:---|
 | `auto` | pick by profile (MOBI for Kindle, PDF for reMarkable, else EPUB) |
 | `epub` | fixed-layout EPUB 3 |
-| `kepub` | KePub (EPUB with `.kepub.epub` + Kobo spread properties) |
+| `kepub` | KePub (EPUB with `.kepub.epub` + Kobo spread properties; `--kepub-short-ext` shortens the extension to `.kepub`) |
 | `azw3` | KF8-only Kindle file |
 | `mobi` | dual MOBI7+KF8 `.mobi` (legacy devices) |
 | `mobi+epub` | keep the intermediate EPUB alongside the MOBI |

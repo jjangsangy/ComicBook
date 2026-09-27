@@ -208,7 +208,13 @@ pub fn output_filename(
 ) -> PathBuf {
     // KCC's `folder_output` (`-f folder`) is not ported; output is always a file.
     let ext = if options.format == Format::Epub && options.kepub {
-        ".kepub.epub".to_string()
+        // Kobo's canonical extension is `.kepub.epub`; `--kepub-short-ext` trims it
+        // to `.kepub`.
+        if options.kepub_short_ext {
+            ".kepub".to_string()
+        } else {
+            ".kepub.epub".to_string()
+        }
     } else {
         ext.to_string()
     };

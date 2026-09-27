@@ -150,6 +150,8 @@ pub struct Options {
     pub spread_shift: bool,
     pub one_page_landscape: bool,
     pub no_kepub: bool,
+    /// KePub output uses a single `.kepub` extension instead of `.kepub.epub`.
+    pub kepub_short_ext: bool,
     pub right_to_left: bool,
 
     // Derived output flags
@@ -347,6 +349,10 @@ impl Options {
         if profile.is_kobo_brand() && format == Format::Epub && !no_kepub {
             kepub = true;
         }
+        // The shortened extension only makes sense for KePub output.
+        if args.output.kepub_short_ext && !kepub {
+            bail!("--kepub-short-ext requires KePub output; use `-f kepub` or a Kobo profile");
+        }
 
         Ok(Options {
             inputs: args.input.clone(),
@@ -416,6 +422,7 @@ impl Options {
             spread_shift: args.output.spread_shift,
             one_page_landscape: args.output.one_page_landscape,
             no_kepub,
+            kepub_short_ext: args.output.kepub_short_ext,
             right_to_left,
 
             kfx,

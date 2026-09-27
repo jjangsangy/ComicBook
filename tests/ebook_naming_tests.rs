@@ -213,6 +213,12 @@ fn output_filenames_cover_every_format() -> Result<()> {
         tmp.path().join("book.kepub.epub")
     );
 
+    let short_ext = options(&["-p", "KoE", "-f", "epub", "--kepub-short-ext"])?;
+    assert_eq!(
+        output_filename(&source, None, ".epub", "", &short_ext),
+        tmp.path().join("book.kepub")
+    );
+
     let plain = options(&["-p", "KoE", "-f", "epub", "--no-kepub"])?;
     assert_eq!(
         output_filename(&source, None, ".epub", "", &plain),
@@ -230,6 +236,26 @@ fn output_filenames_cover_every_format() -> Result<()> {
         output_filename(&source, None, ".pdf", "", &pdf),
         tmp.path().join("book.pdf")
     );
+    Ok(())
+}
+
+#[test]
+fn kepub_short_ext_requires_kepub_output() -> Result<()> {
+    // A plain EPUB on a non-Kobo profile is not a KePub.
+    let err = options(&["-f", "epub", "--kepub-short-ext"])
+        .err()
+        .context("the flag must be rejected without KePub output")?;
+    assert!(err.to_string().contains("--kepub-short-ext"));
+
+    // Non-EPUB formats are rejected too.
+    assert!(options(&["-f", "cbz", "--kepub-short-ext"]).is_err());
+
+    // `--no-kepub` forces plain EPUB even on a Kobo profile.
+    assert!(options(&["-p", "KoE", "-f", "epub", "--no-kepub", "--kepub-short-ext"]).is_err());
+
+    // A Kobo profile (or explicit `-f kepub`) is accepted.
+    assert!(options(&["-p", "KoE", "-f", "epub", "--kepub-short-ext"]).is_ok());
+    assert!(options(&["-f", "kepub", "--kepub-short-ext"]).is_ok());
     Ok(())
 }
 

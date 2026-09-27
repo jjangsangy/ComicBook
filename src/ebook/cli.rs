@@ -308,6 +308,10 @@ pub struct OutputArgs {
     #[arg(long = "no-kepub")]
     pub no_kepub: bool,
 
+    /// Output KePub with a single `.kepub` extension rather than `.kepub.epub`
+    #[arg(long = "kepub-short-ext")]
+    pub kepub_short_ext: bool,
+
     /// Split output into multiple files: 0 none, 1 automatic, 2 per subdirectory
     #[arg(
         short = 'b',
