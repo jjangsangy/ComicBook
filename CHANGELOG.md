@@ -9,6 +9,17 @@ since the previous tag.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-26
+
+Release-automation release: the version now comes from the pushed tag instead of a
+hand-bumped manifest.
+
+### Added
+
+- `scripts/set-version.sh` and `scripts/set-version.ps1`, which stamp `Cargo.toml`'s `[package]
+  version` from a release tag (validating it as SemVer first, and rewriting only the manifest's
+  `[package]` entry).
+
 ### Build
 
 - The release workflow validates the pushed tag as a SemVer version, stamps `Cargo.toml`'s
@@ -21,6 +32,10 @@ since the previous tag.
 
 - Re-synced the committed `Cargo.lock` with `Cargo.toml` (both now declare `0.2.3`), so a
   `--locked` build on `main` no longer fails.
+
+### Docs
+
+- Updated `CONTRIBUTING.md` and `docs/development.md` for tag-driven versioning.
 
 ## [0.2.3] - 2026-09-26
 
@@ -211,7 +226,8 @@ First tagged pre-release of the initial `comic-book` CLI.
 
 <!-- Links -->
 
-[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/jjangsangy/ComicBook/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jjangsangy/ComicBook/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jjangsangy/ComicBook/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jjangsangy/ComicBook/compare/v0.2.0...v0.2.1
