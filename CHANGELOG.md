@@ -8,7 +8,7 @@ reconstructed from the repository's release tags (`v*`); each release links to t
 since the previous tag. The release workflow dates the `Unreleased` section into a tagged
 release when a version tag is pushed.
 
-## [Unreleased]
+## [0.2.6] - 2026-09-27
 
 ### Changed
 
@@ -276,7 +276,8 @@ First tagged pre-release of the initial `comic-book` CLI.
 
 <!-- Links -->
 
-[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/jjangsangy/ComicBook/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jjangsangy/ComicBook/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jjangsangy/ComicBook/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jjangsangy/ComicBook/compare/v0.2.2...v0.2.3
