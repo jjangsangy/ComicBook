@@ -1,7 +1,7 @@
 //! Tests for the `comic-book ebook` CLI surface: parsing, option resolution and the
 //! device profile tables.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use comic_book::cli::{Cli, Commands};
@@ -49,6 +49,30 @@ fn help_and_version_are_available_on_the_subcommand() -> Result<()> {
         bail!("--version should be handled by clap");
     };
     assert_eq!(version.kind(), ErrorKind::DisplayVersion);
+    Ok(())
+}
+
+#[test]
+fn help_expands_every_profile_acronym() -> Result<()> {
+    let mut command = Cli::command();
+    let ebook = command
+        .find_subcommand_mut("ebook")
+        .ok_or_else(|| anyhow!("the ebook subcommand should exist"))?;
+    let help = ebook.render_long_help().to_string();
+
+    for entry in PROFILE_TABLE.iter() {
+        assert!(
+            help.contains(entry.code),
+            "help should list the profile code {}",
+            entry.code
+        );
+        assert!(
+            help.contains(entry.label),
+            "help should expand {} to its device name {}",
+            entry.code,
+            entry.label
+        );
+    }
     Ok(())
 }
 

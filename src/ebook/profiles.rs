@@ -618,7 +618,10 @@ impl ValueEnum for Profile {
     }
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
-        Some(PossibleValue::new(self.code()))
+        // Attaching the device name as the value's help makes `--help` render the
+        // `--profile` list with the acronym expanded (e.g. `KPW  Kindle Paperwhite
+        // 1/2`) instead of a bare `[possible values: …]` line.
+        Some(PossibleValue::new(self.code()).help(self.label()))
     }
 }
 

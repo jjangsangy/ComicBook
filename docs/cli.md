@@ -121,7 +121,10 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 
 `--profile` accepts KCC's canonical codes (case-insensitive). The `Profile` `ValueEnum` is
 hand-written over the profile table, so `--help`, errors and completions list the codes rather
-than heck-cased variants.
+than heck-cased variants. Each possible value carries the device name as its help text, so
+`--help` renders the list with every acronym expanded (e.g. `KPW  Kindle Paperwhite 1/2`), and
+the zsh and fish completion scripts list the same descriptions. The tables in
+`src/ebook/profiles.rs` are the source of truth for the codes and names.
 
 - **Kindle:** `K1`, `K2`, `KDX`, `K34`, `K57`, `KPW`, `KV`, `KPW34`, `K810`, `KO`, `K11`,
   `KPW5`, `KPW6`, `KS1860`, `KS1920`, `KS1240`, `KS1324`, `KS`, `KCS`, `KS3`, `KSCS`.
