@@ -7,7 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). E
 reconstructed from the repository's release tags (`v*`); each release links to the diff
 since the previous tag.
 
-## [Unreleased]
+## [0.2.5] - 2026-09-26
 
 ### Changed
 
