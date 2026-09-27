@@ -254,12 +254,13 @@ fn collect_path_tasks(
 
 fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     let pb = ProgressBar::new(tasks.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-            .expect("valid template")
-            .progress_chars("#>-"),
+    let style = ProgressStyle::default_bar().template(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}",
     );
+    pb.set_style(match style {
+        Ok(style) => style.progress_chars("#->"),
+        Err(_) => ProgressStyle::default_bar(),
+    });
 
     let should_strip = target_kind == ArchiveKind::Directory;
     // One reusable buffer for the whole batch: each archive's entry data is streamed through this

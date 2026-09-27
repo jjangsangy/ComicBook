@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" unique-identifier="BookID" xmlns="http://www.idpf.org/2007/opf">
+<metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:title>{{ title }}</dc:title>
+<dc:language>{{ language }}</dc:language>
+<dc:identifier id="BookID">urn:uuid:{{ uuid }}</dc:identifier>
+<dc:contributor id="contributor">{{ contributor }}</dc:contributor>
+{% if has_description %}<dc:description>{{ description }}</dc:description>
+{% endif %}{% for creator in creators %}<dc:creator>{{ creator }}</dc:creator>
+{% endfor %}{% if has_series %}<meta property="belongs-to-collection" id="c02">{{ series }}</meta>
+<meta refines="#c02" property="collection-type">series</meta>
+{% if has_group %}<meta refines="#c02" property="group-position">{{ group }}</meta>
+{% endif %}{% endif %}<meta property="dcterms:modified">{{ modified }}</meta>
+{% if has_cover %}<meta name="cover" content="cover"/>
+{% endif %}{% if kindle_layout %}<meta name="fixed-layout" content="true"/>
+<meta name="original-resolution" content="{{ device_width }}x{{ device_height }}"/>
+<meta name="book-type" content="comic"/>
+<meta name="primary-writing-mode" content="{{ writing_mode }}"/>
+<meta name="zero-gutter" content="true"/>
+<meta name="zero-margin" content="true"/>
+<meta name="ke-border-color" content="#FFFFFF"/>
+<meta name="ke-border-width" content="0"/>
+<meta name="orientation-lock" content="none"/>
+<meta name="region-mag" content="{{ region_mag }}"/>
+{% endif %}<meta property="rendition:spread">landscape</meta>
+<meta property="rendition:layout">pre-paginated</meta>
+</metadata>
+<manifest>
+<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>
+{% if has_cover %}<item id="cover" href="Images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+{% endif %}{% for item in manifest %}<item id="{{ item.id }}" href="{{ item.href }}"{% if item.has_properties_before %} properties="{{ item.properties }}"{% endif %} media-type="{{ item.media_type }}"{% if item.has_properties_after %} properties="{{ item.properties }}"{% endif %}/>
+{% endfor %}<item id="css" href="Text/style.css" media-type="text/css"/>
+</manifest>
+<spine page-progression-direction="{{ direction }}" toc="ncx">
+{% for item in spine %}<itemref idref="{{ item.idref }}" {{ item.attr }}/>
+{% endfor %}</spine>
+</package>

@@ -3,29 +3,54 @@
 [![CI](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml)
 [![Release](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
-A high-performance command-line tool written in Rust for converting comic book archives (`.cbz`, `.cbr`, `.cb7`, `.cbt`, `.zip`, `.rar`, `.7z`, `.tar`) and clamping oversized comic pages to optimize them for e-readers, tablets, and web readers.
+A high-performance command-line tool written in Rust for working with comic-book archives: repackage them between `.cbz`/`.cbr`/`.cb7`/`.cbt` (and plain folders), clamp oversized pages for size-limited readers, and convert them into e-book formats — fixed-layout EPUB, Kobo KePub, Kindle AZW3/MOBI and PDF — for e-readers, tablets and phones. Everything is compiled into the binary; no `7z`, `unrar`, `kindlegen`, `ImageMagick` or other external program is required.
 
 ---
 
 ## Features
 
-- **Multi-Format Archive Conversion**: Batch convert collections across popular comic formats (`cbz`, `cbr`, `cb7`, `cbt`) and standard archive formats (`zip`, `rar`, `7z`, `tar`).
-- **Smart Image Size Clamping**:
+- **Multi-Format Archive Conversion** (`convert`): Batch convert collections across popular comic formats (`cbz`, `cbr`, `cb7`, `cbt`) and standard archive formats (`zip`, `rar`, `7z`, `tar`), or unpack them to folders.
+- **E-book Conversion** (`ebook`): Convert comics into fixed-layout EPUB 3, Kobo KePub, Kindle AZW3/MOBI and PDF (or repackaged CBZ), with per-device profiles, Panel View, webtoon mode, cropping/enhancement, `ComicInfo.xml` metadata, and size-based tome chunking.
+- **Smart Image Size Clamping** (`clamp`):
   - Perfect for hardware with memory/resolution limits (e.g., Kindle, Kobo, e-ink devices) or apps that fail on huge webtoon/manhwa vertical strips.
   - **3 Clamping Approaches**:
     - **`split`** *(default)*: Recursively slices tall images horizontally until every slice is under the pixel threshold, preserving top-to-bottom reading order.
     - **`resize`**: Proportionally downscales images to stay within total pixel limits using high-quality SIMD-accelerated Lanczos3 convolution.
     - **`max-width`**: Constrains horizontal page dimensions to a maximum pixel width while scaling height proportionally.
+- **No External Programs**: Archive extraction, image processing, EPUB/PDF/MOBI authoring and PDF rasterisation are all native Rust — nothing shells out to `7z`, `unrar`, `kindlegen` or ImageMagick.
 - **WebP Output**: Clamped images are saved with high-efficiency WebP compression to save storage while preserving crisp comic art.
 - **Natural Ordering**: Sorts pages naturally (`page_1.png`, `page_2.png`, ..., `page_10.png`) with `natord` so multi-digit filenames are never scrambled.
+- **Robust Input Handling**: Malformed, truncated or hostile archives, EPUBs and PDFs are rejected with a clear error rather than crashing; the pipeline is fuzzed and memory-tested across Linux, macOS and Windows in CI.
 - **Multi-Threaded Parallelism**: Leverages all available CPU cores using Rayon, complete with interactive multi-progress bars powered by `indicatif`.
 - **Shell Autocompletions**: Built-in completion script generator for Bash, Zsh, Fish, PowerShell, and Elvish.
 
 ---
 
+## Documentation
+
+The reference documentation lives in [`docs/`](docs/):
+
+| Document | Contents |
+|:---|:---|
+| [docs/convert.md](docs/convert.md) | `convert`: formats, directory expansion, output naming, mechanics |
+| [docs/clamp.md](docs/clamp.md) | `clamp`: approaches, thresholds, output layout |
+| [docs/cli.md](docs/cli.md) | `ebook`: options, formats and device profiles |
+| [docs/architecture.md](docs/architecture.md) | `ebook`: pipeline, module map, data model, design principles |
+| [docs/processing.md](docs/processing.md) | `ebook`: image-processing algorithms and fidelity rules |
+| [docs/output.md](docs/output.md) | `ebook`: EPUB/KePub/CBZ/PDF/Kindle document specs, chunking, fusion |
+| [docs/dependencies.md](docs/dependencies.md) | Off-the-shelf policy, crates, licences, clean-room rules |
+| [docs/porting.md](docs/porting.md) | Porting history and the decisions/deviations behind the code |
+| [docs/development.md](docs/development.md) | Testing, CI, cross-platform notes, glossary |
+
+Run `comic-book <command> --help` for the complete flag reference.
+
+---
+
 ## Supported Formats
+
+### Archives & folders
 
 | Format | Extension(s) | Extract / Read | Compress / Write | Notes |
 |:---|:---|:---:|:---:|:---|
@@ -34,6 +59,17 @@ A high-performance command-line tool written in Rust for converting comic book a
 | **Comic Book 7-Zip** | `.cb7`, `.7z` | Yes | Yes | Native Rust `sevenz-rust2` (stored / uncompressed) |
 | **Comic Book TAR** | `.cbt`, `.tar` | Yes | Yes | Native Rust `tar` |
 | **Directory** | Folder of images | Yes | Yes | Plain uncompressed directories |
+
+### E-book formats (`ebook`)
+
+| Format | Extension(s) | Read (input) | Write (output) | Notes |
+|:---|:---|:---:|:---:|:---|
+| **EPUB 3** | `.epub` | Yes | Yes | Fixed-layout output; input reads spine-ordered images |
+| **PDF** | `.pdf` | Yes | Yes | Input extracts embedded images / rasterises vector pages |
+| **KePub** | `.kepub.epub` | Yes | Yes | Kobo EPUB variant (page-spread properties) |
+| **Kindle AZW3** | `.azw3` | No | Yes | KF8-only, via the `kindling` crate |
+| **Kindle MOBI** | `.mobi` | No | Yes | Dual MOBI7 + KF8, for legacy devices |
+| **CBZ** | `.cbz` | Yes | Yes | Plain repackage of the processed images |
 
 ---
 
@@ -63,7 +99,7 @@ Pass options to the piped script with `sh -s --`:
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --version v0.2.0
 
 # Choose where the binary is installed
 curl -fsSL https://raw.githubusercontent.com/jjangsangy/ComicBook/main/scripts/install.sh | sh -s -- --install-dir "$HOME/bin"
@@ -86,7 +122,7 @@ This installs `comic-book.exe` to `%LOCALAPPDATA%\Programs\comic-book\bin` and a
 To pass options, download the script and run it:
 
 ```powershell
-.\scripts\install.ps1 -Version v0.1.0 -InstallDir "$env:USERPROFILE\bin"
+.\scripts\install.ps1 -Version v0.2.0 -InstallDir "$env:USERPROFILE\bin"
 ```
 
 #### Verify the Install
@@ -97,7 +133,7 @@ comic-book --version
 
 ### Build from Source
 
-Requires [Rust](https://www.rust-lang.org/tools/install) (version 1.87 or newer).
+Requires [Rust](https://www.rust-lang.org/tools/install) (version 1.93 or newer).
 
 ```bash
 git clone https://github.com/jjangsangy/comic-book.git
@@ -124,6 +160,7 @@ Usage: comic-book <COMMAND>
 Commands:
   convert      Convert different archive formats (cbr, cbz, etc..)
   clamp        Clamp image sizes in comic archives to all be under a size threshold
+  ebook        Convert comics into e-book formats (epub, kepub, azw3, mobi, pdf, cbz)
   completions  Generate shell completion scripts (alias: completion)
   help         Print this message or the help of the given subcommand(s)
 
@@ -141,6 +178,8 @@ Convert comic archives between formats — taking individual comic files (e.g. `
 ```bash
 comic-book convert <PATHS>... --to <FORMAT>
 ```
+
+See [`docs/convert.md`](docs/convert.md) for the full format table, directory-expansion rules and conversion mechanics.
 
 #### Supported Target Formats
 `cbz`, `zip`, `cbr`, `rar`, `cb7`, `7z`, `cbt`, `tar`, `dir`
@@ -177,6 +216,8 @@ Clamp image dimensions within comic archives or directories, either by splitting
 comic-book clamp [OPTIONS] <INPUT_DIR_OR_FILE>
 ```
 
+See [`docs/clamp.md`](docs/clamp.md) for the threshold rules, fast path and output layout.
+
 #### Options
 
 | Option | Flag | Default | Description |
@@ -211,7 +252,63 @@ comic-book clamp ~/Comics/Issue1.cbz -o Clamped -s 1200 -a max-width -w 4
 
 ---
 
-### 3. `completions` — Shell Autocompletions
+### 3. `ebook` — Comic to E-book Conversion
+
+Convert comic archives (`.cbz`/`.cbr`/`.cb7`/`.cbt`), image folders, and (as input)
+`.epub`/`.pdf` files into e-book formats for Kindle, Kobo, reMarkable and generic EPUB
+readers. Everything — archive extraction, image processing, EPUB/PDF/MOBI building and PDF
+rasterisation — is compiled into the binary: no `7z`, `unrar`, `kindlegen`, ImageMagick or
+other external program is required.
+
+```bash
+comic-book ebook [OPTIONS] <INPUT>...
+```
+
+#### Output formats (`-f/--format`)
+
+| Value | Meaning |
+|:---|:---|
+| `auto` (default) | MOBI for Kindle profiles, PDF for reMarkable, otherwise EPUB |
+| `epub` | fixed-layout EPUB 3 |
+| `kepub` | KePub (`.kepub.epub` for Kobo) |
+| `azw3` / `mobi` | Kindle KF8 (`.azw3`) or dual MOBI7+KF8 (`.mobi`) |
+| `mobi+epub` | keep the intermediate EPUB alongside the MOBI |
+| `cbz` / `pdf` | repackaged images, or a PDF |
+| `kfx` | EPUB preset for Calibre's KFX Output plugin |
+| `epub-200mb` / `pdf-200mb` / `mobi+epub-200mb` | size-capped presets |
+
+#### Inputs
+
+- Comic archives `.cbz`/`.zip`, `.cbr`/`.rar`, `.cb7`/`.7z`, `.cbt`/`.tar`, and image folders.
+- EPUBs (spine-ordered images) and PDFs (embedded images extracted, vector pages rasterised).
+- A folder of comics is expanded; `--file-fusion` combines several inputs into one book.
+
+#### Examples
+
+```bash
+# A CBZ to its default e-book for the default Kindle profile
+comic-book ebook Issue_01.cbz
+
+# Right-to-left manga at a fixed size for Kobo
+comic-book ebook "Vol 1.cbz" -m -p KoE --target-size 100
+
+# AZW3 for a Kindle, with panel view
+comic-book ebook Issue_01.cbz -f azw3 -q
+
+# A PDF (vector pages rasterised) into an EPUB
+comic-book ebook scan.pdf -f epub
+
+# Merge several sources into a single book
+comic-book ebook ch1.cbz ch2.cbz ch3.cbz --file-fusion -t "Omnibus"
+```
+
+Run `comic-book ebook --help` for the full option set (profiles, cropping, colour handling,
+Panel View, webtoon mode, chunking and more). See [`docs/cli.md`](docs/cli.md) for every option
+and device profile, and [`docs/output.md`](docs/output.md) for the output document formats.
+
+---
+
+### 4. `completions` — Shell Autocompletions
 
 Generate completion scripts for your shell.
 
@@ -233,10 +330,11 @@ comic-book completions powershell >> $PROFILE
 
 ## Development & Testing
 
-Run unit and integration tests:
+Run unit and integration tests with [cargo-nextest](https://nexte.st/) (install once with
+`cargo install cargo-nextest --locked`):
 
 ```bash
-cargo test
+cargo nextest run
 ```
 
 Check code style and linter warnings:
@@ -256,4 +354,6 @@ Contributions are welcome! Please check out [CONTRIBUTING.md](CONTRIBUTING.md) f
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE). Third-party notices, including the
+ISC notice for Kindle Comic Converter, whose command-line behaviour this project reimplements,
+are recorded in [NOTICE](NOTICE).

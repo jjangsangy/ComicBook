@@ -1,10 +1,14 @@
 [package]
 name = "comic-book"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Fast comic book archive conversion and image clamping CLI tool"
 license = "MIT"
 readme = "README.md"
+# The dependency graph's highest `rust-version` is `sevenz-rust2` 0.23 (1.93);
+# `quantette` (1.90) and `askama` (1.88) follow. Declaring it here makes cargo
+# refuse an older toolchain instead of failing deep in a build script.
+rust-version = "1.93"
 keywords = ["comic", "cbz", "cbr", "image-processing", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
 
@@ -27,6 +31,80 @@ webp = "0.3"
 walkdir = "2.5"
 same-file = "1.0"
 infer = "0.22.0"
+# Image processing for `comic-book ebook` (see docs/dependencies.md). `imageproc` supplies the
+# contrast/threshold/filter primitives, `quantette` the fixed-palette quantisation and
+# Floyd-Steinberg dithering. Both are MIT/Apache-2.0 and pure Rust.
+imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
+quantette = { version = "0.6", default-features = false, features = ["image", "threads"] }
+# Palette (indexed) PNG output; the `image` crate cannot write an indexed PNG.
+png = "0.18"
+# The moiré eraser (`--erase-rainbow`) transforms the luminance plane with a 2D
+# FFT; see docs/dependencies.md. Pure Rust, MIT/Apache-2.0.
+rustfft = "6"
+# Sub-byte PNG scanline packing for palette pages. Already in the tree transitively
+# via `quantette`; promoted to a direct dependency.
+bitvec = "1"
+# `ComicInfo.xml` parsing (see docs/dependencies.md). MIT, pure Rust.
+quick-xml = "0.37"
+# Chapter-directory slugification. `slug` transliterates Unicode to ASCII and
+# collapses disallowed runs to single dashes, matching KCC's `python-slugify` call
+# for the ASCII-alphanumeric case (the full rule is in docs/porting.md).
+slug = "0.1"
+# KCC's two number-padding substitutions in `slugify`. Already in the tree
+# transitively via `unrar`; promoted to a direct dependency.
+regex = "1"
+# The EPUB `dc:identifier`/`dtb:uid` (`urn:uuid:<v4>`) and the `dcterms:modified`
+# timestamp (see docs/dependencies.md). MIT/Apache-2.0, pure Rust.
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros"] }
+# The generated EPUB/KePub documents (OPF/NCX/NAV/XHTML) are rendered from
+# templates instead of being assembled with `push_str` (see docs/dependencies.md).
+# Askama compiles the templates into Rust, so there is no runtime parsing and a
+# malformed template is a compile error. MIT OR Apache-2.0, pure Rust. Only the
+# derive and `askama.toml` support are enabled; the templates carry their own
+# XML/HTML text.
+askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
+# PDF output. `pdf-writer` (Typst) is a low-level, pure-Rust PDF writer
+# with a minimal dependency set (MIT OR Apache-2.0); it handles the xref table and
+# lets us embed each page's image as an XObject without recompression (see docs/dependencies.md).
+pdf-writer = "0.15"
+# Zlib-compressing the raw samples of non-JPEG PDF images (the `FlateDecode` path).
+# Already in the tree transitively via `png`/`zip`; promoted to a direct dependency
+# (see docs/dependencies.md).
+flate2 = "1"
+# AZW3/MOBI encoding. `kindling` (`kindling-mobi`) is an MIT, pure-Rust
+# kindlegen replacement with fixed-layout/comic support, so no external program is
+# needed and the GPL `dualmetafix` is never ported (see docs/dependencies.md and
+# docs/output.md). Only its builder is used, so our ported KCC pipeline stays in
+# control.
+kindling-mobi = "0.45"
+# The tome `N/M` label KCC draws on a split book's cover (see docs/porting.md).
+# `font8x8` is an MIT, pure-Rust 8x8 bitmap font shipped *in the crate*, so the label
+# needs no committed font asset and no external program. The reference uses Pillow's
+# built-in Aileron face, whose glyphs cannot be reproduced exactly; the label's
+# position, size and colours are preserved instead.
+font8x8 = "0.3"
+# PDF input rasterisation/extraction. `pdfboss-render` renders vector pages and
+# `extract_page_images` decodes embedded images; `pdfboss-core` supplies the `Document`/
+# `Page` handles. Both are MIT OR Apache-2.0 and pure Rust, so MuPDF is replaced without
+# a platform binary, keeping the "no external programs" rule (see docs/dependencies.md
+# and docs/porting.md).
+pdfboss-render = "2.11"
+pdfboss-core = "2.11"
 
 [dev-dependencies]
 libc = "0.2"
+# Reading the EPUB container back in the structural tests; already a runtime
+# dependency, re-declared here because integration tests cannot name it directly.
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# Parsing the generated PDF back in the round-trip tests. MIT, pure Rust; dev-only,
+# so it never ships.
+lopdf = { version = "0.45", default-features = false }
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

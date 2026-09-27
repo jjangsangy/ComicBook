@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+<title>{{ title }}</title>
+<link href="{{ style_href }}" type="text/css" rel="stylesheet"/>
+<meta name="viewport" content="width={{ viewport_width }}, height={{ viewport_height }}"/>
+</head>
+<body style="{{ body_style }}">
+<div style="text-align:center;">
+{% if kindle_spacer %}<div style="display:none;">.</div>
+{% endif %}<img width="{{ img_width }}" height="{{ img_height }}" src="{{ image_src }}"/>
+{% if has_below %}<img style="top: 1920px" width="{{ below_img_width }}" height="{{ below_img_height }}" src="{{ below_image_src }}"/>
+{% endif %}</div>
+{% if panel %}<div id="PV">
+{% for region in boxes %}<div id="{{ region.id }}">
+<a style="display:inline-block;width:100%;height:100%;" class="app-amzn-magnify" data-app-amzn-magnify='{"targetId":"{{ region.id }}-P", "ordinal":{{ region.ordinal }}}'></a>
+</div>
+{% endfor %}</div>
+{% for region in boxes %}<div class="PV-P" id="{{ region.id }}-P" style="{{ body_style }}">
+<img style="{{ region.style }}" src="{{ image_src }}" width="{{ panel_width }}" height="{{ panel_height }}"/>
+</div>
+{% endfor %}{% endif %}</body>
+</html>

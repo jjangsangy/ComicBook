@@ -24,66 +24,73 @@ pub enum Approach {
     MaxWidth,
 }
 
-/// Everything that differs between clamp [`Approach`]es, expressed as data.
+/// Per-approach clamping policy, expressed as methods rather than a `match` at each call
+/// site. Callers invoke `measure`/`clamp` without ever asking which approach is in play,
+/// so the processing pipeline carries no branch-per-image logic.
 ///
-/// Each approach is a policy: a validation floor, labels for user-facing messages, the
-/// metric that decides whether an image is oversized, and the transformation that brings
-/// it back under the threshold. Bundling that policy into one value keeps the processing
-/// pipeline free of `match approach` branches — callers just invoke the strategy.
-#[derive(Clone, Copy)]
-struct ClampStrategy {
-    /// Smallest `size_threshold` this approach can make progress with.
-    min_threshold: u64,
-    /// Grouped rendering of `min_threshold` for error messages (e.g. `500,000`).
-    min_threshold_label: &'static str,
-    /// Approach label as it appears in error messages.
-    name: &'static str,
-    /// How large an image is under this approach: total pixels, or just the width.
-    measure: fn(&DynamicImage) -> u64,
-    /// Rewrite an image that exceeds the threshold into one or more replacements.
-    clamp: fn(DynamicImage, u64) -> Vec<DynamicImage>,
-}
-
+/// `split` and `resize` enforce an identical policy, so their cases collapse into a single
+/// `Split | Resize` arm. That states each shared fact — the floor, the metric, the label —
+/// exactly once instead of duplicating it per approach, where the copies could drift.
 impl Approach {
-    /// Project this approach onto its executable policy.
-    fn strategy(self) -> ClampStrategy {
+    /// Smallest `size_threshold` this approach can make progress with.
+    fn min_threshold(self) -> u64 {
         match self {
-            Approach::Split => ClampStrategy {
-                min_threshold: 500_000,
-                min_threshold_label: "500,000",
-                name: "'split' or 'resize'",
-                measure: total_pixels,
-                clamp: split_image_iterative,
-            },
-            Approach::Resize => ClampStrategy {
-                min_threshold: 500_000,
-                min_threshold_label: "500,000",
-                name: "'split' or 'resize'",
-                measure: total_pixels,
-                clamp: |img, threshold| vec![resize_image_by_total_pixels(img, threshold)],
-            },
-            Approach::MaxWidth => ClampStrategy {
-                min_threshold: 400,
-                min_threshold_label: "400",
-                name: "'max-width'",
-                measure: |img| u64::from(img.width()),
-                clamp: |img, threshold| vec![resize_image_by_width(img, threshold as u32)],
-            },
+            Approach::Split | Approach::Resize => 500_000,
+            Approach::MaxWidth => 400,
+        }
+    }
+
+    /// How the rule is named in error messages. A single rule can cover several
+    /// approaches, so the label names every approach it applies to.
+    fn rule_label(self) -> &'static str {
+        match self {
+            Approach::Split | Approach::Resize => "'split' or 'resize'",
+            Approach::MaxWidth => "'max-width'",
+        }
+    }
+
+    /// How large an image is under this approach: total pixels, or just the width.
+    fn measure(self, img: &DynamicImage) -> u64 {
+        match self {
+            Approach::Split | Approach::Resize => total_pixels(img),
+            Approach::MaxWidth => u64::from(img.width()),
+        }
+    }
+
+    /// Rewrite an image that exceeds the threshold into one or more replacements.
+    fn clamp(self, img: DynamicImage, threshold: u64) -> Vec<DynamicImage> {
+        match self {
+            Approach::Split => split_image_iterative(img, threshold),
+            Approach::Resize => vec![resize_image_by_total_pixels(img, threshold)],
+            Approach::MaxWidth => vec![resize_image_by_width(img, threshold as u32)],
         }
     }
 
     /// Reject thresholds too small for this approach to make progress with.
     fn validate_threshold(self, size_threshold: u64) -> Result<()> {
-        let strategy = self.strategy();
-        if size_threshold <= strategy.min_threshold {
+        if size_threshold <= self.min_threshold() {
             return Err(anyhow!(
                 "For {} approach, size_threshold must be > {} pixels",
-                strategy.name,
-                strategy.min_threshold_label
+                self.rule_label(),
+                group_thousands(self.min_threshold())
             ));
         }
         Ok(())
     }
+}
+
+/// Render an integer with thousands separators for user-facing messages (e.g. `500,000`).
+/// Kept bespoke (see docs/dependencies.md, "genuinely trivial").
+fn group_thousands(value: u64) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (idx, ch) in digits.char_indices() {
+        if idx > 0 && (digits.len() - idx).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+    grouped
 }
 
 /// Total pixel count of an image.
@@ -119,7 +126,8 @@ impl Chapter {
     }
 }
 
-/// Preserve the previous behaviour of tolerating read-only files on Windows when deleting.
+/// Preserve the previous behaviour of tolerating read-only files on Windows when deleting
+/// (kept bespoke; see docs/dependencies.md).
 pub fn remove_dir_all_force<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
     if !path.exists() {
@@ -186,24 +194,24 @@ fn collect_chapters(input_path: &Path, output_dir: &Path) -> Result<Vec<Chapter>
 
 /// True when no image exceeds the threshold, so the source can be copied verbatim.
 fn is_within_threshold(
-    strategy: ClampStrategy,
+    approach: Approach,
     images: &[(String, DynamicImage)],
     threshold: u64,
 ) -> bool {
     images
         .iter()
-        .all(|(_, img)| (strategy.measure)(img) < threshold)
+        .all(|(_, img)| approach.measure(img) < threshold)
 }
 
-/// Apply the strategy to every image, concatenating the results in reading order.
+/// Apply the approach to every image, concatenating the results in reading order.
 fn clamp_images(
-    strategy: ClampStrategy,
+    approach: Approach,
     images: Vec<(String, DynamicImage)>,
     threshold: u64,
 ) -> Vec<DynamicImage> {
     images
         .into_iter()
-        .flat_map(|(_, img)| (strategy.clamp)(img, threshold))
+        .flat_map(|(_, img)| approach.clamp(img, threshold))
         .collect()
 }
 
@@ -228,7 +236,7 @@ fn write_clamped_images(
 fn process_chapter(
     chapter: &Chapter,
     output_dir: &Path,
-    strategy: ClampStrategy,
+    approach: Approach,
     threshold: u64,
     progress: &MultiProgress,
     overall_bar: &ProgressBar,
@@ -248,38 +256,43 @@ fn process_chapter(
         remove_dir_all_force(&output_chapter_dir)?;
     }
 
-    if is_within_threshold(strategy, &images, threshold) {
+    if is_within_threshold(approach, &images, threshold) {
         // Already small enough: extract without re-encoding.
         return extract_archive(chapter.kind, &chapter.path, &output_chapter_dir);
     }
 
     fs::create_dir_all(&output_chapter_dir)?;
-    let clamped = clamp_images(strategy, images, threshold);
+    let clamped = clamp_images(approach, images, threshold);
     let bar = progress.insert_after(overall_bar, chapter_progress_bar(clamped.len() as u64));
     write_clamped_images(&clamped, &output_chapter_dir, &chapter_name, &bar)
 }
 
 fn overall_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}")
-            .expect("valid template")
-            .progress_chars("#>-"),
-    );
+    bar.set_style(progress_style(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
+        "#->",
+    ));
     bar.set_message("Overall Progress");
     bar
 }
 
 fn chapter_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("  -> {msg} [{bar:30.cyan/blue}] {pos}/{len}")
-            .expect("valid template")
-            .progress_chars("=>-"),
-    );
+    bar.set_style(progress_style(
+        "  -> {msg} [{bar:30.cyan/blue}] {pos}/{len}",
+        "=>-",
+    ));
     bar
+}
+
+/// Build a bar style from a constant template, falling back to indicatif's
+/// default style on the (impossible) template error rather than panicking.
+fn progress_style(template: &str, chars: &str) -> ProgressStyle {
+    match ProgressStyle::default_bar().template(template) {
+        Ok(style) => style.progress_chars(chars),
+        Err(_) => ProgressStyle::default_bar(),
+    }
 }
 
 pub fn run_clamp(
@@ -307,7 +320,6 @@ pub fn run_clamp(
         return Ok(());
     }
 
-    let strategy = approach.strategy();
     let thread_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
         .build()
@@ -323,7 +335,7 @@ pub fn run_clamp(
             if let Err(err) = process_chapter(
                 chapter,
                 output_dir,
-                strategy,
+                approach,
                 size_threshold,
                 &mp,
                 &overall_bar,

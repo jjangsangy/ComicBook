@@ -2,8 +2,8 @@
 //!
 //! `indicatif` progress bars draw straight to the stderr file descriptor,
 //! bypassing the capture libtest installs around `println!`/`eprintln!`. Without
-//! this, `cargo test` is littered with half-rendered bar frames interleaved with
-//! the harness's own output.
+//! this, `cargo nextest` output is littered with half-rendered bar frames
+//! interleaved with the harness's own output.
 //!
 //! The wrappers below point fd 2 at `/dev/null` (once per test binary) before
 //! calling into the library entry points that render progress. Normal
@@ -25,11 +25,12 @@ fn silence_progress_bars() {
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let dev_null = std::fs::File::open("/dev/null").expect("failed to open /dev/null");
-        // SAFETY: `dev_null` is a valid open fd, and `dup2` atomically makes fd 2
-        // a duplicate of it. Closing `dev_null` afterwards leaves fd 2 open.
-        let redirected = unsafe { libc::dup2(dev_null.as_raw_fd(), libc::STDERR_FILENO) };
-        assert!(redirected >= 0, "failed to redirect stderr to /dev/null");
+        if let Ok(dev_null) = std::fs::File::open("/dev/null") {
+            // SAFETY: `dev_null` is a valid open fd, and `dup2` atomically makes fd 2
+            // a duplicate of it. Closing `dev_null` afterwards leaves fd 2 open.
+            let redirected = unsafe { libc::dup2(dev_null.as_raw_fd(), libc::STDERR_FILENO) };
+            assert!(redirected >= 0, "failed to redirect stderr to /dev/null");
+        }
     });
 }
 

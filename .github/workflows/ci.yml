@@ -51,5 +51,11 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
-        run: cargo test --verbose
+        # nextest is fail-fast by default. `--no-fail-fast` (alias `--nff`, equivalent to
+        # `--max-fail=all`) lets the whole suite run to completion so every failing test
+        # produces its output instead of the run stopping at the first failure.
+        run: cargo nextest run --verbose --no-fail-fast

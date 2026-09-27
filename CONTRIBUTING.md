@@ -48,10 +48,12 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
    - Add unit or integration tests for new functionality in `tests/integration_tests.rs`.
 
 4. **Verify Your Code Locally**:
-   Run the test suite and quality checks before submitting:
+   Run the test suite and quality checks before submitting. Tests run with
+   [cargo-nextest](https://nexte.st/) (install once with
+   `cargo install cargo-nextest --locked`):
    ```bash
    # Run all tests
-   cargo test
+   cargo nextest run
 
    # Check formatting
    cargo fmt --check
