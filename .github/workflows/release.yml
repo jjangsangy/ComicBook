@@ -23,10 +23,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           draft: false
@@ -78,9 +78,9 @@ jobs:
             os: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      # Builds the binary, packages it as `comic-book-<target>.tar.gz` (Unix) or
+      # Builds the binary, packaging it as `comic-book-<target>.tar.gz` (Unix) or
       # `.zip` (Windows), writes a matching `.sha256`, and uploads both to the
       # release created above. Cross-compilation falls back to `cross`
       # automatically, which is installed on demand.
