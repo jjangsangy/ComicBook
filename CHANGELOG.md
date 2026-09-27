@@ -12,6 +12,9 @@ release when a version tag is pushed.
 
 ### Changed
 
+- The release workflow now fills each GitHub Release body with the changelog for the release's
+  whole major.minor line (`scripts/changelog-notes.sh`), so a `0.2.6` release page also carries the
+  0.2.5, 0.2.4 … entries as well as its own, followed by GitHub's generated notes.
 - `scripts/set-version.sh` and `scripts/set-version.ps1` accept `--changelog` (`-Changelog`),
   which dates the changelog's top `## [Unreleased]` section as the released version and updates
   its compare link references. The release workflow passes it only in the job that commits the

@@ -102,7 +102,9 @@ Pushing a `v*` tag triggers the [`Release` workflow](.github/workflows/release.y
 2. Stamps `Cargo.toml`'s `[package] version` from the tag (`scripts/set-version.sh` /
    `scripts/set-version.ps1`) and refreshes the matching `Cargo.lock` entry before building, so
    the compiled binaries report the released tag from `comic-book --version`.
-3. Creates a GitHub Release with auto-generated notes. Tags containing a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
+3. Creates a GitHub Release whose notes are the changelog for the release's whole major.minor line
+   (`scripts/changelog-notes.sh`) — the tag's own section plus every older `0.Y.x` entry — followed
+   by GitHub's auto-generated notes. Tags containing a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
 4. Builds and attaches binaries for macOS (arm64, x86_64), Linux (x86_64, aarch64; both static musl and glibc) and Windows (x86_64), each with a `.sha256` checksum.
 5. Commits the version stamp back to the default branch (`chore(release): vX.Y.Z`), so `main`
    declares the released version instead of drifting until the next manual bump. The same commit

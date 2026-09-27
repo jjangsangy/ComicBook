@@ -40,13 +40,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      # The release page carries the changelog for the tag's whole major.minor
+      # line — its own `Unreleased` section plus every older 0.Y.x entry — taken
+      # from the tagged CHANGELOG.md. The action prepends this body to GitHub's
+      # generated notes, so the auto "What's Changed" / "Full Changelog" section
+      # still follows. An empty file falls back to the generated notes alone.
+      - name: Build release notes from the changelog
+        shell: bash
+        run: ./scripts/changelog-notes.sh "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true
           draft: false
           # Tags like `v0.2.0-rc.1` are published as pre-releases.
