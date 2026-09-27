@@ -5,7 +5,21 @@ All notable changes to `comic-book` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Entries are
 reconstructed from the repository's release tags (`v*`); each release links to the diff
-since the previous tag.
+since the previous tag. The release workflow dates the `Unreleased` section into a tagged
+release when a version tag is pushed.
+
+## [Unreleased]
+
+### Changed
+
+- `scripts/set-version.sh` and `scripts/set-version.ps1` accept `--changelog` (`-Changelog`),
+  which dates the changelog's top `## [Unreleased]` section as the released version and updates
+  its compare link references. The release workflow passes it only in the job that commits the
+  version to the default branch, so the per-target build jobs keep stamping a throwaway checkout.
+
+### Docs
+
+- The full `comic-book ebook --help` reference is now reproduced in `README.md`.
 
 ## [0.2.5] - 2026-09-26
 
@@ -259,7 +273,8 @@ First tagged pre-release of the initial `comic-book` CLI.
 
 <!-- Links -->
 
-[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/jjangsangy/ComicBook/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jjangsangy/ComicBook/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jjangsangy/ComicBook/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jjangsangy/ComicBook/compare/v0.2.1...v0.2.2

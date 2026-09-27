@@ -140,8 +140,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Once every binary has built and uploaded, make the default branch declare the
-  # released version. The build jobs above stamp the tag into a throwaway
-  # checkout; this job commits the same stamp so `main` reflects what was just
+  # released version and date the changelog. The build jobs above stamp the tag
+  # into a throwaway checkout; this job commits the same stamp — plus the
+  # changelog roll-over (`--changelog`) — so `main` reflects what was just
   # released instead of drifting until the next manual bump. `needs` means it
   # only runs when the whole build matrix succeeded.
   bump-version:
@@ -161,19 +162,19 @@ jobs:
 
       - name: Stamp version from tag
         shell: bash
-        run: ./scripts/set-version.sh "$RELEASE_TAG"
+        run: ./scripts/set-version.sh --changelog "$RELEASE_TAG"
 
       - name: Refresh Cargo.lock
         run: cargo update -p ${{ env.PKG_NAME }}
 
       - name: Commit and push
         run: |
-          if git diff --quiet -- Cargo.toml Cargo.lock; then
+          if git diff --quiet -- Cargo.toml Cargo.lock CHANGELOG.md; then
             echo "$DEFAULT_BRANCH already declares $RELEASE_TAG; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock CHANGELOG.md
           git commit -m "chore(release): $RELEASE_TAG"
           git push origin "HEAD:$DEFAULT_BRANCH"

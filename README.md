@@ -302,9 +302,305 @@ comic-book ebook scan.pdf -f epub
 comic-book ebook ch1.cbz ch2.cbz ch3.cbz --file-fusion -t "Omnibus"
 ```
 
-Run `comic-book ebook --help` for the full option set (profiles, cropping, colour handling,
-Panel View, webtoon mode, chunking and more). See [`docs/cli.md`](docs/cli.md) for every option
-and device profile, and [`docs/output.md`](docs/output.md) for the output document formats.
+#### Full option reference
+
+Run `comic-book ebook --help` to print the complete flag reference (profiles, cropping, colour
+handling, Panel View, webtoon mode, chunking and more):
+
+```text
+Convert comics into e-book formats (epub, kepub, azw3, mobi, pdf, cbz)
+
+Usage: comic-book ebook [OPTIONS] <INPUT>...
+
+Arguments:
+  <INPUT>...
+          Files, folders or archives to convert
+
+Options:
+  -p, --profile <PROFILE>
+          Device profile
+
+          Possible values:
+          - K1:        Kindle 1
+          - K2:        Kindle 2
+          - KDX:       Kindle DX/DXG
+          - K34:       Kindle Keyboard/Touch
+          - K57:       Kindle 5/7
+          - KPW:       Kindle Paperwhite 1/2
+          - KV:        Kindle Voyage
+          - KPW34:     Kindle Paperwhite 3/4/Oasis
+          - K810:      Kindle 8/10
+          - KO:        Kindle Oasis 2/3
+          - K11:       Kindle 11
+          - KPW5:      Kindle Paperwhite 5/Signature Edition
+          - KPW6:      Kindle Paperwhite 6
+          - KS1860:    Kindle 1860
+          - KS1920:    Kindle 1920
+          - KS1240:    Kindle 1240
+          - KS1324:    Kindle 1324
+          - KS:        Kindle Scribe 1/2
+          - KCS:       Kindle Colorsoft
+          - KS3:       Kindle Scribe 3
+          - KSCS:      Kindle Scribe Colorsoft
+          - KoMT:      Kobo Mini/Touch
+          - KoG:       Kobo Glo
+          - KoGHD:     Kobo Glo HD
+          - KoA:       Kobo Aura
+          - KoAHD:     Kobo Aura HD
+          - KoAH2O:    Kobo Aura H2O
+          - KoAO:      Kobo Aura ONE
+          - KoN:       Kobo Nia
+          - KoC:       Kobo Clara HD/Kobo Clara 2E
+          - KoCC:      Kobo Clara Colour
+          - KoL:       Kobo Libra H2O/Kobo Libra 2
+          - KoLC:      Kobo Libra Colour
+          - KoF:       Kobo Forma
+          - KoS:       Kobo Sage
+          - KoE:       Kobo Elipsa
+          - Rmk1:      reMarkable 1
+          - Rmk2:      reMarkable 2
+          - RmkPP:     reMarkable Paper Pro
+          - RmkPPMove: reMarkable Paper Pro Move
+          - OTHER:     Other
+
+          [default: KV]
+
+  -m, --manga
+          Manga style (right-to-left reading and splitting)
+
+      --light-novel
+          Only resize images and preserve the original file structure
+
+      --wallpaper
+          Crop to fill the screen
+
+      --invert-direction
+          Invert page turn direction
+
+  -q, --hq
+          Try to increase the quality of magnification
+
+  -2, --two-panel
+          Display two, not four, panels in Panel View mode
+
+      --vertical-4-panel
+          Display side panels first in virtual panel view
+
+      --legacy-panel-view
+          Use the legacy panel view method from KCC 6
+
+  -w, --webtoon
+          Webtoon processing mode
+
+      --target-size <MB>
+          Maximal size of the output file in MB
+
+      --file-fusion
+          Combine all input files into a single book
+
+  -n, --no-processing
+          Do not modify images and ignore any profile or processing option
+
+  -r, --splitter <0|1|2>
+          Double page parsing mode: 0 split, 1 rotate, 2 both
+
+          [default: 0]
+
+  -g, --gamma <FLOAT>
+          Apply gamma correction to linearize the image (auto when 0)
+
+          [default: 0.0]
+
+  -c, --cropping <0|1|2>
+          Cropping mode: 0 disabled, 1 margins, 2 margins + page numbers
+
+          [default: 2]
+
+      --cropping-power <FLOAT>
+          Cropping power
+
+          [default: 1.0]
+
+      --cropping-minimum <FLOAT>
+          Cropping minimum area ratio
+
+          [default: 0.0]
+
+      --preserve-margin <PERCENT>
+          After calculating the crop, back up the specified percentage
+
+          [default: 0]
+
+      --inter-panel-crop <0|1|2>
+          Crop empty sections: 0 disabled, 1 horizontally, 2 both
+
+          [default: 0]
+
+      --black-borders
+          Disable border autodetection and force black borders
+
+      --white-borders
+          Disable border autodetection and force white borders
+
+      --force-color
+          Don't convert images to grayscale
+
+      --force-png
+          Create PNG files instead of JPEG for black and white images
+
+      --force-png-rgb
+          Force colour images to be saved as PNG
+
+      --webp
+          Replace JPEG with lossy WebP and PNG with lossless WebP
+
+      --png-legacy
+          Use a more compatible 8-bit PNG instead of 4-bit
+
+      --no-quantize
+          Don't quantize to a 16-colour PNG
+
+      --jpeg-quality <0-95>
+          The JPEG quality, on a scale from 0 (worst) to 95 (best)
+
+      --maximize-strips
+          Turn 1x4 strips into 2x2 strips
+
+      --auto-level
+          Set the most common dark pixel value as the black point for leveling
+
+      --no-autocontrast
+          Disable autocontrast
+
+      --color-autocontrast
+          Autocontrast colour pages too
+
+      --erase-rainbow
+          Erase the rainbow effect on colour e-ink screens
+
+      --smart-cover-crop
+          Attempt to crop the main cover from a wide image
+
+      --cover-fill
+          Crop the cover to fill the screen
+
+  -u, --upscale
+          Resize images smaller than the device's resolution
+
+  -s, --stretch
+          Stretch images to the device's resolution
+
+      --no-rotate
+          Do not rotate double-page spreads in the spread splitter
+
+      --rotate-right
+          Rotate double-page spreads in the opposite direction
+
+      --rotate-first
+          Put the rotated 2-page spread first in the spread splitter
+
+      --legacy-extract
+          Use the legacy PDF/EPUB image extraction method from older KCC versions
+
+      --pdf-width
+          Render vector PDFs to device width instead of height
+
+  -d, --delete
+          Delete source files or directories after a successful conversion
+
+      --temp-dir
+          Create temporary files on the source file's drive
+
+      --mozjpeg
+          Create JPEG files using mozjpeg (unsupported; use --jpeg-quality)
+
+  -o, --output <PATH>
+          Output directory or file
+
+  -t, --title <TITLE>
+          Comic title (default: filename or directory name)
+
+      --metadata-title <0|1|2>
+          Write title using embedded metadata: 1 combine with the default schema, 2 use it only
+
+          [default: 0]
+
+      --keep-comicinfo
+          Keep any original ComicInfo.xml files
+
+  -a, --author <AUTHOR>
+          Author name (default: KCC)
+
+      --language <BCP47>
+          EPUB language
+
+          [default: en-US]
+
+  -f, --format <FORMAT>
+          Output format
+
+          Possible values:
+          - auto:            Pick by profile: MOBI for Kindle, PDF for reMarkable, otherwise EPUB
+          - epub:            Fixed-layout EPUB 3
+          - kepub:           Kobo KePub (`.kepub.epub`)
+          - azw3:            KF8-only Kindle file
+          - mobi:            Dual MOBI7 + KF8 `.mobi`
+          - mobi+epub:       Keep the intermediate EPUB alongside the MOBI
+          - cbz:             Repackage the processed images as a comic archive
+          - pdf:             PDF
+          - kfx:             EPUB preset for Calibre's KFX Output plugin
+          - epub-200mb:      EPUB preset capped at ~200 MB
+          - pdf-200mb:       PDF preset capped at ~200 MB
+          - mobi+epub-200mb: MOBI + EPUB preset capped at ~200 MB
+
+          [default: auto]
+
+      --no-kepub
+          Output EPUB with a `.epub` extension rather than `.kepub.epub`
+
+      --kepub-short-ext
+          Output KePub with a single `.kepub` extension rather than `.kepub.epub`
+
+  -b, --batch-split <0|1|2>
+          Split output into multiple files: 0 none, 1 automatic, 2 per subdirectory
+
+          [default: 0]
+
+      --spread-shift
+          Shift the first page to the opposite side in landscape for spread alignment
+
+      --one-page-landscape
+          Show a single centred page in landscape
+
+      --doc-type <ebok|pdoc|none>
+          Kindle doc-type tag
+
+          Possible values:
+          - none: Leave the doc-type untouched (avoids the firmware "back-to-library" issue)
+          - ebok: Force the EBOK tag
+          - pdoc: Force the PDOC tag
+
+          [default: none]
+
+      --custom-width <PX>
+          Replace the screen width provided by the device profile
+
+          [default: 0]
+
+      --custom-height <PX>
+          Replace the screen height provided by the device profile
+
+          [default: 0]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+See [`docs/cli.md`](docs/cli.md) for every option and device profile, and
+[`docs/output.md`](docs/output.md) for the output document formats.
 
 ---
 
