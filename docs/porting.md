@@ -59,6 +59,10 @@ Conscious differences from KCC, all pinned by tests.
   affected characters are not device-sensitive; the pinned properties (ASCII output, zero-padded
   numbers, the `-kcc-x` suffixes) are all preserved. The KCC-specific zero-padding and the CBZ
   pass-through are layered on top with `regex`.
+- **No `_kcc<N>` collision suffix.** KCC renames an output that would clobber an existing
+  file (`book_kcc0.epub`, …). This port keeps the output name deterministic and overwrites
+  instead, so the filename never carries extra counter information; the behaviour is pinned by
+  `ebook_naming_tests` and `ebook_kindle_tests`.
 - **`ComicInfo.xml` is parsed leniently where KCC crashes.** KCC discards *all* metadata when an
   element has no text node (e.g. an empty `<Series/>`); this port treats a missing text node as
   an empty string. A genuinely malformed document is still ignored wholesale, matching KCC's

@@ -265,17 +265,21 @@ fn panel_view_markup_survives_the_kindle_builder() -> Result<()> {
 }
 
 #[test]
-fn output_collisions_avoid_clobbering_an_existing_kindle_file() -> Result<()> {
+fn an_existing_kindle_file_is_overwritten() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book");
     fixture(&source)?;
     fs::write(tmp.path().join("book.azw3"), b"x")?;
 
-    // The intermediate EPUB name is nudged so the derived AZW3 does not
-    // overwrite the existing file.
+    // Output names are deterministic, so the existing file is replaced rather than
+    // getting a `_kcc` counter.
     let written = convert(&source, &["-f", "azw3", "-p", "KV"])?;
-    assert_eq!(written, vec![tmp.path().join("book_kcc0.azw3")]);
-    assert_eq!(fs::read(tmp.path().join("book.azw3"))?, b"x");
+    assert_eq!(written, vec![tmp.path().join("book.azw3")]);
+    assert_ne!(
+        fs::read(tmp.path().join("book.azw3"))?,
+        b"x",
+        "the existing keeper file is overwritten"
+    );
     Ok(())
 }
 

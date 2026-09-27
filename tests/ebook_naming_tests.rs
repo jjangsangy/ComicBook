@@ -294,54 +294,75 @@ fn output_directory_and_explicit_file_are_honoured() -> Result<()> {
 }
 
 #[test]
-fn output_collisions_get_a_kcc_counter() -> Result<()> {
+fn an_existing_output_is_overwritten_not_renamed() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book.cbz");
     fs::write(&source, b"x")?;
     let epub = options(&["-f", "epub"])?;
 
+    // The resolved name is deterministic and never gains a `_kcc<N>` suffix, so an
+    // existing file is simply replaced on write.
     fs::write(tmp.path().join("book.epub"), b"x")?;
     assert_eq!(
         output_filename(&source, None, ".epub", "", &epub),
-        tmp.path().join("book_kcc0.epub")
-    );
-
-    fs::write(tmp.path().join("book_kcc0.epub"), b"x")?;
-    assert_eq!(
-        output_filename(&source, None, ".epub", "", &epub),
-        tmp.path().join("book_kcc1.epub")
+        tmp.path().join("book.epub")
     );
     Ok(())
 }
 
 #[test]
-fn kept_intermediate_epub_avoids_an_existing_mobi() -> Result<()> {
+fn kepub_output_keeps_the_whole_extension() -> Result<()> {
+    let tmp = tempdir()?;
+    let source = tmp.path().join("book.cbz");
+    fs::write(&source, b"x")?;
+
+    // The name must be exactly `book.kepub.epub` — no `.kepub_kccN` fragment.
+    let kepub = options(&["-p", "KoE", "-f", "epub"])?;
+    fs::write(tmp.path().join("book.kepub.epub"), b"x")?;
+    assert_eq!(
+        output_filename(&source, None, ".epub", "", &kepub),
+        tmp.path().join("book.kepub.epub")
+    );
+
+    let short_ext = options(&["-p", "KoE", "-f", "epub", "--kepub-short-ext"])?;
+    fs::write(tmp.path().join("book.kepub"), b"x")?;
+    assert_eq!(
+        output_filename(&source, None, ".epub", "", &short_ext),
+        tmp.path().join("book.kepub")
+    );
+    Ok(())
+}
+
+#[test]
+fn kept_intermediate_epub_uses_its_own_name() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book.cbz");
     fs::write(&source, b"x")?;
     let mobi = options(&["-f", "mobi+epub"])?;
 
+    // The intermediate EPUB keeps its deterministic name; `.epub` and `.mobi`
+    // never collide, so no counter is needed.
     fs::write(tmp.path().join("book.mobi"), b"x")?;
     assert_eq!(
         output_filename(&source, None, ".epub", "", &mobi),
-        tmp.path().join("book_kcc0.epub")
+        tmp.path().join("book.epub")
     );
     Ok(())
 }
 
 #[test]
-fn azw3_avoids_clobbering_an_existing_file() -> Result<()> {
+fn azw3_output_uses_the_deterministic_epub_name() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("book.cbz");
     fs::write(&source, b"x")?;
     let azw3 = options(&["-f", "azw3"])?;
 
-    // The Kindle file name is derived from the EPUB path, so an existing AZW3
-    // nudges the EPUB name (and therefore the AZW3) to a `_kcc` counter.
+    // The Kindle name is derived from the EPUB path; an existing AZW3 does not
+    // rename the EPUB.
     fs::write(tmp.path().join("book.azw3"), b"x")?;
     assert_eq!(
         output_filename(&source, None, ".epub", "", &azw3),
-        tmp.path().join("book_kcc0.epub")
+        tmp.path().join("book.epub")
     );
     Ok(())
 }
@@ -420,10 +441,6 @@ fn covers_directory_selects_the_matching_index() -> Result<()> {
 
     assert_eq!(select_cover(&book2), Some(covers.join("c2.jpg")));
     assert_eq!(select_cover(&book1), Some(covers.join("c1.jpg")));
-
-    // An unrelated `_kcc` copy is not part of the series.
-    fs::write(tmp.path().join("Book 0_kcc0.cbz"), b"x")?;
-    assert_eq!(select_cover(&book2), Some(covers.join("c2.jpg")));
     Ok(())
 }
 

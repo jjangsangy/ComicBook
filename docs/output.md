@@ -85,9 +85,9 @@ takes this path.
 The builders do not round-trip through a zip: `epub::build_entries` returns the OEBPS entry
 list, which `build_epub` writes as a zip and the Kindle path materialises into a `tempfile`
 scratch directory (deleted on every exit) that `kindling` reads via `OEBPS/content.opf`.
-Naming follows KCC: the intermediate EPUB name is resolved first (with the `_kcc<N>` collision
-rule covering `Azw3`/`Mobi`), and the Kindle name is derived from it by replacing the
-extension.
+Naming is deterministic: the intermediate EPUB name is resolved first, the Kindle name is
+derived from it by replacing the extension, and an existing file is overwritten (the port
+drops KCC's `_kcc<N>` collision counter — see [porting.md](porting.md)).
 
 `kfx` is the EPUB preset for Calibre's KFX Output plugin (with `region-mag=false`); no KFX
 encoder is needed. The KFX "most common input resolution" override is not implemented.

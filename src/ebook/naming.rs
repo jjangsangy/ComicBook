@@ -1,11 +1,12 @@
 //! Slugify, page naming and output filename resolution.
 //!
 //! Mirrors KCC's `sanitizeTree`/`slugify`/`getOutputFilename` (see
-//! docs/architecture.md), including the `-kcc-x`/`-kcc-a`…`-kcc-d` page suffixes and
-//! the `_kcc<N>` collision scheme: [`sanitize_tree`] rewrites a [`ComicTree`]'s
-//! chapter directories and page names to the deterministic output layout the
-//! pipeline expects, and [`output_filename`] resolves where the finished book is
-//! written.
+//! docs/architecture.md), including the `-kcc-x`/`-kcc-a`…`-kcc-d` page suffixes:
+//! [`sanitize_tree`] rewrites a [`ComicTree`]'s chapter directories and page names
+//! to the deterministic output layout the pipeline expects, and [`output_filename`]
+//! resolves where the finished book is written. Unlike KCC, the output name is
+//! deterministic and replaces any existing file rather than gaining a `_kcc<N>`
+//! suffix (see docs/porting.md).
 //!
 //! Slugification delegates the hard part (Unicode transliteration) to the `slug`
 //! crate rather than re-implementing `python-slugify` (see docs/dependencies.md and
@@ -198,7 +199,8 @@ fn is_natural_sorted(names: &[String]) -> bool {
 ///
 /// `ext` includes the leading dot (`".epub"`); `tome_number` is KCC's
 /// `" N"`/`""` suffix. The returned path is made absolute, as the reference
-/// calls `os.path.abspath`.
+/// calls `os.path.abspath`. Unlike KCC, the name is deterministic: an existing
+/// file is overwritten rather than renamed with a `_kcc<N>` suffix.
 pub fn output_filename(
     source: &Path,
     wanted: Option<&Path>,
@@ -219,7 +221,7 @@ pub fn output_filename(
         ext.to_string()
     };
 
-    let filename = match wanted {
+    match wanted {
         Some(wanted) => wanted_filename(source, wanted, &ext, tome_number),
         None if source.is_dir() => append_str(source, &format!("{tome_number}{ext}")),
         None if options.format == Format::Epub && options.kepub => {
@@ -235,9 +237,7 @@ pub fn output_filename(
             source.with_file_name(name)
         }
         None => append_str(&strip_extension(source), &format!("{tome_number}{ext}")),
-    };
-
-    resolve_collision(filename, &ext, options)
+    }
 }
 
 /// Resolve the `--output` (`wantedname`) branch of `getOutputFilename`.
@@ -265,41 +265,6 @@ fn wanted_filename(source: &Path, wanted: &Path, ext: &str, tome_number: &str) -
     directory.join(format!("{base}{tome_number}{ext}"))
 }
 
-/// Append KCC's `_kcc<N>` collision counter, or its MOBI/EPUB equivalent.
-fn resolve_collision(filename: PathBuf, ext: &str, options: &Options) -> PathBuf {
-    if filename.exists() {
-        let basename = strip_extension(&filename);
-        let mut counter = 0;
-        loop {
-            let candidate = append_str(&basename, &format!("_kcc{counter}{ext}"));
-            if !candidate.exists() {
-                return candidate;
-            }
-            counter += 1;
-        }
-    }
-    // A kept intermediate EPUB must not clobber the Kindle file built from it.
-    let kindle_ext = match options.format {
-        Format::Mobi => Some(".mobi"),
-        Format::Azw3 => Some(".azw3"),
-        _ => None,
-    };
-    if ext == ".epub" {
-        if let Some(kindle_ext) = kindle_ext {
-            let basename = strip_extension(&filename);
-            if !append_str(&basename, kindle_ext).is_file() {
-                return filename;
-            }
-            let mut counter = 0;
-            while append_str(&basename, &format!("_kcc{counter}{kindle_ext}")).is_file() {
-                counter += 1;
-            }
-            return append_str(&basename, &format!("_kcc{counter}{ext}"));
-        }
-    }
-    filename
-}
-
 /// KCC's sibling `Covers/` overrides.
 ///
 /// When `<source-parent>/Covers/` exists, the source's index among the
@@ -323,7 +288,7 @@ pub fn select_cover(source: &Path) -> Option<PathBuf> {
     };
     let mut series: Vec<String> = read_names(listing_dir)
         .into_iter()
-        .filter(|name| name.ends_with(&extension) && !name.contains("_kcc"))
+        .filter(|name| name.ends_with(&extension))
         .collect();
     series.sort_by(|a, b| natord::compare_ignore_case(a, b));
     let index = series.iter().position(|name| name == &source_name)?;
