@@ -344,7 +344,10 @@ landed; explicit dependencies are called out. The finished shape is described in
   `ResolvedFormat` once `write_tome` is exhaustive); `DeviceKind` methods; `TitleOrigin` for
   `assemble`. `Options` drops `is_kindle`/`is_kobo`/`custom_profile`/`kfx`/`kepub`/
   `keep_epub`/`kindle_azw3`/`kindle_scribe_azw3` and adopts the Phase 2 enums for
-  `splitter`/`cropping`/`inter_panel_crop`/`metadata_title`/`batch_split`.
+  `splitter`/`cropping`/`inter_panel_crop`/`metadata_title`/`batch_split`. Split the flat
+  `Options` into `DeviceOptions`/`MainOptions`/`ProcessingOptions`/`OutputOptions`/
+  `SessionOptions` ([§6.2](#62-resolved-options-target-shape)) and narrow stage signatures
+  to the group they read.
 - **Gate:** `output/*` and `ebook_*` tests unchanged.
 - **Depends on:** Phase 2.
 
@@ -486,89 +489,150 @@ passing **both** `--black-borders` and `--white-borders`; if that tolerance must
 retain the two flags and route them through an `ArgGroup` into `--borders` instead of
 deleting them.
 
-### 6.2 Resolved `Options` (target shape)
+### 6.2 Resolved options (target shape)
+
+A single ~40-field `Options` struct is itself a smell: it is a god object where any
+function can reach any field, and "which subset does this stage actually read?" is
+undocumented. Split it into cohesive groups that mirror the CLI's existing `*Args` groups
+(`DeviceArgs`/`MainArgs`/`ProcessingArgs`/`OutputArgs`/`CustomProfileArgs`), so the request
+shape and the resolved shape correspond one-to-one.
+
+`Options` remains a thin aggregate so call sites can migrate incrementally, but functions
+should take the smallest group they need — e.g. the per-page pipeline takes
+`&ProcessingOptions` (plus a `Size` from `DeviceOptions`), and the EPUB/PDF/Kindle builders
+take `&OutputOptions` — instead of `&Options`. That narrows what each stage can depend on
+and stops a device change from silently affecting the image pipeline.
 
 Illustrative; comments map each field to what it replaces.
 
 ```rust
+/// A fully resolved `comic-book ebook` run: one small group per concern.
+#[derive(Debug, Clone)]
 pub struct Options {
-    // Inputs
     pub inputs: Vec<PathBuf>,
+    pub device: DeviceOptions,
+    pub main: MainOptions,
+    pub processing: ProcessingOptions,
+    pub output: OutputOptions,
+    pub session: SessionOptions,
+}
 
-    // Device
+/// Device profile and screen geometry (`DeviceArgs` + `CustomProfileArgs`).
+#[derive(Debug, Clone)]
+pub struct DeviceOptions {
     pub profile: Profile,
-    pub profile_data: ProfileData,
+    pub data: ProfileData,           // `Profile::data()` + the custom override
     pub reader: ReaderFamily,        // was device_kind + is_kindle + is_kobo
     pub geometry: Geometry,          // was custom_profile + the "Custom" name sentinel
+}
 
-    // Main
+/// Reading direction and layout switches (`MainArgs`).
+#[derive(Debug, Clone)]
+pub struct MainOptions {
     pub manga: bool,
+    pub hq: bool,
     pub layout: Layout,              // was light_novel + wallpaper
     pub panel_view: PanelView,       // was panel_view + two_panel + vertical_4_panel + legacy_panel_view
     pub webtoon: bool,
     pub invert_direction: bool,
-    pub target_size: Option<Megabytes>,
     pub file_fusion: bool,
+    pub target_size: Option<Megabytes>,
+}
 
-    // Processing
+impl MainOptions {
+    /// Derived once (KCC's `rightToLeft`); cleared by webtoon mode.
+    pub fn right_to_left(&self) -> bool { self.manga && !self.webtoon }
+}
+
+/// Image-processing switches (`ProcessingArgs`).
+#[derive(Debug, Clone, Default)]
+pub struct ProcessingOptions {
     pub no_processing: bool,
     pub splitter: Splitter,
     pub gamma: Gamma,
     pub autocontrast: Autocontrast,  // was auto_level + no_auto_contrast
-    pub force_color: bool,
-    pub color_auto_contrast: bool,
+    pub color: ColorTuning,          // was force_color + color_auto_contrast
     pub cropping: Cropping,
     pub cropping_power: f32,
     pub cropping_minimum: Fraction,
     pub preserve_margin: Option<Percent>,
     pub inter_panel_crop: InterPanelCrop,
     pub borders: Option<BorderColor>,
-    pub force_png: bool,
-    pub force_png_rgb: bool,
-    pub png_legacy: bool,
-    pub no_quantize: bool,
+    pub png: PngOptions,             // was force_png + force_png_rgb + png_legacy + no_quantize
     pub webp_output: bool,           // derived; was `webp` + `webp_output` duplicated
     pub jpeg_quality: Quality,
-    pub maximize_strips: bool,
-    pub upscale: bool,
-    pub stretch: bool,
-    pub no_rotate: bool,
-    pub rotate_right: bool,
-    pub rotate_first: bool,
-    pub smart_cover_crop: bool,
-    pub cover_fill: bool,
+    pub strips: Strips,              // was maximize_strips
+    pub sizing: Sizing,              // was upscale + stretch
+    pub rotation: RotationOptions,   // was no_rotate + rotate_right + rotate_first
+    pub cover: CoverOptions,         // was smart_cover_crop + cover_fill
     pub erase_rainbow: bool,
-    pub legacy_extract: bool,
-    pub pdf_width: bool,
-    pub delete: bool,
-    pub temp_dir: bool,
+    pub source: SourceOptions,       // was legacy_extract + pdf_width
+    pub scribe: bool,                // was kindle_scribe_azw3 (drives the tall-page split)
+}
 
-    // Output
-    pub output: Option<PathBuf>,
+// Orthogonal clusters: independent bools that are clearer as a named struct than as
+// loose fields on the processing group. All `Copy`, all `Default`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ColorTuning     { pub force_color: bool, pub autocontrast_color: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PngOptions      { pub force: bool, pub force_rgb: bool, pub legacy: bool, pub no_quantize: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Strips          { pub maximize: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sizing          { pub upscale: bool, pub stretch: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RotationOptions { pub no_rotate: bool, pub right: bool, pub first: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CoverOptions    { pub smart_crop: bool, pub fill: bool }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourceOptions   { pub legacy_extract: bool, pub pdf_width: bool }
+
+/// Output selection and metadata (`OutputArgs`).
+#[derive(Debug, Clone)]
+pub struct OutputOptions {
+    pub destination: Option<PathBuf>, // was `output`
     pub title: Option<String>,
-    pub metadata_title: MetadataTitle,
-    pub keep_comicinfo: bool,
     pub author: Option<String>,
     pub language: Language,
+    pub metadata_title: MetadataTitle,
+    pub keep_comicinfo: bool,
+    pub doc_type: DocType,
     pub encoding: OutputEncoding,    // was format + kfx + kepub + keep_epub + kindle_azw3 + kindle_scribe_azw3
     pub batch_split: BatchSplit,
     pub spread_shift: bool,
     pub one_page_landscape: bool,
 }
+
+/// Cross-cutting side effects (`-d`, `--temp-dir`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SessionOptions { pub delete: bool, pub temp_dir: bool }
 ```
 
-### 6.3 Enums introduced
+Derived, cross-group facts are computed once in `resolve` and exposed as methods rather
+than duplicated: `MainOptions::right_to_left()`, and `Options::profile_size()`
+(`DeviceOptions.data` + `MainOptions.hq`). `kindle_azw3`/`kindle_scribe_azw3` collapse into
+`ProcessingOptions.scribe` (derived from `device.reader` + `output.encoding`) because that
+is the consumer that needs them.
+
+### 6.3 Enums introduced, grouped by owner
 
 ```rust
+// DeviceOptions
 enum ReaderFamily   { Kindle, Kobo }                 // Kobo == KCC's isKobo == !isKindle
 enum Geometry       { Profile(Profile), Custom { width: u32, height: u32 } }
+
+// MainOptions
 enum Layout         { Regular, LightNovel, Wallpaper }
 enum PanelView      { Off, Two, Vertical4, Legacy }
+
+// ProcessingOptions
 enum Splitter       { Split, Rotate, Both }
 enum Gamma          { Auto, Linear(f32) }
 enum Autocontrast   { Contrast, Off, Level }
 enum Cropping       { Off, Margins, PageNumbers }
 enum InterPanelCrop { Off, Horizontal, Both }
+
+// OutputOptions
 enum MetadataTitle  { Default, Combine, Only }
 enum BatchSplit     { None, Auto, PerSubdirectory }
 enum OutputEncoding {
@@ -589,14 +653,17 @@ Plus the process-level enums from Phases 1, 4 and 5: `EntryKind`, `EntryContent`
 
 ### 6.4 Booleans that stay booleans
 
-Not every `bool` is a smell. These encode genuinely independent binary facts and should
-remain `bool` (optionally grouped in small `#[derive(Default)]` sub-structs):
-`manga`/`invert_direction` (reading direction), `webtoon`, `force_color`,
-`color_auto_contrast`, `force_png`/`force_png_rgb`/`png_legacy`/`no_quantize`,
-`maximize_strips`, `upscale`/`stretch`, `no_rotate`/`rotate_right`/`rotate_first`,
-`smart_cover_crop`/`cover_fill`, `erase_rainbow`, `legacy_extract`/`pdf_width`, `delete`,
-`temp_dir`, `keep_comicinfo`, `spread_shift`, `one_page_landscape`. They become an enum
-only where a combination is genuinely impossible (the clusters listed in §6.3).
+Not every `bool` is a smell. These encode genuinely independent binary facts and stay
+`bool`, grouped into the small `Copy` + `Default` structs above rather than left loose:
+
+- **`MainOptions`:** `manga`, `hq`, `webtoon`, `invert_direction`, `file_fusion`.
+- **`ProcessingOptions`:** `no_processing`, `erase_rainbow`, `webp_output`;
+  `color`/`png`/`strips`/`sizing`/`rotation`/`cover`/`source` own their clusters.
+- **`OutputOptions`:** `keep_comicinfo`, `spread_shift`, `one_page_landscape`.
+- **`SessionOptions`:** `delete`, `temp_dir`.
+
+They become an enum only where a combination is genuinely impossible — the clusters listed
+in §6.3. A `bool` whose `true`/`false` are both meaningful and independent stays one.
 
 ---
 
