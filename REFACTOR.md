@@ -34,6 +34,11 @@ Every proposal below must satisfy these rules. A proposal that violates one is l
    not bytes. Askama bindings may be edited only to render byte-identical output.
 5. **Every change is pinned.** Per `AGENTS.md`: a behaviour-preserving commit, covered by
    the existing tests, plus a `CHANGELOG.md` entry under `## [Unreleased]`.
+6. **Panic-free — including in refactor code.** `Cargo.toml` denies the clippy
+   `unwrap_used`, `expect_used` and `panic` lints, and the tree contains no `.unwrap()`,
+   `.expect()`, `panic!`, `unreachable!` or `debug_assert!` (see §7.5). A refactor that
+   guards an "impossible" state must make it *unrepresentable in the type* or return a
+   `Result`; it must not introduce a panic, an `expect`, or an `unreachable!`.
 
 Cost legend: **✅** compiler-erased / zero runtime cost · **➕** strictly less work or
 memory than today · **⛔** rejected (would copy, allocate or de-vectorise).
@@ -221,13 +226,13 @@ sum type.
 | E6 | `output/epub/opf.rs:276-284` | `page_spread_property`'s `else { String::new() }` is unreachable because `is_kobo == !is_kindle`. | Exhaustive `match options.reader` (A12) over `PageSide` (B7). | ✅ |
 | E7 | `output/epub/xhtml.rs:193-205` | `panel_style`'s `_ => String::new()` hides typos and future ids. | `match PanelId { .. }` (B9), no wildcard. | ✅ |
 | E8 | `output/mod.rs:157` | `write_tome`'s `other => bail!("internal error: unresolved output format")` defends an impossible state. | `ResolvedFormat` (B5) makes the match exhaustive. | ✅ |
-| E9 | `processing/cover.rs:218-224` | `put_pixel`'s `_ => {}` silently drops any pixel type other than L8/Rgb8. | Narrow to a `CoverPixels` enum produced once by `draw_label`, or `debug_assert!(false)`. | ✅ |
-| E10 | `processing/color.rs:188-193` | `GrayImage::from_raw(..).unwrap_or_else(|| GrayImage::new(..))` builds a blank image on a bug (the length is `width*height` by construction). | `expect("rgb_to_luma builds width*height samples")`. | ✅ |
+| E9 | `processing/cover.rs:218-224` | `put_pixel`'s `_ => {}` silently drops any pixel type other than L8/Rgb8. | Narrow to a `CoverPixels` enum produced once by `draw_label`, so the arm cannot exist. No `debug_assert!`/`unreachable!` (see §1 rule 6). | ✅ |
+| E10 | `processing/color.rs:188-193` | `GrayImage::from_raw(..).unwrap_or_else(|| GrayImage::new(..))` builds a blank image on a bug (the length is `width*height` by construction). | Build the buffer with `ImageBuffer::from_fn` (infallible) or return `Result`; **not** `expect` — the crate denies `clippy::expect_used`. | ✅ |
 | E11 | `ebook/profiles.rs:552-557` | `Profile::entry` linearly searches a parallel array and falls back to row 0 on a miss; a table typo silently maps a profile to the wrong row. | Exhaustive `match self { Profile::K1 => &PROFILE_TABLE[0], .. }` (keep `ALL_PROFILES` only for clap); no fallback, O(1). | ✅ |
-| E12 | `output/epub/mod.rs:222-228` | `OffsetDateTime::...format(format).unwrap_or_else(..)` on a compile-time constant format; the epoch fallback allocates. | Bind a `const` format and `expect`. | ✅ |
+| E12 | `output/epub/mod.rs:222-228` | `OffsetDateTime::...format(format).unwrap_or_else(..)` on a compile-time constant format; the epoch fallback allocates. | Thread `Result` upward (the error is unreachable for a constant format); keep the epoch branch only as a documented last resort — no `expect` (denied). | ✅ |
 | E13 | `output/kindle.rs:123-126` | `options.temp_dir.then(\|\| source.parent()).flatten()` obscures an `and_then`. | `source.parent().filter(\|_\| options.temp_dir)` in one `match`. | ✅ |
 | E14 | `ebook/metadata.rs:312-318` | `std::str::from_utf8(name).unwrap_or("")` makes a malformed element name silently fail all comparisons. | Return `Result`/`Option`; let `parse` apply the "discard malformed ComicInfo" rule. | ✅ |
-| E15 | `src/image_ops.rs:53-70` | `resize_lanczos3` has three `img.clone()` fallbacks for conditions the doc calls impossible; each is a full pixel-buffer copy. | Return `Result`, or `expect` the documented invariant. | ➕ (removes a hidden clone) |
+| E15 | `src/image_ops.rs:53-70` | `resize_lanczos3` has three `img.clone()` fallbacks for conditions the doc calls impossible; each is a full pixel-buffer copy. | Return `Result` so the impossible state is loud rather than a silent full-image clone. | ➕ (removes a hidden clone) |
 | E16 | `src/image_ops.rs:18-34` | `is_image_file` re-derives the extension by lossy string surgery after `Path::extension()` returned nothing. | One `fn image_extension(&Path) -> Option<&str>`; no `to_string_lossy` ladder. | ✅ |
 
 ### 3.6 Duplicated conditions and derivations
@@ -401,9 +406,10 @@ landed; explicit dependencies are called out. The finished shape is described in
   (duplication), G1, G3, G5, G6, G7.
 - **Scope:** `archive/ops.rs`, `ebook/{progress,metadata,naming,mod}.rs`,
   `processing/{cover,webtoon}.rs`, `src/{convert,clamp,image_ops}.rs`, `ebook/output/**`.
-- **Deliverable:** `RootStrip` struct, `CoverPixels`, `expect` on the invariant errors,
-  exhaustive `Profile::entry`, `Reporter` mode enum, `Metadata Field` enum, `detect_panels`
-  `Option` state, shared `style()`/`file_name()`/`stem()` helpers.
+- **Deliverable:** `RootStrip` struct, `CoverPixels`, `Result`-based handling of the
+  invariant errors (no `expect`/`unreachable!` — §1 rule 6), exhaustive `Profile::entry`,
+  `Reporter` mode enum, `Metadata Field` enum, `detect_panels` `Option` state, shared
+  `style()`/`file_name()`/`stem()` helpers.
 - **Gate:** full suite plus clippy `-D warnings`.
 
 ### Phase 9 — Close-out
@@ -594,28 +600,174 @@ only where a combination is genuinely impossible (the clusters listed in §6.3).
 
 ---
 
-## 7. Verification and process
+## 7. Testing, validation and process
+
+A refactor changes types, not behaviour, so the existing tests are the specification: each
+phase must leave them green *unchanged*. The only test files a refactor may touch are new
+tests it adds; committed golden references and memory ceilings are never regenerated to
+make a refactor pass.
+
+### 7.1 Runner and quality gates
+
+`cargo-nextest` is the standard runner — each test runs in its own process, failures are
+clearer and parallelisation is better. There are no doctests, so nextest covers the whole
+suite; use `cargo test` only where nextest cannot run a target. Run after **every** phase,
+before starting the next:
+
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features -D warnings
+cargo nextest run
+```
+
+### 7.2 Test suite map
+
+The integration suites under `tests/` each own a slice of behaviour. A phase should know
+which of them is its gate (see §7.6).
+
+| Suite | Covers | Most relevant phases |
+|:--|:--|:--|
+| `cli_tests` | `convert`/`clamp` argument handling, completions | 2 |
+| `integration_tests` | end-to-end convert/clamp over fixtures | 1, 8 |
+| `ebook_tests` | CLI, `Options::resolve`, profile tables | 2, 3 |
+| `ebook_input_tests` | archive/folder ingest, root stripping, lazy decode | 1, 6 |
+| `ebook_input_epub_pdf_tests` | EPUB spine and PDF raster/extract inputs | 1, 6 |
+| `ebook_processing_tests` | per-page transform/encode pipeline, pixel release | 4, 5, 6 |
+| `ebook_crop_tests` | margin/page-number/inter-panel crop boxes | 4, 5 |
+| `ebook_naming_tests` | slugify, sanitize, cover selection, output filenames | 3, 6, 8 |
+| `ebook_epub_tests` | EPUB/KePub documents, spread algorithm, Scribe panel view | 3, 5, 7 |
+| `ebook_golden_tests` | byte-exact OPF/NCX/NAV/XHTML against committed goldens | 7 |
+| `ebook_output_tests` | CBZ/PDF/light-novel builders, tome chunking | 3, 4, 7, 8 |
+| `ebook_kindle_tests` | AZW3/MOBI structural readback via `kindling` | 3, 7 |
+| `ebook_chunk_tests` | target-size/batch-split tome packing | 3, 4, 8 |
+| `ebook_webtoon_tests` | webtoon merge, panel detection, strip splitting | 4, 5, 8 |
+| `ebook_robustness_tests` | malformed inputs (error, never panic) + memory ceilings | 1, 6 |
+| `src/**` unit tests | algorithm-level tests co-located with the module | all |
+
+`src/**` unit tests are the ones a phase most often extends: the algorithm modules under
+`ebook/processing/*`, `ebook/metadata.rs`, `ebook/naming.rs`, `ebook/chunk.rs` and
+`ebook/output/epub/*` all carry `#[cfg(test)] mod tests`. Because `clippy --all-targets`
+compiles them, new tests must satisfy the same lint contract as library code (§7.5).
+
+### 7.3 Test taxonomy
+
+- **Unit tests** on small synthetic images: colour/fill/split decisions, crop boxes,
+  slugify, spread properties, filename logic, OPF/NCX/NAV rendering.
+- **Fixture/golden tests** (`tests/ebook_golden_tests.rs`): generated EPUB documents are
+  compared byte-for-byte against committed references under `tests/fixtures/epub_golden/`;
+  the UUID and `dcterms:modified` are normalised and line endings are folded to LF (the
+  generated documents are themselves pinned to LF).
+- **Reference-value tests**: `tests/fixtures/crop/` and the webtoon virtual-page sizes pin
+  values produced by KCC itself, so they assert exact equality, not a tolerance.
+- **Round-trip tests**: CBZ→CBZ and EPUB→input→EPUB.
+- **Structural output tests**: EPUB read back via `zip` (mimetype first + stored; OPF
+  spine; XHTML image refs); AZW3/MOBI read back via `kindling`'s `mobi_dump`; PDF via
+  `lopdf`. A byte diff against `kindlegen` is neither possible nor permitted.
+- **Robustness tests** (`tests/ebook_robustness_tests.rs`): malformed inputs are driven
+  through `catch_unwind`; the contract is **error, never panic**.
+- **Conformance**: an `epubcheck` job (JVM) marked `#[ignore]` by default.
+- **Progress quieting**: `tests/common/mod.rs` points fd 2 at `/dev/null` once per test
+  binary (Unix); robustness tests also set the `COMIC_BOOK_QUIET` env var
+  (`progress::QUIET_ENV`). New tests that drive the pipeline should use the same helpers.
+
+### 7.4 Running the tests
+
+```bash
+# Default: the fast set; #[ignore]d slow/memory/conformance tests are skipped.
+cargo nextest run
+
+# One suite, including its ignored tests.
+cargo nextest run --run-ignored all --test ebook_webtoon_tests
+
+# Only the ignored tests (slow set + stress + epubcheck; epubcheck needs it on PATH).
+cargo nextest run --run-ignored ignored-only
+```
+
+Long-running and memory tests are `#[ignore]`d because the unoptimised CI build is slow;
+they are listed with timings in `docs/development.md`. They must be run explicitly for the
+phases that touch their area (§7.6).
+
+### 7.5 The lint contract refactor code must satisfy
+
+`Cargo.toml` sets:
+
+```toml
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+```
+
+and the tree contains no `.unwrap()`, `.expect()`, `panic!`, `unreachable!` or
+`debug_assert!` anywhere (library or tests). This directly constrains every "impossible
+state" fix in the catalogue:
+
+- Guard a state by making it **unrepresentable** (enum/newtype/type state), not by
+  `expect`-ing it away.
+- Where a fallback is genuinely needed, return `Result`/`Option` and let the caller decide,
+  matching the existing `anyhow::Context` style. `unwrap_or`, `unwrap_or_else` and
+  `unwrap_or_default` are allowed (they are not the denied lints).
+- Error paths must **not panic**: `ebook_robustness_tests` asserts that malformed input
+  errors rather than aborts, so a new `expect` would both fail clippy and risk that
+  contract.
+- If a test-only panic is ever unavoidable, it would need a scoped
+  `#[allow(clippy::expect_used)]` with a justifying comment — there are none today, so the
+  default is to avoid it.
+
+### 7.6 Per-phase test gates
+
+Run the default suite plus the named ignored tests for the phase, then the full suite
+before merging.
+
+| Phase | Default suites to watch | Ignored tests to run explicitly | New tests to add |
+|:--|:--|:--|:--|
+| 1 Archive | `integration_tests`, `ebook_input_tests`, `ebook_robustness_tests` | — | directory/file round-trip, empty-path → `None`, root-strip policy |
+| 2 CLI | `cli_tests`, `ebook_tests` | — | numeric aliases still parse; named values parse; border conflict is a clap error |
+| 3 Config | `ebook_tests`, `ebook_epub_tests`, `ebook_kindle_tests` | — | resolution table: each preset/format → expected `OutputEncoding` |
+| 4 Geometry | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_chunk_tests` | (tooling: `alloc_count`/`bench.sh` baseline, §7.7) | coordinate round-trips through the new named types |
+| 5 Processing | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_epub_tests` | `scribe_profile_splits_a_tall_page_into_above_and_below` | `ScribeHalf`/`Axis` behaviour equivalence |
+| 6 Page state | `ebook_input_tests`, `ebook_input_epub_pdf_tests`, `ebook_processing_tests`, `ebook_robustness_tests` | `ingest_and_repack_stay_far_below_the_decoded_book_size`, `a_large_book_converts_under_a_memory_ceiling`, `huge_book_stress` | `--no-processing` still never decodes; decoded page still retains its encoded bytes |
+| 7 Output | `ebook_epub_tests`, `ebook_golden_tests`, `ebook_output_tests`, `ebook_kindle_tests` | `light_novel_...`, `smart_cover_crop_...`, `two_panel_and_vertical_4_panel_...` | none needed — the byte-exact goldens are the gate |
+| 8 Sweep | full suite + clippy | as touched | metadata field identity; exhaustive `Profile::entry`; `file_name` helper |
+| 9 Close-out | full suite | — | none |
+
+Existing always-on tests already pin two contracts the refactor must not break:
+`ingest_defers_page_decoding` (`ebook_input_tests`) and `processing_releases_decoded_pixels`
+(`ebook_processing_tests`).
+
+### 7.7 Regression guardrails
+
+- **Golden references are frozen.** Never run `UPDATE_GOLDEN=1` to make a refactor pass —
+  it exists only for an intentional format change. A diff there means the refactor changed
+  output, which violates §1 rule 4. (Regenerate, if a real format change is ever intended,
+  with `UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests`.)
+- **Memory ceilings are frozen.** The `ebook_robustness_tests` ceilings assert peak RSS is
+  linear in the *encoded* book (see `docs/development.md`); treat any increase as a failed
+  refactor. Phase 6 is the phase this most concerns.
+- **Performance is measured, not assumed.** `examples/gen_bench` generates a deterministic
+  input; `scripts/bench.sh` times a run; `examples/alloc_count` (a counting global
+  allocator) and `scripts/memory_bench.sh` report allocations/bytes/peak live against a
+  baseline worktree. Run these before and after Phases 4 and 5, where enum/newtype/
+  `const`-generic changes must be neutral. Do **not** judge hot paths by eye.
+- **The `#[ignore]`d tests are the guardrails, not optional.** Run the relevant ones for
+  the phase (table in §7.6); default CI skips them for time, not because they are
+  unimportant.
+
+### 7.8 Process notes
 
 - **Per-step commands** (from `AGENTS.md`): `cargo fmt`, then
   `cargo clippy --all-targets --all-features -D warnings`, then `cargo nextest run` — after
   every phase, before starting the next.
-- **Output pinning.** Phases 3 and 7 touch the EPUB/OPF path: run the existing output tests
-  (`output/*` unit tests, `tests/ebook_*`) which assert exact document shapes, and keep
-  them green byte-for-byte.
-- **Memory pinning.** Phase 6 must pass the large-book memory regression tests
-  (`tests/ebook_robustness_tests.rs`), which assert peak RSS is linear in the encoded
-  book. Treat any increase as a failed refactor, not a regenerated baseline.
-- **Performance pinning.** Before and after Phases 4 and 5, measure a 200-page CBZ→EPUB run
-  against the "single-digit seconds, comparable to `kindling`" goal in
-  `docs/architecture.md`. Enum-for-bool, newtype and `const`-generic changes must be
-  neutral; verify with a benchmark rather than assuming.
 - **One finding class is behaviour-visible.** A20 (`--black-borders --white-borders`
   becomes a clap conflict) rejects input that previously ran. That is the only place a
   fix changes accepted input; if the maintainer wants the old tolerance, keep the flags
-  and resolve through an `ArgGroup`/enum instead of deleting them.
+  and resolve through an `ArgGroup`/enum instead of deleting them. Add a `cli_tests` case
+  either way.
 - **Changelog.** Each user-visible change (CLI surface, output, dependencies, docs) gets an
   `## [Unreleased]` entry; pure internal type refactors that change neither surface nor
   output do not need one, per Keep a Changelog.
+- **Docs close-out (Phase 9).** Update `docs/architecture.md`'s data-model block and any
+  comment that described the old option pairs, then confirm `cargo doc` is clean.
 
 ---
 
