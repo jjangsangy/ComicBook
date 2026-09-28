@@ -13,8 +13,8 @@ pub mod xhtml;
 
 mod templates;
 
-use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 
 use anyhow::Result;
@@ -22,34 +22,115 @@ use time::macros::format_description;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::ebook::model::{EncodedPage, MediaType, PageFlags, ScribeHalf};
+use self::package::{EpubEntries, ZipEntry};
+use super::Tomes;
+use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags, ScribeHalf};
 use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 use crate::units::Size;
 
+/// A page's chapter directory relative to `OEBPS/Images` (`""` at the root).
+///
+/// `#[repr(transparent)]` over `&str`: layout-identical to the old bare field, no
+/// allocation, still `Copy`. Distinct from [`FileName`]/[`Stem`] so the three
+/// `PageRef` strings can no longer be swapped (REFACTOR.md D12).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImageDir<'a>(&'a str);
+
+impl<'a> ImageDir<'a> {
+    pub(crate) const fn new(value: &'a str) -> Self {
+        ImageDir(value)
+    }
+
+    pub(crate) const fn as_str(self) -> &'a str {
+        self.0
+    }
+}
+
+impl fmt::Display for ImageDir<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// An image file name including its extension (`kcc-0001-kcc-x.jpg`).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FileName<'a>(&'a str);
+
+impl<'a> FileName<'a> {
+    pub(crate) const fn new(value: &'a str) -> Self {
+        FileName(value)
+    }
+
+    pub(crate) const fn as_str(self) -> &'a str {
+        self.0
+    }
+}
+
+impl fmt::Display for FileName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// A file name without its extension (`kcc-0001-kcc-x`).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Stem<'a>(&'a str);
+
+impl<'a> Stem<'a> {
+    pub(crate) const fn new(value: &'a str) -> Self {
+        Stem(value)
+    }
+
+    pub(crate) const fn as_str(self) -> &'a str {
+        self.0
+    }
+}
+
+impl fmt::Display for Stem<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 /// One page as the EPUB builders see it (see docs/output.md).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PageRef<'a> {
     /// Chapter directory relative to `OEBPS/Images` (`""` at the root).
-    pub image_dir: &'a str,
+    pub image_dir: ImageDir<'a>,
     /// Image file name including its extension (`kcc-0001-kcc-x.jpg`).
-    pub file: &'a str,
-    /// File name without its extension (`kcc-0001-kcc-x`).
-    pub stem: &'a str,
+    pub file: FileName<'a>,
     pub size: Size,
     pub flags: PageFlags,
+    /// How the page participates in the spread split (drives the OPF page-spread
+    /// algorithm); carried as the enum so `opf` never re-parses the name suffix.
+    pub order_class: OrderClass,
     pub media_type: MediaType,
     /// The `-below` companion of a Kindle Scribe `-above` page, if any.
     pub below: Option<&'a EncodedPage>,
 }
 
+impl<'a> PageRef<'a> {
+    /// The page image's file name without its extension (the `<title>` and the
+    /// XHTML file name).
+    ///
+    /// Derived from [`PageRef::file`] rather than stored beside it, so the two can
+    /// never disagree (a stored copy was only kept in sync by convention).
+    pub(crate) fn stem(&self) -> Stem<'a> {
+        stem_of(self.file)
+    }
+}
+
 /// Build the EPUB for `book` and write it to `dest`.
 ///
 /// `title` is the tome's title (the base title for a single-tome book, or
-/// `base [i/n]` when the book was split); `drop_bookmarks` matches KCC's
-/// `ischunked` flag, which discards `ComicInfo.xml` bookmarks because their global
-/// page indices do not survive chunking.
+/// `base [i/n]` when the book was split); `tomes` distinguishes a split book,
+/// whose `ComicInfo.xml` bookmarks are discarded because their global page
+/// indices do not survive chunking (KCC's `ischunked`).
 pub fn build_epub(
     dest: &Path,
     book: &ProcessedBook,
@@ -57,9 +138,9 @@ pub fn build_epub(
     source: &Path,
     options: &Options,
     title: &str,
-    drop_bookmarks: bool,
+    tomes: Tomes,
 ) -> Result<()> {
-    let entries = build_entries(book, prepared, source, options, title, drop_bookmarks)?;
+    let entries = build_entries(book, prepared, source, options, title, tomes)?;
     package::write_epub(dest, &entries)
 }
 
@@ -78,8 +159,8 @@ pub(crate) fn build_entries<'a>(
     source: &Path,
     options: &Options,
     title: &str,
-    drop_bookmarks: bool,
-) -> Result<Vec<(String, Cow<'a, [u8]>)>> {
+    tomes: Tomes,
+) -> Result<EpubEntries<'a>> {
     let uuid = Uuid::new_v4().to_string();
     let modified = modified_timestamp();
 
@@ -92,7 +173,7 @@ pub(crate) fn build_entries<'a>(
         if chapter.pages.is_empty() {
             continue;
         }
-        let dir = chapter.name.as_str().trim_matches('/');
+        let dir = ImageDir::new(chapter.name.as_str().trim_matches('/'));
         chapter_starts.push(filelist.len());
         let mut index = 0;
         while index < chapter.pages.len() {
@@ -110,18 +191,13 @@ pub(crate) fn build_entries<'a>(
                     .filter(|next| next.flags.half == ScribeHalf::Below),
                 ScribeHalf::NotSplit => None,
             };
-            let file = page
-                .name
-                .as_str()
-                .rsplit('/')
-                .next()
-                .unwrap_or(page.name.as_str());
+            let file = file_name(page.name.as_str());
             filelist.push(PageRef {
                 image_dir: dir,
                 file,
-                stem: stem_of(file),
                 size: page.size,
                 flags: page.flags,
+                order_class: page.order_class,
                 media_type: page.media_type,
                 below,
             });
@@ -130,12 +206,11 @@ pub(crate) fn build_entries<'a>(
     }
 
     // One navigation entry per chapter, or one per ComicInfo bookmark when the
-    // book carries them (KCC's `comicinfo_chapters`). A chunked book drops the
+    // book carries them (KCC's `comicinfo_chapters`). A split book drops the
     // bookmarks entirely (KCC resets `comicinfo_chapters` per split tome).
-    let bookmarks: &[(usize, String)] = if drop_bookmarks {
-        &[]
-    } else {
-        &prepared.metadata.bookmarks
+    let bookmarks: &[(usize, String)] = match tomes {
+        Tomes::Single => &prepared.metadata.bookmarks,
+        Tomes::Split => &[],
     };
     let mut page_titles: HashMap<String, String> = HashMap::new();
     let entries = if bookmarks.is_empty() {
@@ -151,90 +226,79 @@ pub(crate) fn build_entries<'a>(
 
     let cover = book.cover.as_ref().map(|cover| cover.page.bytes.as_slice());
 
-    let mut zip_entries: Vec<(String, Cow<'a, [u8]>)> = Vec::new();
-    zip_entries.push((
-        "META-INF/container.xml".to_string(),
-        Cow::Borrowed(opf::CONTAINER_XML.as_bytes()),
+    let mut documents: Vec<ZipEntry<'a>> = Vec::new();
+    documents.push(ZipEntry::borrowed(
+        "META-INF/container.xml",
+        opf::CONTAINER_XML.as_bytes(),
     ));
-    zip_entries.push((
-        "OEBPS/Text/style.css".to_string(),
-        Cow::Owned(opf::style_css(options)?.into_bytes()),
+    documents.push(ZipEntry::owned(
+        "OEBPS/Text/style.css",
+        opf::style_css(options)?.into_bytes(),
     ));
     if let Some(bytes) = cover {
-        zip_entries.push(("OEBPS/Images/cover.jpg".to_string(), Cow::Borrowed(bytes)));
+        documents.push(ZipEntry::borrowed("OEBPS/Images/cover.jpg", bytes));
     }
     // Every processed page — including a Scribe `-below` companion — is written to
     // `OEBPS/Images`, whether or not it is a spine item.
     for chapter in &book.chapters {
-        let dir = chapter.name.as_str().trim_matches('/');
+        let dir = ImageDir::new(chapter.name.as_str().trim_matches('/'));
         for page in &chapter.pages {
-            let file = page
-                .name
-                .as_str()
-                .rsplit('/')
-                .next()
-                .unwrap_or(page.name.as_str());
-            zip_entries.push((
+            let file = file_name(page.name.as_str());
+            documents.push(ZipEntry::borrowed(
                 format!("OEBPS/{}/{}", images_dir(dir), file),
-                Cow::Borrowed(page.bytes.as_slice()),
+                page.bytes.as_slice(),
             ));
         }
     }
     for page in &filelist {
         let bytes = xhtml::build_xhtml(page, options)?;
-        zip_entries.push((
-            format!("OEBPS/{}/{}.xhtml", text_dir(page.image_dir), page.stem),
-            Cow::Owned(bytes),
+        documents.push(ZipEntry::owned(
+            format!("OEBPS/{}/{}.xhtml", text_dir(page.image_dir), page.stem()),
+            bytes,
         ));
     }
 
-    zip_entries.push((
-        "OEBPS/toc.ncx".to_string(),
-        Cow::Owned(
-            nav::build_ncx(
-                title,
-                &entries,
-                &filelist,
-                &prepared.sanitized.chapter_titles,
-                &page_titles,
-                &options.output.language,
-                &uuid,
-            )?
-            .into_bytes(),
-        ),
+    documents.push(ZipEntry::owned(
+        "OEBPS/toc.ncx",
+        nav::build_ncx(
+            title,
+            &entries,
+            &filelist,
+            &prepared.sanitized.chapter_titles,
+            &page_titles,
+            &options.output.language,
+            &uuid,
+        )?
+        .into_bytes(),
     ));
-    zip_entries.push((
-        "OEBPS/nav.xhtml".to_string(),
-        Cow::Owned(
-            nav::build_nav(
-                title,
-                &entries,
-                &filelist,
-                &prepared.sanitized.chapter_titles,
-                &page_titles,
-            )?
-            .into_bytes(),
-        ),
+    documents.push(ZipEntry::owned(
+        "OEBPS/nav.xhtml",
+        nav::build_nav(
+            title,
+            &entries,
+            &filelist,
+            &prepared.sanitized.chapter_titles,
+            &page_titles,
+        )?
+        .into_bytes(),
     ));
-    zip_entries.push((
-        "OEBPS/content.opf".to_string(),
-        Cow::Owned(
-            opf::build_opf(
-                title,
-                &filelist,
-                cover.is_some(),
-                source,
-                &prepared.metadata,
-                &options.output.language,
-                &uuid,
-                &modified,
-                options,
-            )?
-            .into_bytes(),
-        ),
+    documents.push(ZipEntry::owned(
+        "OEBPS/content.opf",
+        opf::build_opf(
+            title,
+            &filelist,
+            cover.is_some(),
+            source,
+            &prepared.metadata,
+            &options.output.language,
+            &uuid,
+            &modified,
+            options,
+        )?
+        .into_bytes(),
     ));
 
-    Ok(zip_entries)
+    Ok(EpubEntries::new(documents))
 }
 
 /// The current UTC time as KCC's `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`).
@@ -248,8 +312,8 @@ fn modified_timestamp() -> String {
 /// Rebuild the navigation entries from `ComicInfo.xml` bookmarks.
 ///
 /// Mirrors KCC's `comicinfo_chapters` loop: the `Page/@Image` index is advanced
-/// past every `-kcc-b` split half encountered, so bookmark indices keep pointing
-/// at the right page after spreads were bisected.
+/// past every [`OrderClass::SplitLeft`] half encountered, so bookmark indices keep
+/// pointing at the right page after spreads were bisected.
 fn bookmark_entries(
     filelist: &[PageRef<'_>],
     bookmarks: &[(usize, String)],
@@ -273,7 +337,7 @@ fn bookmark_entries(
         let mut in_range = true;
         for x in 0..=pageid.saturating_add(cur_diff) {
             match filelist.get(x) {
-                Some(entry) if entry.file.contains("-kcc-b") => {
+                Some(entry) if entry.order_class == OrderClass::SplitLeft => {
                     pageid += diff_delta;
                     global_diff += diff_delta;
                 }
@@ -293,22 +357,34 @@ fn bookmark_entries(
             continue;
         };
         entries.push(pageid);
-        page_titles.insert(entry.file.to_string(), title.clone());
+        page_titles.insert(entry.file.as_str().to_string(), title.clone());
     }
     entries
 }
 
+/// The last `/`-separated segment of a page name.
+///
+/// `rsplit_once` returns `None` only when there is no `/`, so no dead `unwrap_or`
+/// fallback is needed (REFACTOR.md E5).
+fn file_name(name: &str) -> FileName<'_> {
+    match name.rsplit_once('/') {
+        Some((_, file)) => FileName::new(file),
+        None => FileName::new(name),
+    }
+}
+
 /// A file name without its extension (Python's `os.path.splitext(...)[0]`).
-fn stem_of(file: &str) -> &str {
-    match file.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
-        _ => file,
+fn stem_of(file: FileName<'_>) -> Stem<'_> {
+    let name = file.as_str();
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => Stem::new(stem),
+        _ => Stem::new(name),
     }
 }
 
 /// `OEBPS/Images` or `OEBPS/Images/<chapter>`.
-pub(crate) fn images_dir(image_dir: &str) -> String {
-    if image_dir.is_empty() {
+pub(crate) fn images_dir(image_dir: ImageDir<'_>) -> String {
+    if image_dir.as_str().is_empty() {
         "Images".to_string()
     } else {
         format!("Images/{image_dir}")
@@ -316,8 +392,8 @@ pub(crate) fn images_dir(image_dir: &str) -> String {
 }
 
 /// `OEBPS/Text` or `OEBPS/Text/<chapter>`.
-pub(crate) fn text_dir(image_dir: &str) -> String {
-    if image_dir.is_empty() {
+pub(crate) fn text_dir(image_dir: ImageDir<'_>) -> String {
+    if image_dir.as_str().is_empty() {
         "Text".to_string()
     } else {
         format!("Text/{image_dir}")
@@ -326,7 +402,7 @@ pub(crate) fn text_dir(image_dir: &str) -> String {
 
 /// KCC's manifest `uniqueid` for a page: the Images path with separators folded.
 pub(crate) fn unique_id(entry: &PageRef<'_>) -> String {
-    format!("{}/{}", images_dir(entry.image_dir), entry.stem).replace('/', "_")
+    format!("{}/{}", images_dir(entry.image_dir), entry.stem()).replace('/', "_")
 }
 
 /// Python's `html.escape(value)` with `quote=True`.
@@ -351,18 +427,30 @@ mod tests {
 
     #[test]
     fn stem_drops_the_last_extension() {
-        assert_eq!(stem_of("kcc-0001-kcc-x.jpg"), "kcc-0001-kcc-x");
-        assert_eq!(stem_of("archive.tar.gz"), "archive.tar");
+        assert_eq!(
+            stem_of(FileName::new("kcc-0001-kcc-x.jpg")).as_str(),
+            "kcc-0001-kcc-x"
+        );
+        assert_eq!(
+            stem_of(FileName::new("archive.tar.gz")).as_str(),
+            "archive.tar"
+        );
         // A dotless or leading-dot name keeps its whole name, as `splitext` does.
-        assert_eq!(stem_of("kcc-0001"), "kcc-0001");
-        assert_eq!(stem_of(".hidden"), ".hidden");
+        assert_eq!(stem_of(FileName::new("kcc-0001")).as_str(), "kcc-0001");
+        assert_eq!(stem_of(FileName::new(".hidden")).as_str(), ".hidden");
     }
 
     #[test]
     fn directories_are_prefixed_and_joined() {
-        assert_eq!(images_dir(""), "Images");
-        assert_eq!(images_dir("Chapter 1/Sub"), "Images/Chapter 1/Sub");
-        assert_eq!(text_dir(""), "Text");
-        assert_eq!(text_dir("Chapter 1/Sub"), "Text/Chapter 1/Sub");
+        assert_eq!(images_dir(ImageDir::new("")), "Images");
+        assert_eq!(
+            images_dir(ImageDir::new("Chapter 1/Sub")),
+            "Images/Chapter 1/Sub"
+        );
+        assert_eq!(text_dir(ImageDir::new("")), "Text");
+        assert_eq!(
+            text_dir(ImageDir::new("Chapter 1/Sub")),
+            "Text/Chapter 1/Sub"
+        );
     }
 }

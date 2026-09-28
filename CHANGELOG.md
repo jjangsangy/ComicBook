@@ -129,6 +129,26 @@ release when a version tag is pushed.
   - Removed the vestigial `Page::flags`/`PageFlags::order_class` (never read; `EncodedPage::
     order_class` is the single owner), and replaced the silent `media_type().unwrap_or(Jpeg)` and
     the `--splitter` equality checks with explicit, exhaustive handling.
+- Gave the EPUB output pipeline compiler-checked identities instead of bare strings and booleans
+  (the output step of the type-safety refactor tracked in `REFACTOR.md`). Emitted bytes are
+  unchanged:
+  - `PageRef`'s three confusable `&str` fields are `ImageDir`/`FileName`/`Stem` newtypes, the
+    manifest/spine/navigation values are `ManifestId`/`Idref`/`Href`/`SpineAttr`/`NavId`/`NavTitle`
+    with the `page_`/`img_`/`-below` id conventions centralised, and the document modes are enums:
+    `PageSide`/`Direction` (with the `(invert_direction, right_to_left)` XOR computed once),
+    `WritingMode`, `ManifestMediaType` and `PanelId` (replacing the stringly Panel View id and its
+    wildcard `style` match).
+  - `Opf`'s `has_description`/`has_series`/`has_group` bool+payload pairs are
+    `Option<&str>`/`Option<Series>`; the never-set `OpfItem` `properties`/`has_properties_before`/
+    `has_properties_after` trio is deleted; `region_mag` is a `bool`; and `PageXhtml`'s
+    `has_below`/`below_image_src`/`below_img_width`/`below_img_height` group is one
+    `Option<BelowImage>`.
+  - The OEBPS entry list is a move-only `EpubEntries` of `ZipEntry`/`ZipPath` whose only constructor
+    prepends the stored `mimetype` entry, replacing the anonymous `(String, Cow<[u8]>)` vector whose
+    ordering rule lived only in a doc comment (nothing clones the borrowed book).
+  - The fifteen-positional-bool `kindling` call is a named `MobiFlags` struct; `PdfImage`'s
+    `gray: bool` and `jpeg_components() -> Option<u8>` are a `ColorSpace` enum; and the threaded
+    `drop_bookmarks: bool` is a `Tomes` (`Single`/`Split`) enum.
 
 ### Fixed
 

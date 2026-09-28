@@ -20,6 +20,30 @@ use crate::ebook::options::{Options, OutputEncoding};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
+/// Whether a book was written as one file or split into several tomes.
+///
+/// Replaces KCC's `ischunked` boolean (REFACTOR.md A17): a split book drops its
+/// global `ComicInfo.xml` bookmarks because their page indices do not survive
+/// chunking (see docs/output.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tomes {
+    /// One output file.
+    Single,
+    /// More than one output file, one per tome.
+    Split,
+}
+
+impl Tomes {
+    /// Classify a tome count (`total > 1` is a split book).
+    fn from_count(total: usize) -> Self {
+        if total > 1 {
+            Tomes::Split
+        } else {
+            Tomes::Single
+        }
+    }
+}
+
 /// Write a processed book in the requested format, returning the output paths.
 ///
 /// The book is split into tomes first ([`chunk::split`]); a single-tome book is
@@ -39,39 +63,31 @@ pub fn write_book(
     let total = tomes.len();
     // A split book drops its `ComicInfo.xml` bookmarks: their page indices are
     // global and do not survive chunking (KCC's `ischunked`).
-    let drop_bookmarks = total > 1;
+    let tome_kind = Tomes::from_count(total);
 
     let mut written = Vec::new();
     for (index, tome) in tomes.iter().enumerate() {
         let number = index + 1;
-        let title = tome_title(&prepared.metadata.title, number, total);
-        let suffix = if total > 1 {
-            format!(" {number}")
-        } else {
-            String::new()
+        let title = tome_title(&prepared.metadata.title, number, total, tome_kind);
+        let suffix = match tome_kind {
+            Tomes::Split => format!(" {number}"),
+            Tomes::Single => String::new(),
         };
         written.extend(write_tome(
-            tome,
-            prepared,
-            source,
-            options,
-            &title,
-            &suffix,
-            drop_bookmarks,
+            tome, prepared, source, options, &title, &suffix, tome_kind,
         )?);
     }
     Ok(written)
 }
 
 /// KCC's per-tome title: `base [i/n]`, zero-padded once there are ten or more
-/// tomes, and the bare base title for a single tome (`makeBook`).
-fn tome_title(base: &str, number: usize, total: usize) -> String {
-    if total > 9 {
-        format!("{base} [{number:02}/{total:02}]")
-    } else if total > 1 {
-        format!("{base} [{number}/{total}]")
-    } else {
-        base.to_string()
+/// tomes, and the bare base title for a single tome (`makeBook`). The split
+/// decision comes from [`Tomes`] rather than a second `total > 1` test.
+fn tome_title(base: &str, number: usize, total: usize, tomes: Tomes) -> String {
+    match tomes {
+        Tomes::Single => base.to_string(),
+        Tomes::Split if total > 9 => format!("{base} [{number:02}/{total:02}]"),
+        Tomes::Split => format!("{base} [{number}/{total}]"),
     }
 }
 
@@ -84,7 +100,7 @@ fn write_tome(
     options: &Options,
     title: &str,
     suffix: &str,
-    drop_bookmarks: bool,
+    tomes: Tomes,
 ) -> Result<Vec<PathBuf>> {
     match options.output.encoding {
         OutputEncoding::Epub { .. } | OutputEncoding::Kepub { .. } => {
@@ -95,15 +111,7 @@ fn write_tome(
                 suffix,
                 options,
             );
-            epub::build_epub(
-                &dest,
-                book,
-                prepared,
-                source,
-                options,
-                title,
-                drop_bookmarks,
-            )?;
+            epub::build_epub(&dest, book, prepared, source, options, title, tomes)?;
             Ok(vec![dest])
         }
         OutputEncoding::Cbz => {
@@ -149,7 +157,7 @@ fn write_tome(
                 source,
                 options,
                 title,
-                drop_bookmarks,
+                tomes,
             )?;
 
             let mut written = vec![kindle_dest];
@@ -177,7 +185,7 @@ fn write_tome(
                 source,
                 options,
                 title,
-                drop_bookmarks,
+                tomes,
             )?;
 
             Ok(vec![kindle_dest])
@@ -187,14 +195,20 @@ fn write_tome(
 
 #[cfg(test)]
 mod tests {
-    use super::tome_title;
+    use super::{tome_title, Tomes};
 
     #[test]
     fn tome_titles_follow_kccs_numbering() {
-        assert_eq!(tome_title("Book", 1, 1), "Book");
-        assert_eq!(tome_title("Book", 1, 2), "Book [1/2]");
-        assert_eq!(tome_title("Book", 2, 9), "Book [2/9]");
-        assert_eq!(tome_title("Book", 1, 10), "Book [01/10]");
-        assert_eq!(tome_title("Book", 12, 100), "Book [12/100]");
+        assert_eq!(tome_title("Book", 1, 1, Tomes::from_count(1)), "Book");
+        assert_eq!(tome_title("Book", 1, 2, Tomes::from_count(2)), "Book [1/2]");
+        assert_eq!(tome_title("Book", 2, 9, Tomes::from_count(9)), "Book [2/9]");
+        assert_eq!(
+            tome_title("Book", 1, 10, Tomes::from_count(10)),
+            "Book [01/10]"
+        );
+        assert_eq!(
+            tome_title("Book", 12, 100, Tomes::from_count(100)),
+            "Book [12/100]"
+        );
     }
 }

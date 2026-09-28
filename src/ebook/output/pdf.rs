@@ -77,10 +77,9 @@ pub fn build_pdf(
             xobject.filter(image.filter);
             xobject.width(size.width as i32);
             xobject.height(size.height as i32);
-            if image.gray {
-                xobject.color_space().device_gray();
-            } else {
-                xobject.color_space().device_rgb();
+            match image.color_space {
+                ColorSpace::Gray => xobject.color_space().device_gray(),
+                ColorSpace::Rgb => xobject.color_space().device_rgb(),
             }
             xobject.bits_per_component(8);
         }
@@ -123,8 +122,15 @@ struct PdfImage<'a> {
     /// The (possibly compressed) stream payload: borrowed from the page when its
     /// JPEG can be embedded verbatim, owned when it had to be re-encoded.
     data: Cow<'a, [u8]>,
-    /// One component (`DeviceGray`) versus three (`DeviceRGB`).
-    gray: bool,
+    /// One component (`DeviceGray`) or three (`DeviceRGB`).
+    color_space: ColorSpace,
+}
+
+/// The colour space a PDF image XObject is written in (REFACTOR.md A16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorSpace {
+    Gray,
+    Rgb,
 }
 
 impl<'a> PdfImage<'a> {
@@ -135,13 +141,13 @@ impl<'a> PdfImage<'a> {
     /// JPEG, an exotic colour type) is decoded and its raw samples `FlateDecode`d.
     fn encode(page: &'a EncodedPage) -> Result<PdfImage<'a>> {
         if page.media_type == MediaType::Jpeg {
-            if let Some(components) = jpeg_components(&page.bytes) {
+            if let Some(color_space) = jpeg_color_space(&page.bytes) {
                 return Ok(PdfImage {
                     filter: Filter::DctDecode,
                     // Borrow the page's bytes rather than copying the whole JPEG
                     // into the writer's input buffer.
                     data: Cow::Borrowed(&page.bytes),
-                    gray: components == 1,
+                    color_space,
                 });
             }
         }
@@ -154,43 +160,42 @@ impl<'a> PdfImage<'a> {
 
 /// Encode decoded pixels as a `FlateDecode`d 8-bit gray or RGB stream.
 fn raw_image(image: &DynamicImage) -> Result<PdfImage<'static>> {
-    if is_gray(image.color()) {
-        let gray = image.to_luma8();
-        Ok(PdfImage {
-            filter: Filter::FlateDecode,
-            data: Cow::Owned(deflate(gray.as_raw())?),
-            gray: true,
-        })
-    } else {
-        let rgb = image.to_rgb8();
-        Ok(PdfImage {
-            filter: Filter::FlateDecode,
-            data: Cow::Owned(deflate(rgb.as_raw())?),
-            gray: false,
-        })
+    let color_space = decoded_color_space(image.color());
+    let data = match color_space {
+        ColorSpace::Gray => Cow::Owned(deflate(image.to_luma8().as_raw())?),
+        ColorSpace::Rgb => Cow::Owned(deflate(image.to_rgb8().as_raw())?),
+    };
+    Ok(PdfImage {
+        filter: Filter::FlateDecode,
+        data,
+        color_space,
+    })
+}
+
+/// The PDF colour space for a decoded image, chosen from its `ColorType`.
+///
+/// `image::ColorType` is `#[non_exhaustive]`, so the final arm is required by the
+/// compiler; it preserves the old `is_gray` fallback (re-encode as RGB).
+fn decoded_color_space(color: ColorType) -> ColorSpace {
+    match color {
+        ColorType::L8 | ColorType::La8 | ColorType::L16 | ColorType::La16 => ColorSpace::Gray,
+        _ => ColorSpace::Rgb,
     }
 }
 
-/// Whether a decoded image is single-channel.
-fn is_gray(color: ColorType) -> bool {
-    matches!(
-        color,
-        ColorType::L8 | ColorType::La8 | ColorType::L16 | ColorType::La16
-    )
-}
-
-/// The component count of a JPEG we can embed verbatim, or `None` to re-encode.
+/// The colour space of a JPEG we can embed verbatim, or `None` to re-encode.
 ///
 /// Only the header is read, so a JPEG page never costs a full decode just to learn
-/// its colour space.
-fn jpeg_components(bytes: &[u8]) -> Option<u8> {
+/// its colour space. `ColorType` is `#[non_exhaustive]`; anything other than an
+/// 8-bit gray/RGB JPEG (CMYK, 16-bit, …) is re-encoded.
+fn jpeg_color_space(bytes: &[u8]) -> Option<ColorSpace> {
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
     let decoder = reader.into_decoder().ok()?;
     match decoder.color_type() {
-        ColorType::L8 => Some(1),
-        ColorType::Rgb8 => Some(3),
+        ColorType::L8 => Some(ColorSpace::Gray),
+        ColorType::Rgb8 => Some(ColorSpace::Rgb),
         _ => None,
     }
 }
@@ -209,7 +214,7 @@ mod tests {
     use image::{ImageEncoder, Luma, Rgb, RgbImage};
 
     #[test]
-    fn jpeg_components_reads_the_header() -> Result<()> {
+    fn jpeg_color_space_reads_the_header() -> Result<()> {
         let mut rgb = Vec::new();
         let mut gray = Vec::new();
         image::codecs::jpeg::JpegEncoder::new(&mut rgb).write_image(
@@ -225,9 +230,9 @@ mod tests {
             image::ExtendedColorType::L8,
         )?;
 
-        assert_eq!(jpeg_components(&rgb), Some(3));
-        assert_eq!(jpeg_components(&gray), Some(1));
-        assert_eq!(jpeg_components(b"not a jpeg"), None);
+        assert_eq!(jpeg_color_space(&rgb), Some(ColorSpace::Rgb));
+        assert_eq!(jpeg_color_space(&gray), Some(ColorSpace::Gray));
+        assert_eq!(jpeg_color_space(b"not a jpeg"), None);
         Ok(())
     }
 
@@ -238,7 +243,7 @@ mod tests {
             2,
             Luma([7]),
         )))?;
-        assert!(gray.gray);
+        assert_eq!(gray.color_space, ColorSpace::Gray);
         assert!(!gray.data.is_empty());
 
         let rgb = raw_image(&DynamicImage::ImageRgb8(RgbImage::from_pixel(
@@ -246,7 +251,7 @@ mod tests {
             2,
             Rgb([1, 2, 3]),
         )))?;
-        assert!(!rgb.gray);
+        assert_eq!(rgb.color_space, ColorSpace::Rgb);
         Ok(())
     }
 }

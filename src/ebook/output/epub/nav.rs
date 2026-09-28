@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use super::html_escape;
-use super::templates::{render_lf, Nav, NavEntry, Ncx};
+use super::templates::{render_lf, Href, Nav, NavEntry, NavId, NavTitle, Ncx};
 use super::{text_dir, PageRef};
 
 /// Title for a chapter entry: a bookmark title, the chapter's original basename,
@@ -26,7 +26,7 @@ fn entry_title<'a>(
 ) -> &'a str {
     if !page_titles.is_empty() {
         return page_titles
-            .get(entry.file)
+            .get(entry.file.as_str())
             .map(String::as_str)
             .unwrap_or(book_title);
     }
@@ -38,11 +38,6 @@ fn entry_title<'a>(
         }
     }
     book_title
-}
-
-/// The XHTML source path (relative to `OEBPS`) for an entry's first page.
-fn source_path(entry: &PageRef<'_>) -> String {
-    format!("{}/{}.xhtml", text_dir(entry.image_dir), entry.stem)
 }
 
 /// The navigation targets shared by the NCX and NAV documents.
@@ -59,16 +54,16 @@ fn nav_entries(
             continue;
         };
         let folder = text_dir(entry.image_dir);
-        let source = source_path(entry);
+        let source = Href::xhtml(&folder, entry.stem());
         let id = if page_titles.is_empty() {
-            folder.replace('/', "_")
+            NavId::folded(&folder)
         } else {
-            source.replace('/', "_")
+            NavId::folded(source.as_str())
         };
         let entry_title = entry_title(entry, title, chapter_titles, page_titles);
         out.push(NavEntry {
             id,
-            title: html_escape(entry_title),
+            title: NavTitle::new(entry_title),
             source,
         });
     }

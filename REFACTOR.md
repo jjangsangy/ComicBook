@@ -145,7 +145,7 @@ sum type.
 | A12 | `options.rs:86-88,170-171`; `output/epub/opf.rs:129,187,277-283`; `output/epub/xhtml.rs:85`; `output/lightnovel.rs` | `is_kindle`/`is_kobo`/`device_kind` triplicate one fact; `is_kobo = !is_kindle` so `(false,false)`/`(true,true)` are reachable-but-wrong. The final `else` in `page_spread_property` is therefore dead. | Keep `device_kind`; add `DeviceKind::is_kindle()`/`is_kobo_like()`. Or `enum ReaderFamily { Kindle, Kobo }`. | ✅ |
 | A13 | `options.rs:98-104,119-125,157-164` | "Derived output flags" (`kfx`/`kepub`/`keep_epub`/`kindle_azw3`/`kindle_scribe_azw3`/`webp_output`) and the panel/PNG clusters are mutually-constrained bools computed piecewise. | `enum OutputEncoding { Epub, Kepub{..}, Kfx, Mobi{..}, Azw3{scribe}, Cbz, Pdf }` + orthogonal `webp`; `enum PanelView { Off, Two, Vertical4, Legacy }`; `enum PngPolicy`. | ✅ |
 | A14 | `ebook/mod.rs:169-177` (calls `:60-68`, `:120-128`) | `assemble(.., default_title: Option<&str>, fusion: bool, ..)` — `fusion` is always `true` exactly when `default_title.is_some()`. | `enum TitleOrigin<'a> { Derived, Fusion(&'a str) }`. | ✅ |
-| A15 | `output/kindle.rs:87-104` | `build_mobi_from_extracted` is called with fifteen positional `bool`s plus `None`; comments are the only guard against transposition. | A named `struct MobiFlags { .. }` built once from `options`, applied in order. (`kindling`'s positional API is fixed.) | ✅ |
+| A15 | `output/kindle.rs:87-104` | `build_mobi_from_extracted` is called with fifteen positional `bool`s plus `None`; comments are the only guard against transposition. | A named `struct MobiFlags { .. }` built once from `options`, applied in order, so each positional argument is self-describing at the call (`kindling`'s positional API is fixed). | ✅ |
 | A16 | `output/pdf.rs:120-127,185-195` | `PdfImage.gray: bool` and `jpeg_components(..) -> Option<u8>` where only `== 1`/`== 3` are produced. | `enum ColorSpace { Gray, Rgb }`; `jpeg_color_space(..) -> Option<ColorSpace>`. | ✅ |
 | A17 | `output/mod.rs:42,60,87`; `output/kindle.rs:39` | `drop_bookmarks: bool` is a trailing unlabelled parameter threaded through three layers. | Pass `enum Tomes { Single, Split }` derived from `total > 1`. | ✅ |
 | A18 | `output/mod.rs:151`; `output/kindle.rs:43` | `keep_epub` is the residue of `mobi+epub` flattened in `Options::resolve`. | Fold into `OutputEncoding::Mobi { keep_epub }` (A13). | ✅ |
@@ -728,11 +728,13 @@ landed; explicit dependencies are called out. The finished shape is described in
   explicit `?`/`match` errors, `split_check` matches `Splitter` exhaustively (also dropping a
   redundant `A || (!A && B)` clause), and the vestigial `Page::flags`/`PageFlags::order_class` were
   removed. `docs/architecture.md`'s incorrect `Deref<Target = str>` claim was fixed too.
-- **Deferred on purpose:** `EncodedPage::order_class` is still parsed out of the file name by the
-  OPF spread algorithm (`output/epub/opf.rs`); switching that to the enum is §Phase 7 (B7,
-  `PageSide`).
+- **Deferred on purpose:** `EncodedPage::order_class` was still parsed out of the file name by the
+  OPF spread algorithm (`output/epub/opf.rs`); switching that to the enum was §Phase 7 (B7,
+  `PageSide`) — now done there (the spread algorithm matches `OrderClass` directly).
 
 ### Phase 7 — Output type states and stringly values
+
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
 
 - **Findings:** B7, B8, B9, B10, B11, C7, C8, C9, C10, D11, D12, D13, A15, A16, A17, E6,
   E7, E8.
@@ -744,6 +746,80 @@ landed; explicit dependencies are called out. The finished shape is described in
 - **Gate:** exact-byte output tests for single and split tomes across EPUB/KePub/MOBI/PDF/CBZ.
 - **Depends on:** Phases 2, 3, 6 (the types being formatted).
 - **Constraint:** wrappers stay move-only; never `Clone` the borrowed entry list.
+
+**Completed notes.**
+
+- **Delivered as planned:** `PageSide`/`Direction`/`WritingMode` (B7/B8, with the
+  `(invert_direction, right_to_left)` XOR now computed once — G1), `ManifestMediaType` (B10), the
+  `bool` `region_mag` (B11), the dead `OpfItem` `properties`/`has_properties_before`/
+  `has_properties_after` trio deleted (C7/G3), the `Opf` description and series/group bool+payload
+  pairs folded into `Option<&str>`/`Option<Series>` (C9), the D13 newtypes (`ManifestId`, `Idref`,
+  `Href`, `SpineAttr`, `NavId`, `NavTitle`), `PanelId` with the `panel_style` wildcard gone
+  (B9/E7), the `PageXhtml.below: Option<BelowImage>` group (C8), the move-only
+  `ZipPath`/`ZipEntry`/`EpubEntries` entry model (C10/D11), the `PageRef`
+  `ImageDir`/`FileName`/`Stem` newtypes (D12), `MobiFlags` (A15), `ColorSpace` (A16) and `Tomes`
+  (A17). The transparent string newtypes are `#[repr(transparent)]`, the mode enums are `Copy`, and
+  every type renders through `Display`/askama, so the OPF/NCX/NAV/XHTML and MOBI/PDF bytes are
+  unchanged.
+- **E6 and G2 were already satisfied** by Phase 3's `ReaderFamily`/`Options::panel_view_enabled()`:
+  `page_spread_property` was already an exhaustive `match (options.device.reader)` with no `else`,
+  and `StyleCss` already received resolved booleans. This phase only types `page_spread_property`'s
+  argument as `PageSide`.
+- **E8 was already resolved** by Phase 3's `OutputEncoding`: `write_tome` matches all six
+  variants with no `_` arm and no `bail!`.
+- **The `mimetype`-first invariant is now structural.** `build_entries` returns `EpubEntries`, whose
+  only constructor prepends the stored `mimetype` entry; `write_epub` iterates the list and
+  `kindle::write_tree` materialises `documents()` (which skips `mimetype`, leaving the `kindling`
+  scratch tree exactly as before). Nothing derives `Clone` or copies the borrowed payloads
+  (§4 non-goal 2).
+- **Decisions.** `ManifestMediaType` has only `Xhtml`/`Image(MediaType)`: the fixed
+  `ncx`/`nav`/`cover`/`css` items stay literal in `content.opf`, because moving them into the
+  manifest list would re-order the manifest and change bytes. `PanelId::style` returns a
+  `Cow<'static, str>` so the four quadrant styles borrow (the 2×2 case allocates nothing) and only
+  the runtime split axes own. `BelowImage` borrows its `src` from the same stack `format!` the old
+  `below_image_src` did. `Tomes` lives in `output/mod.rs` and threads as one value instead of the
+  duplicated `total > 1` tests, also replacing the `drop_bookmarks` bool.
+- **Partial E5:** the `epub/mod.rs` page-name split now uses a small `file_name` helper built on
+  `rsplit_once` (no dead `unwrap_or`); the remaining E5 sites (the `-below` image names in
+  `opf.rs`/`xhtml.rs`) are left to Phase 8.
+- **Verification follow-up (post-review).** A read-only phase-7 audit found several claims not yet
+  true and several types still doing no enforcement. Now fixed:
+  - the `page_`/`img_`/`-below` id conventions have a **single** definition — `Idref` *holds* the
+    `ManifestId` it references (`Idref::page` builds `ManifestId::page(..)`), and
+    `ManifestId::below_image` derives from `ManifestId::image`;
+  - the spread algorithm is driven by the `OrderClass` enum carried on `PageRef` (exhaustive
+    `match`) instead of re-parsing the `-kcc-*` name suffix — the Phase 6 `order_class → B7`
+    hand-off, now closed — and the bookmark scan matches `OrderClass::SplitLeft`;
+  - `tome_title` takes `Tomes` rather than repeating `total > 1`;
+  - `EpubEntries` stores the `mimetype` entry as its own field beside `documents`, so it can be
+    neither omitted nor duplicated and no positional `.skip(1)`/`.0` indexing remains;
+  - `NavTitle` HTML-escapes on construction, so an unescaped navigation title is unrepresentable;
+  - the Panel View grid is the `PanelGrid` enum (`classify`/`regions`/`order`), replacing the
+    `(no_horizontal, no_vertical, right_to_left)` `bool` tuple whose arms used `_` wildcards;
+  - the askama view geometry (`PageXhtml` viewport/img/panel, `Opf.device`, `BelowImage`) is the
+    shared `Size`, removing the swappable `u32` `width`/`height` pairs (D2);
+  - `PageRef::stem` is derived from `PageRef::file` rather than stored beside it, so the file name
+    and its extension-less stem cannot disagree;
+  - `Href` is an enum (`Xhtml`/`Image`), so a page reference and an image reference are distinct
+    kinds rather than one `String`, and `SpineAttr` owns its two reader-family spellings
+    (`SpineAttr::page_spread`), replacing the free `page_spread_property` and the `new(String)`
+    escape hatch. (`MobiFlags` stays the named struct A15 asks for — inlining the eleven constant
+    `kindling` arguments was tried and reverted, because it reintroduced the wall of positional
+    `false`/`true`/`None` that the finding exists to remove.)
+
+  Emitted bytes are unchanged (the goldens pass; `--run-ignored all` → **389 passed, 0 skipped**,
+  +5 tests over the phase-7 gate: `PanelGrid::classify`, `MobiFlags::resolve`, the two
+  `SpineAttr::page_spread` spellings, `NavTitle` escaping-on-construction and the `Href` kinds).
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **371 passed, 13 skipped** (Phase 6's 370, +1 new
+  `templates::tests` case); `--run-ignored all` → **384 passed, 0 skipped**, including the
+  byte-exact EPUB goldens (single and split tomes),
+  `scribe_profile_splits_a_tall_page_into_above_and_below` and
+  `two_panel_and_vertical_4_panel_reshape_the_panel_view`. The goldens are unchanged.
+- **New test:** `templates::tests::a_series_with_a_group_renders_both_meta_lines` pins the
+  `belongs-to-collection`/`group-position` pair, which no golden reaches.
+- **Changelog:** `## [Unreleased] → Changed` entry added; `docs/architecture.md`'s data-model block
+  extended with the output-side identities.
 
 ### Phase 8 — Remaining guards, wildcards, and duplication
 
@@ -774,7 +850,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 | 4 Geometry ✅ | — | processing + output boundaries | medium (broad, mechanical) |
 | 5 Processing ✅ | 4 | processing hot paths | medium (perf) |
 | 6 Page state ✅ | 4 | `model` + input/processing | **high (memory)** |
-| 7 Output | 2, 3, 6 | `output/**` + templates | high (output bytes) |
+| 7 Output ✅ | 2, 3, 6 | `output/**` + templates | high (output bytes) |
 | 8 Sweep | 1–7 | cross-cutting | low |
 | 9 Close-out | 1–8 | docs | low |
 
@@ -1306,6 +1382,6 @@ memory footguns 4.
 
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
 archive tag union (1 ✅) → typed CLI values (2 ✅) → config sum types (3 ✅) → geometry newtypes
-(4 ✅) → processing enums (5 ✅) → page state machine (6 ✅) → output types (7) → guard/dedup
+(4 ✅) → processing enums (5 ✅) → page state machine (6 ✅) → output types (7 ✅) → guard/dedup
 sweep (8) → docs close-out (9). The optional
 [crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).

@@ -149,6 +149,16 @@ struct Cover { page: EncodedPage, smart_cropped: bool }
   confusable name identities can no longer be swapped at a call site and the root chapter cannot be
   spelled as an empty directory. The newtypes are zero cost and deliberately do **not** implement
   `Deref<Target = str>` — a name must be unwrapped through `as_str()` explicitly.
+- The EPUB builders carry their own zero-cost identities: `PageRef`'s strings are
+  `ImageDir`/`FileName`/`Stem` (its `stem` is derived from `file`, never stored beside it), the
+  manifest/spine/navigation values are `ManifestId`/`Idref`/`Href`/`SpineAttr`/`NavId`/`NavTitle`,
+  the document modes are enums (`PageSide`, `Direction`, `WritingMode`, `ManifestMediaType`,
+  `PanelId`, `ColorSpace`), and the view structs' geometry is the shared `Size` (no bare
+  `width`/`height` `u32` pairs). The OEBPS entry list is a move-only `EpubEntries` whose `mimetype`
+  entry is its own field, so it can be neither omitted nor duplicated, and a book's single-vs-split
+  shape is the `Tomes` enum rather than a `drop_bookmarks` boolean. These render through
+  `Display`/askama exactly as the values they replaced, so the OPF/NCX/NAV/XHTML and MOBI/PDF bytes
+  are unchanged.
 - `Chapter::name` is the directory path relative to the image root (`Root`, `Dir("Chapter 1")`,
   `Dir("Chapter 1/Sub")`, …); each path component is slugified on output.
 - `Page::source_name` is book-relative after an archive's single redundant root directory is
