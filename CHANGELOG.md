@@ -78,6 +78,34 @@ release when a version tag is pushed.
     subtracting unchecked, so a transposed box can no longer panic a debug build.
 - Updated the `docs/cli.md` and `docs/processing.md` reference tables to describe the typed mode
   values and the consolidated `--borders` flag introduced by the CLI step above.
+- Replaced the boolean-blind flags, magic tri-states and stringly page parts in the
+  image-processing pipeline with fieldless enums (the processing step of the type-safety refactor
+  tracked in `REFACTOR.md`). Behaviour and emitted bytes are unchanged:
+  - `PageFlags` carries `orientation: Orientation` (`Upright`/`Rotated`), `background: ResolvedFill`
+    (the resolved `--borders` fill, distinct from the detected `Page::background`) and `half:
+    ScribeHalf` (`NotSplit`/`Above`/`Below`) instead of the `rotated`/`black_background` bools and the
+    `above`/`below` bool pair — so a page can no longer be both halves of a Kindle Scribe split.
+    `chunk` and `output/epub` now read `flags.half`.
+  - The colour decision is `color::Detected` plus `OutputColor::from_detection(Detected,
+    force_color)`, replacing the two same-typed `color`/`color_output` bools; the dead
+    `color_check(.., original_is_grayscale)` parameter is removed (the grayscale-source guard lives
+    at the call sites, which still skip the RGB round-trip).
+  - `kernels::threshold_in_place` takes a `ThresholdKind` (`Above`/`Below`) and monomorphises the
+    polarity through a `const`-generic core, so the 16-lane loop stays branch-free; `band_white_black`
+    returns a named `Band { has_white, has_black }` instead of a transposable `(bool, bool)`.
+  - The inter-panel helpers take an `Axis` (`Rows`/`Columns`) instead of the two inverted
+    `horizontal`/`remove_rows` boolean spellings; `fill::strip_vote` returns a `StripVote`
+    (`Black`/`Mixed`/`White`) instead of the `-1`/`0`/`+1` magic tri-state; the webtoon `Panel` is a
+    `{ top, bottom }` struct with a derived `height()` instead of a `(u32, u32, u32)` tuple; the PDF
+    fit choice is a `FitPreference` (`Height`/`WidthForPortrait`); and the Scribe page-part suffix is
+    a `PagePart` (`Above`/`Below`/`Whole`) rather than a bare `"above"`/`"below"`/`"whole"` literal.
+- Hardened the processing-step types so their invariants are compiler-checked rather than merely
+  documented (the `REFACTOR.md` Phase 5 follow-up). `OutputColor` is now an opaque newtype built only
+  by `OutputColor::from_detection`, with `is_color`/`is_gray` accessors in place of `==` against its
+  variants; the resolved `--borders` fill is the distinct `ResolvedFill` newtype rather than a bare
+  `Background`, so it cannot be confused with the detected `Page::background`; and the `Detected`
+  (colour mode) and `ScribeHalf`/`Orientation` (page flags) dispatches in the processing and output
+  pipeline use exhaustive `match`es instead of `if … == variant` comparisons or a `bool` re-collapse.
 
 ### Fixed
 

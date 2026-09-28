@@ -22,7 +22,7 @@ use time::macros::format_description;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::ebook::model::{EncodedPage, MediaType, PageFlags};
+use crate::ebook::model::{EncodedPage, MediaType, PageFlags, ScribeHalf};
 use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
@@ -97,14 +97,18 @@ pub(crate) fn build_entries<'a>(
         let mut index = 0;
         while index < chapter.pages.len() {
             let page = &chapter.pages[index];
-            if page.flags.below {
-                index += 1;
-                continue;
-            }
-            let below = if page.flags.above {
-                chapter.pages.get(index + 1).filter(|next| next.flags.below)
-            } else {
-                None
+            // A Scribe `-below` image is emitted only through its `-above` page's
+            // XHTML/manifest entry, never as a spine item of its own.
+            let below = match page.flags.half {
+                ScribeHalf::Below => {
+                    index += 1;
+                    continue;
+                }
+                ScribeHalf::Above => chapter
+                    .pages
+                    .get(index + 1)
+                    .filter(|next| next.flags.half == ScribeHalf::Below),
+                ScribeHalf::NotSplit => None,
             };
             let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
             filelist.push(PageRef {

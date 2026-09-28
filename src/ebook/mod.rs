@@ -27,7 +27,10 @@ pub mod progress;
 
 pub use cli::EbookArgs;
 pub use metadata::BookMetadata;
-pub use model::{Background, Chapter, ComicTree, CoverSource, OrderClass, Page, PageFlags};
+pub use model::{
+    Background, Chapter, ComicTree, CoverSource, OrderClass, Orientation, Page, PageFlags,
+    ScribeHalf,
+};
 pub use naming::Sanitized;
 pub use options::{BorderColor, DocType, Format, Layout, Options};
 pub use profiles::{DeviceKind, Profile, ProfileData};

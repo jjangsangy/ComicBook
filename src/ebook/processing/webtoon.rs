@@ -47,8 +47,25 @@ const EDGE_THRESHOLD: u8 = 6;
 /// The reference aborts when a merged strip would exceed `131072 * 4` pixels tall.
 const MAX_MERGED_HEIGHT: Pixels = Pixels::new(131_072 * 4);
 
-/// A detected panel as `(top, bottom, height)`, matching KCC's tuple.
-type Panel = (u32, u32, u32);
+/// A detected panel `[top, bottom)` within the merged strip.
+///
+/// `height == bottom - top`; deriving it removes a third tuple field that could
+/// drift from the stored edges.
+#[derive(Clone, Copy)]
+struct Panel {
+    top: u32,
+    bottom: u32,
+}
+
+impl Panel {
+    /// The panel's height in pixels.
+    ///
+    /// Saturating so an inverted span yields `0` rather than panicking (see the
+    /// refactor's panic-free rule).
+    fn height(&self) -> u32 {
+        self.bottom.saturating_sub(self.top)
+    }
+}
 
 /// Merge every chapter into a strip and split it into virtual pages, in place.
 pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
@@ -177,17 +194,19 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
     let mut pages = Vec::new();
     let mut number = 1;
     for unit in &units {
-        let page_height: u32 = unit.iter().map(|&index| split[index].2).sum();
+        let page_height: u32 = unit.iter().map(|&index| split[index].height()).sum();
         if page_height <= MIN_PAGE_HEIGHT {
             continue;
         }
         let mut canvas = RgbImage::new(width, page_height);
         let mut target_y = 0i64;
         for &index in unit {
-            let (top, bottom, _) = split[index];
-            let panel = merged.crop_imm(0, top, width, bottom - top).into_rgb8();
-            image::imageops::replace(&mut canvas, &panel, 0, target_y);
-            target_y += i64::from(split[index].2);
+            let panel = split[index];
+            let crop = merged
+                .crop_imm(0, panel.top, width, panel.height())
+                .into_rgb8();
+            image::imageops::replace(&mut canvas, &crop, 0, target_y);
+            target_y += i64::from(panel.height());
         }
         let name = format!("{stem}-{number:04}.png");
         pages.push(page_from(DynamicImage::ImageRgb8(canvas), name));
@@ -266,17 +285,23 @@ fn detect_panels(image: &DynamicImage) -> Vec<Panel> {
         // The bottom edge: close a panel that runs off the end of the strip.
         if height - y_work <= v_pad / 2 && !solid && panel_detected {
             panel_detected = false;
-            panels.push((panel_top, height, height - panel_top));
+            panels.push(Panel {
+                top: panel_top,
+                bottom: height,
+            });
         }
 
         if solid && panel_detected {
             panel_detected = false;
-            let bottom = y_work;
+            let panel = Panel {
+                top: panel_top,
+                bottom: y_work,
+            };
             // Skip a short panel hugging the top of the strip.
-            if panel_top < v_pad * 2 && bottom - panel_top < v_pad * 2 {
+            if panel.top < v_pad * 2 && panel.height() < v_pad * 2 {
                 // dropped
             } else {
-                panels.push((panel_top, bottom, bottom - panel_top));
+                panels.push(panel);
             }
         }
 
@@ -291,8 +316,8 @@ fn detect_panels(image: &DynamicImage) -> Vec<Panel> {
 /// Pillow's `Image.crop` zero-fills below the strip, and `detectSolid` reads a
 /// uniformly-black band as solid, so a band that overhangs the bottom is black-padded.
 fn band_is_solid(mask: &GrayImage, x0: u32, y0: u32, x1: u32, y1: u32, height: u32) -> bool {
-    let (has_white, has_black) = kernels::band_white_black(mask, x0, y0, x1, y1, height);
-    !has_white || !has_black
+    let band = kernels::band_white_black(mask, x0, y0, x1, y1, height);
+    !band.has_white || !band.has_black
 }
 
 /// The thresholded edge map of a strip (KCC's `FIND_EDGES` + `point(p > 6)`).
@@ -323,7 +348,7 @@ fn edge_mask(image: &DynamicImage) -> GrayImage {
     }
 
     // Threshold in place: `imageproc::contrast::threshold` would clone the map.
-    kernels::threshold_in_place(&mut luma, EDGE_THRESHOLD, false);
+    kernels::threshold_in_place(&mut luma, EDGE_THRESHOLD, kernels::ThresholdKind::Above);
     luma
 }
 
@@ -331,23 +356,39 @@ fn edge_mask(image: &DynamicImage) -> GrayImage {
 fn split_panels(panels: &[Panel], virtual_height: u32) -> Vec<Panel> {
     let vh = f64::from(virtual_height);
     let mut out = Vec::new();
-    for &(top, bottom, height) in panels {
-        let h = f64::from(height);
+    for &panel in panels {
+        let (top, bottom) = (panel.top, panel.bottom);
+        let h = f64::from(panel.height());
         if h <= vh * PANEL_KEEP_RATIO {
-            out.push((top, bottom, height));
+            out.push(panel);
         } else if h <= vh * PANEL_TWO_HALVES_RATIO {
-            let diff = height - virtual_height;
-            out.push((top, bottom - diff, virtual_height));
-            out.push((bottom - virtual_height, bottom, virtual_height));
+            let diff = panel.height() - virtual_height;
+            out.push(Panel {
+                top,
+                bottom: bottom - diff,
+            });
+            out.push(Panel {
+                top: bottom - virtual_height,
+                bottom,
+            });
         } else {
             let parts = (h / vh).ceil() as u32;
-            let diff = height / parts;
-            out.push((top, top + virtual_height, virtual_height));
+            let diff = panel.height() / parts;
+            out.push(Panel {
+                top,
+                bottom: top + virtual_height,
+            });
             for part in 1..parts.saturating_sub(1) {
                 let start = top + part * diff;
-                out.push((start, start + virtual_height, virtual_height));
+                out.push(Panel {
+                    top: start,
+                    bottom: start + virtual_height,
+                });
             }
-            out.push((bottom - virtual_height, bottom, virtual_height));
+            out.push(Panel {
+                top: bottom - virtual_height,
+                bottom,
+            });
         }
     }
     out
@@ -359,7 +400,7 @@ fn pack_pages(panels: &[Panel], virtual_height: u32) -> Vec<Vec<usize>> {
     let mut current: Vec<usize> = Vec::new();
     let mut page_left = i64::from(virtual_height);
     for (number, panel) in panels.iter().enumerate() {
-        let height = i64::from(panel.2);
+        let height = i64::from(panel.height());
         if page_left - height > 0 {
             page_left -= height;
             current.push(number);

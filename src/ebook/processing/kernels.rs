@@ -101,17 +101,37 @@ pub(crate) fn invert_in_place(data: &mut [u8]) {
     }
 }
 
-/// Apply one of the two binary thresholds `imageproc::contrast::threshold`
-/// exposes, in place: `255` where `value > threshold` when `inverted` is
-/// `false` (`ThresholdType::Binary`), or `255` where `value <= threshold` when
-/// it is `true` (`ThresholdType::BinaryInverted`).
-pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool) {
+/// Which side of the threshold becomes white — the two modes of
+/// `imageproc::contrast::threshold` (`Binary` / `BinaryInverted`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThresholdKind {
+    /// `255` where `value > threshold` (was `inverted == false`).
+    Above,
+    /// `255` where `value <= threshold` (was `inverted == true`).
+    Below,
+}
+
+/// Apply a binary threshold in place.
+///
+/// The polarity is hoisted out of the loops by monomorphising on `INVERTED`, so
+/// each instantiation is the hand-written loop for its mode and nothing indirect
+/// enters the 16-lane body (see docs/architecture.md).
+pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, kind: ThresholdKind) {
+    match kind {
+        ThresholdKind::Above => threshold_mono::<false>(data, threshold),
+        ThresholdKind::Below => threshold_mono::<true>(data, threshold),
+    }
+}
+
+/// The `const`-generic threshold core: `255` where `value <= threshold` when
+/// `INVERTED`, else `255` where `value > threshold`.
+fn threshold_mono<const INVERTED: bool>(data: &mut [u8], threshold: u8) {
     let t = u8x16::splat(threshold);
     let full = data.len() / 16 * 16;
     let mut index = 0;
     while index < full {
         let block = load16(data, index);
-        let mask = if inverted {
+        let mask = if INVERTED {
             block.simd_le(t)
         } else {
             block.simd_gt(t)
@@ -120,7 +140,7 @@ pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool)
         index += 16;
     }
     while index < data.len() {
-        let hot = if inverted {
+        let hot = if INVERTED {
             data[index] <= threshold
         } else {
             data[index] > threshold
@@ -452,6 +472,16 @@ pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<BBox<u32>> {
     )
 }
 
+/// Whether a band contained any non-zero (white) and any zero (black) sample.
+///
+/// Both facts are independent (an empty band is neither), so this is a struct,
+/// not a sum type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Band {
+    pub(crate) has_white: bool,
+    pub(crate) has_black: bool,
+}
+
 /// Whether the horizontal band `[x0, x1) x [y0, y1)` contains any non-zero
 /// (white) and any zero (black) sample; `has_black` starts `true` when the band
 /// overhangs `height`, matching Pillow's zero-fill below the strip.
@@ -462,7 +492,7 @@ pub(crate) fn band_white_black(
     x1: u32,
     y1: u32,
     height: u32,
-) -> (bool, bool) {
+) -> Band {
     let width = image.width() as usize;
     let stride = width;
     let raw = image.as_raw();
@@ -487,7 +517,10 @@ pub(crate) fn band_white_black(
             x += 1;
         }
     }
-    (has_white, has_black)
+    Band {
+        has_white,
+        has_black,
+    }
 }
 
 /// The zero-based indices of the rows that are entirely zero.
@@ -632,14 +665,14 @@ mod tests {
 
     #[test]
     fn threshold_matches_the_scalar_predicate() {
-        let mut inverted: Vec<u8> = (0..=255).collect();
-        threshold_in_place(&mut inverted, 128, true);
-        assert_eq!(inverted[128], 255);
-        assert_eq!(inverted[129], 0);
-        let mut binary: Vec<u8> = (0..=255).collect();
-        threshold_in_place(&mut binary, 128, false);
-        assert_eq!(binary[128], 0);
-        assert_eq!(binary[129], 255);
+        let mut below: Vec<u8> = (0..=255).collect();
+        threshold_in_place(&mut below, 128, ThresholdKind::Below);
+        assert_eq!(below[128], 255);
+        assert_eq!(below[129], 0);
+        let mut above: Vec<u8> = (0..=255).collect();
+        threshold_in_place(&mut above, 128, ThresholdKind::Above);
+        assert_eq!(above[128], 0);
+        assert_eq!(above[129], 255);
     }
 
     #[test]
@@ -688,12 +721,36 @@ mod tests {
             image.put_pixel(x, 0, Luma([255]));
         }
         // Row 0: mixed over x in [0, 32) -> both.
-        assert_eq!(band_white_black(&image, 0, 0, 32, 1, 8), (true, true));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 32, 1, 8),
+            Band {
+                has_white: true,
+                has_black: true
+            }
+        );
         // Row 1 is all black.
-        assert_eq!(band_white_black(&image, 0, 1, 32, 2, 8), (false, true));
+        assert_eq!(
+            band_white_black(&image, 0, 1, 32, 2, 8),
+            Band {
+                has_white: false,
+                has_black: true
+            }
+        );
         // Row 0, left half only: all white, no black.
-        assert_eq!(band_white_black(&image, 0, 0, 16, 1, 8), (true, false));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 16, 1, 8),
+            Band {
+                has_white: true,
+                has_black: false
+            }
+        );
         // A band overhanging the bottom is black-padded.
-        assert_eq!(band_white_black(&image, 0, 0, 16, 20, 8), (true, true));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 16, 20, 8),
+            Band {
+                has_white: true,
+                has_black: true
+            }
+        );
     }
 }

@@ -32,6 +32,16 @@ pub enum Direction {
     Both,
 }
 
+/// The line kind a gutter operation acts on.
+///
+/// Both previous `bool`s (`horizontal` and `remove_rows`) used `true` for rows;
+/// this names the axis instead of relying on the reader to know the polarity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Rows,
+    Columns,
+}
+
 /// Split index `value` into `(first, last)` keeping `keep` of the span as margin.
 fn kept_span(start: i64, end: i64, keep: Fraction) -> (i64, i64) {
     let span = (end - start) as f64;
@@ -40,19 +50,18 @@ fn kept_span(start: i64, end: i64, keep: Fraction) -> (i64, i64) {
 }
 
 /// The indices of the empty rows/columns that should be removed.
-fn empty_sections(bw: &GrayImage, keep: Fraction, horizontal: bool) -> BTreeSet<usize> {
+fn empty_sections(bw: &GrayImage, keep: Fraction, axis: Axis) -> BTreeSet<usize> {
     let (_, height) = bw.dimensions();
 
-    let empties: Vec<i64> = if horizontal {
-        kernels::empty_rows(bw)
+    let empties: Vec<i64> = match axis {
+        Axis::Rows => kernels::empty_rows(bw)
             .into_iter()
             .map(|y| y as i64)
-            .collect()
-    } else {
-        kernels::empty_columns(bw)
+            .collect(),
+        Axis::Columns => kernels::empty_columns(bw)
             .into_iter()
             .map(|x| x as i64)
-            .collect()
+            .collect(),
     };
 
     // The reference uses `img.size[1]` (the height) for the border test in both
@@ -82,7 +91,7 @@ fn empty_sections(bw: &GrayImage, keep: Fraction, horizontal: bool) -> BTreeSet<
 fn keep_lines<P>(
     source: &ImageBuffer<P, Vec<P::Subpixel>>,
     remove: &BTreeSet<usize>,
-    remove_rows: bool,
+    axis: Axis,
 ) -> ImageBuffer<P, Vec<P::Subpixel>>
 where
     P: Pixel + 'static,
@@ -92,39 +101,42 @@ where
     let channels = P::CHANNEL_COUNT as usize;
     let raw = source.as_raw();
 
-    if remove_rows {
-        let kept: Vec<usize> = (0..height).filter(|y| !remove.contains(y)).collect();
-        let stride = width * channels;
-        // Build the target buffer directly instead of `from_raw`ing a `Vec` and
-        // cloning the source in the (unreachable) length-mismatch branch.
-        let mut out = ImageBuffer::new(width as u32, kept.len() as u32);
-        let pixels: &mut [P::Subpixel] = &mut out;
-        for (target_y, &y) in kept.iter().enumerate() {
-            pixels[target_y * stride..(target_y + 1) * stride]
-                .copy_from_slice(&raw[y * stride..(y + 1) * stride]);
-        }
-        out
-    } else {
-        let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
-        let out_width = kept.len();
-        let mut out = ImageBuffer::new(out_width as u32, height as u32);
-        let pixels: &mut [P::Subpixel] = &mut out;
-        for y in 0..height {
-            for (target_x, &x) in kept.iter().enumerate() {
-                let from = (y * width + x) * channels;
-                let to = (y * out_width + target_x) * channels;
-                pixels[to..to + channels].copy_from_slice(&raw[from..from + channels]);
+    match axis {
+        Axis::Rows => {
+            let kept: Vec<usize> = (0..height).filter(|y| !remove.contains(y)).collect();
+            let stride = width * channels;
+            // Build the target buffer directly instead of `from_raw`ing a `Vec` and
+            // cloning the source in the (unreachable) length-mismatch branch.
+            let mut out = ImageBuffer::new(width as u32, kept.len() as u32);
+            let pixels: &mut [P::Subpixel] = &mut out;
+            for (target_y, &y) in kept.iter().enumerate() {
+                pixels[target_y * stride..(target_y + 1) * stride]
+                    .copy_from_slice(&raw[y * stride..(y + 1) * stride]);
             }
+            out
         }
-        out
+        Axis::Columns => {
+            let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
+            let out_width = kept.len();
+            let mut out = ImageBuffer::new(out_width as u32, height as u32);
+            let pixels: &mut [P::Subpixel] = &mut out;
+            for y in 0..height {
+                for (target_x, &x) in kept.iter().enumerate() {
+                    let from = (y * width + x) * channels;
+                    let to = (y * out_width + target_x) * channels;
+                    pixels[to..to + channels].copy_from_slice(&raw[from..from + channels]);
+                }
+            }
+            out
+        }
     }
 }
 
 /// [`keep_lines`] for a concrete [`DynamicImage`], preserving its pixel type.
-fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: bool) -> DynamicImage {
+fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, axis: Axis) -> DynamicImage {
     macro_rules! arm {
         ($variant:ident, $buffer:expr) => {
-            DynamicImage::$variant(keep_lines($buffer, remove, remove_rows))
+            DynamicImage::$variant(keep_lines($buffer, remove, axis))
         };
     }
 
@@ -139,7 +151,7 @@ fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: boo
         DynamicImage::ImageRgba16(buffer) => arm!(ImageRgba16, buffer),
         DynamicImage::ImageRgb32F(buffer) => arm!(ImageRgb32F, buffer),
         DynamicImage::ImageRgba32F(buffer) => arm!(ImageRgba32F, buffer),
-        other => DynamicImage::ImageRgb8(keep_lines(&other.to_rgb8(), remove, remove_rows)),
+        other => DynamicImage::ImageRgb8(keep_lines(&other.to_rgb8(), remove, axis)),
     }
 }
 
@@ -166,18 +178,18 @@ pub fn crop_empty_inter_panel(
     // allocates the cropped buffer, so no upfront clone is needed.
     match direction {
         Direction::Horizontal => {
-            let rows = empty_sections(&bw, keep, true);
-            remove_lines(image, &rows, true)
+            let rows = empty_sections(&bw, keep, Axis::Rows);
+            remove_lines(image, &rows, Axis::Rows)
         }
         Direction::Vertical => {
-            let columns = empty_sections(&bw, keep, false);
-            remove_lines(image, &columns, false)
+            let columns = empty_sections(&bw, keep, Axis::Columns);
+            remove_lines(image, &columns, Axis::Columns)
         }
         Direction::Both => {
-            let rows = empty_sections(&bw, keep, true);
-            let columns = empty_sections(&bw, keep, false);
-            let first = remove_lines(image, &rows, true);
-            remove_lines(&first, &columns, false)
+            let rows = empty_sections(&bw, keep, Axis::Rows);
+            let columns = empty_sections(&bw, keep, Axis::Columns);
+            let first = remove_lines(image, &rows, Axis::Rows);
+            remove_lines(&first, &columns, Axis::Columns)
         }
     }
 }

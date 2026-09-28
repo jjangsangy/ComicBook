@@ -20,7 +20,7 @@
 
 use anyhow::Result;
 
-use crate::ebook::model::EncodedPage;
+use crate::ebook::model::{EncodedPage, ScribeHalf};
 use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
 use crate::ebook::processing::cover;
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
@@ -179,10 +179,11 @@ fn page_units(pages: impl IntoIterator<Item = EncodedPage>) -> Vec<Vec<EncodedPa
     let mut units = Vec::new();
     let mut pages = pages.into_iter().peekable();
     while let Some(page) = pages.next() {
-        let below = if page.flags.above && pages.peek().is_some_and(|next| next.flags.below) {
-            pages.next()
-        } else {
-            None
+        // A Scribe `-above` page carries its immediately-following `-below`
+        // companion; an unpaired `-above` and every other half is its own unit.
+        let below = match page.flags.half {
+            ScribeHalf::Above => pages.next_if(|next| next.flags.half == ScribeHalf::Below),
+            ScribeHalf::Below | ScribeHalf::NotSplit => None,
         };
         match below {
             Some(below) => units.push(vec![page, below]),
@@ -302,7 +303,7 @@ fn basename(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ebook::model::{MediaType, OrderClass, PageFlags};
+    use crate::ebook::model::{MediaType, OrderClass, PageFlags, ScribeHalf};
     use crate::units::Size;
 
     fn page(name: &str, len: usize) -> EncodedPage {
@@ -326,9 +327,9 @@ mod tests {
     #[test]
     fn page_units_keep_a_scribe_pair_together() {
         let mut above = page("a-above.jpg", 10);
-        above.flags.above = true;
+        above.flags.half = ScribeHalf::Above;
         let mut below = page("a-below.jpg", 20);
-        below.flags.below = true;
+        below.flags.half = ScribeHalf::Below;
         let normal = page("b.jpg", 30);
 
         let units = page_units(vec![above, below, normal]);

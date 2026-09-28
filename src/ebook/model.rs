@@ -97,16 +97,63 @@ impl MediaType {
     }
 }
 
+/// Whether a processed page was rotated by the spread splitter.
+///
+/// Kept separate from [`OrderClass`] because `--no-rotate` can tag a page
+/// `RotateFirst`/`RotateLast` while leaving it upright.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Orientation {
+    #[default]
+    Upright,
+    Rotated,
+}
+
+/// Which half of a Kindle Scribe tall-page split a page is.
+///
+/// The two `bool`s this replaces admitted an impossible `(above, below) ==
+/// (true, true)`; the splitter only ever produces one half at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScribeHalf {
+    /// An ordinary page, or a Scribe page that fits without splitting (`-whole`).
+    #[default]
+    NotSplit,
+    /// The upper half (`-above`).
+    Above,
+    /// The lower half (`-below`).
+    Below,
+}
+
+/// The background a processed page is padded with: the resolved `--borders` fill
+/// (which wins over the detected [`Background`]) produced by `page_fill`.
+///
+/// A distinct type from [`Background`] so the *resolved* fill cannot be confused
+/// with [`Page::background`], the *detected* value that drives fill/crop decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ResolvedFill(Background);
+
+impl ResolvedFill {
+    /// Wrap a resolved fill value.
+    pub fn new(fill: Background) -> Self {
+        ResolvedFill(fill)
+    }
+
+    /// Whether the resolved fill is black (drives the black XHTML body style).
+    pub fn is_black(self) -> bool {
+        matches!(self.0, Background::Black)
+    }
+}
+
 /// Page-level flags carried through processing into output naming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PageFlags {
     pub order_class: OrderClass,
-    pub rotated: bool,
-    pub black_background: bool,
-    /// Kindle Scribe tall-page split: the upper half.
-    pub above: bool,
-    /// Kindle Scribe tall-page split: the lower half.
-    pub below: bool,
+    pub orientation: Orientation,
+    /// The resolved fill the page is padded with (the `--borders` override if
+    /// set, otherwise the detected [`Page::background`]): drives the black XHTML
+    /// body style.
+    pub background: ResolvedFill,
+    /// The Kindle Scribe tall-page split this page belongs to, if any.
+    pub half: ScribeHalf,
 }
 
 /// A single source page.

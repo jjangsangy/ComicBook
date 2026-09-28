@@ -41,7 +41,7 @@ fn summary(page: &EncodedPage) -> (OrderClass, MediaType, u32, u32, bool) {
         page.media_type,
         page.size.width,
         page.size.height,
-        page.flags.black_background,
+        page.flags.background.is_black(),
     )
 }
 

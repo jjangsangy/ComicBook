@@ -16,7 +16,7 @@ use anyhow::Result;
 use super::html_escape;
 use super::templates::{render_lf, PageXhtml, PanelBox};
 use super::PageRef;
-use crate::ebook::model::PageFlags;
+use crate::ebook::model::{Orientation, PageFlags};
 use crate::ebook::options::{Options, PanelView, ReaderFamily};
 use crate::units::Size;
 
@@ -63,7 +63,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         (size.width, frame_height)
     };
 
-    let body_style = if flags.black_background {
+    let body_style = if flags.background.is_black() {
         "background-color:#000000;"
     } else {
         ""
@@ -154,18 +154,26 @@ fn panel_layout(size: Size, flags: PageFlags, options: &Options) -> (Vec<PanelBo
     // grid drops an axis the page does not fill, and the order is a permutation of
     // the quadrants flipped by rotation and right-to-left reading.
     let right_to_left = options.main.right_to_left();
-    let (names, order): (&[&'static str], &[u32]) =
-        match (no_horizontal, no_vertical, flags.rotated, right_to_left) {
-            (true, true, ..) => (&[], &[]),
-            (false, false, true, true) => (&PANELS_2X2, &[1, 3, 2, 4]),
-            (false, false, true, false) => (&PANELS_2X2, &[2, 4, 1, 3]),
-            (false, false, false, true) => (&PANELS_2X2, &[2, 1, 4, 3]),
-            (false, false, false, false) => (&PANELS_2X2, &[1, 2, 3, 4]),
-            (true, false, true, false) => (&PANELS_STACKED, &[2, 1]),
-            (true, false, ..) => (&PANELS_STACKED, &[1, 2]),
-            (false, true, false, true) => (&PANELS_SIDE_BY_SIDE, &[2, 1]),
-            (false, true, ..) => (&PANELS_SIDE_BY_SIDE, &[1, 2]),
-        };
+    // Match the orientation directly (not a `rotated` bool) so the grid choice
+    // stays exhaustive over the two honest axes: orientation × reading direction.
+    let (names, order): (&[&'static str], &[u32]) = match flags.orientation {
+        Orientation::Rotated => match (no_horizontal, no_vertical, right_to_left) {
+            (true, true, _) => (&[], &[]),
+            (false, false, true) => (&PANELS_2X2, &[1, 3, 2, 4]),
+            (false, false, false) => (&PANELS_2X2, &[2, 4, 1, 3]),
+            (true, false, false) => (&PANELS_STACKED, &[2, 1]),
+            (true, false, true) => (&PANELS_STACKED, &[1, 2]),
+            (false, true, _) => (&PANELS_SIDE_BY_SIDE, &[1, 2]),
+        },
+        Orientation::Upright => match (no_horizontal, no_vertical, right_to_left) {
+            (true, true, _) => (&[], &[]),
+            (false, false, true) => (&PANELS_2X2, &[2, 1, 4, 3]),
+            (false, false, false) => (&PANELS_2X2, &[1, 2, 3, 4]),
+            (true, false, _) => (&PANELS_STACKED, &[1, 2]),
+            (false, true, true) => (&PANELS_SIDE_BY_SIDE, &[2, 1]),
+            (false, true, false) => (&PANELS_SIDE_BY_SIDE, &[1, 2]),
+        },
+    };
 
     let boxes = names
         .iter()

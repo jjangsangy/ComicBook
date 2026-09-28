@@ -102,13 +102,16 @@ struct Page {
     rel_path: String,            // chapter-relative file name
     image: Option<DynamicImage>, // decoded pixels, present only while processing
     dimensions: Size,            // header dimensions, available without decoding
-    background: Background,      // White | Black
-    flags: PageFlags,            // Rotated, BlackBackground, Above/Below, OrderClass
+    background: Background,      // detected page background (fill/crop decisions)
+    flags: PageFlags,            // Orientation, ResolvedFill, ScribeHalf, OrderClass
     raw: Option<Vec<u8>>,        // original encoded bytes (lazy decode source, --no-processing)
     source_media_type: Option<MediaType>,
 }
 enum Background { White, Black }
+struct ResolvedFill(Background)  // resolved --borders fill, distinct from Page::background
 enum OrderClass { Normal, RotateFirst, RotateLast, SplitLeft, SplitRight }
+enum Orientation { Upright, Rotated }
+enum ScribeHalf { NotSplit, Above, Below }
 enum MediaType { Jpeg, Png, Gif, WebP }
 
 struct EncodedPage {            // one processed/encoded page (a spread can yield several)

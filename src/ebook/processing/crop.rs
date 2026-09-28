@@ -207,7 +207,11 @@ fn binarize_in_place(image: &mut GrayImage, threshold: f64) {
         image.fill(0);
         return;
     }
-    kernels::threshold_in_place(image, threshold.min(255.0) as u8, true);
+    kernels::threshold_in_place(
+        image,
+        threshold.min(255.0) as u8,
+        kernels::ThresholdKind::Below,
+    );
 }
 
 /// The bounding box of the non-zero pixels, as Pillow's `getbbox` returns it

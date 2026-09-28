@@ -30,23 +30,75 @@ const CASCADE: [(Percent, i32); 3] = [
 /// adjustment; do not lower it).
 const SPREAD_THRESHOLD: u8 = 7;
 
+/// Whether a page was detected as colour (KCC's `colorCheck`).
+///
+/// This is the detection result *after* `--force-color` has biased the histogram;
+/// it is not the output mode — see [`OutputColor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Detected {
+    Gray,
+    Color,
+}
+
+impl Detected {
+    /// Whether the page was detected as colour.
+    pub fn is_color(self) -> bool {
+        matches!(self, Detected::Color)
+    }
+}
+
+/// The colour mode a page is actually encoded in (KCC's `colorOutput`).
+///
+/// Opaque: the inner mode is private, so `Color` can only be produced by
+/// [`OutputColor::from_detection`], and the invariant "a page is only output in
+/// colour if it was detected as colour" holds by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputColor(ColorMode);
+
+/// The private colour-mode payload of [`OutputColor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Gray,
+    Color,
+}
+
+impl OutputColor {
+    /// KCC's `colorOutput = color and forceColor`: a page keeps colour only when it
+    /// was detected as colour *and* `--force-color` is set.
+    pub fn from_detection(detected: Detected, force_color: bool) -> Self {
+        match (detected, force_color) {
+            (Detected::Color, true) => OutputColor(ColorMode::Color),
+            // `(Color, false)`, `(Gray, true)` and `(Gray, false)` all encode gray.
+            (Detected::Color, false) | (Detected::Gray, _) => OutputColor(ColorMode::Gray),
+        }
+    }
+
+    /// Whether the page is encoded in colour.
+    pub fn is_color(self) -> bool {
+        matches!(self, OutputColor(ColorMode::Color))
+    }
+
+    /// Whether the page is encoded in grayscale.
+    pub fn is_gray(self) -> bool {
+        !self.is_color()
+    }
+}
+
 /// Whether a page should be treated as colour.
 ///
-/// `original_is_grayscale` is the source's colour mode: a page that was decoded
-/// as `L`/`1` is never colour, matching KCC's `original_color_mode in ("L", "1")`
-/// shortcut.
-pub fn color_check(image: &RgbImage, original_is_grayscale: bool, options: &Options) -> bool {
-    if original_is_grayscale {
-        return false;
-    }
+/// The caller must not pass a grayscale *source* here (KCC's `original_color_mode
+/// in ("L", "1")` shortcut): a page decoded as `L`/`1` is never colour. That guard
+/// lives at the call sites, which short-circuit before the RGB round-trip — see
+/// [`crate::ebook::processing::page`].
+pub fn color_check(image: &RgbImage, options: &Options) -> Detected {
     if options.main.webtoon {
-        return true;
+        return Detected::Color;
     }
     calculate_color(image, options.processing.color.force_color)
 }
 
 /// The histogram cascade, returning as soon as a step decides.
-fn calculate_color(image: &RgbImage, force_color: bool) -> bool {
+fn calculate_color(image: &RgbImage, force_color: bool) -> Detected {
     let (cb_hist, cr_hist) = chroma_histograms(image);
 
     for (cutoff, diff_threshold) in CASCADE {
@@ -56,7 +108,7 @@ fn calculate_color(image: &RgbImage, force_color: bool) -> bool {
             return decision;
         }
     }
-    false
+    Detected::Gray
 }
 
 /// Cb and Cr histograms of an RGB image.
@@ -81,7 +133,7 @@ fn color_precision(
     cutoff: Percent,
     diff_threshold: i32,
     force_color: bool,
-) -> Option<bool> {
+) -> Option<Detected> {
     let mut cb = *cb_hist;
     let mut cr = *cr_hist;
     histograms_cutoff(&mut cb, &mut cr, cutoff);
@@ -92,10 +144,10 @@ fn color_precision(
     if force_color {
         // With `--force-color` a biased histogram is enough to call it colour.
         if cb.min > 128 || cr.min > 128 || cb.max < 128 || cr.max < 128 {
-            return Some(true);
+            return Some(Detected::Color);
         }
     } else if cb.spread() < SPREAD_THRESHOLD && cr.spread() < SPREAD_THRESHOLD {
-        return Some(false);
+        return Some(Detected::Gray);
     }
 
     let low = 128 - diff_threshold;
@@ -105,7 +157,7 @@ fn color_precision(
         || i32::from(cb.max) >= high
         || i32::from(cr.max) >= high
     {
-        return Some(true);
+        return Some(Detected::Color);
     }
 
     None
@@ -234,18 +286,18 @@ mod tests {
     }
 
     #[test]
-    fn grayscale_sources_are_never_colour() -> Result<()> {
-        let image = solid(8, 8, [0, 128, 255]);
-        assert!(!color_check(&image, true, &options(&[])?));
-        assert!(!color_check(&image, true, &options(&["--force-color"])?));
-        Ok(())
+    fn output_colour_keeps_colour_only_with_force_color() {
+        assert!(OutputColor::from_detection(Detected::Color, true).is_color());
+        assert!(OutputColor::from_detection(Detected::Color, false).is_gray());
+        assert!(OutputColor::from_detection(Detected::Gray, true).is_gray());
+        assert!(OutputColor::from_detection(Detected::Gray, false).is_gray());
     }
 
     #[test]
     fn grayscale_pixels_are_not_colour() -> Result<()> {
         // Cb == Cr == 128 everywhere, so the spread test bails out.
         let image = half_black(16, 16);
-        assert!(!color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Gray);
         Ok(())
     }
 
@@ -260,7 +312,7 @@ mod tests {
                 Rgb([0, 0, 255])
             }
         });
-        assert!(color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Color);
         Ok(())
     }
 
@@ -269,14 +321,17 @@ mod tests {
         // A single flat colour is treated as a (coloured) background, not as a
         // colourful page: KCC requires chroma variation.
         let image = solid(8, 8, [255, 0, 0]);
-        assert!(!color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Gray);
         Ok(())
     }
 
     #[test]
     fn webtoon_forces_colour() -> Result<()> {
         let image = half_black(16, 16);
-        assert!(color_check(&image, false, &options(&["--webtoon"])?));
+        assert_eq!(
+            color_check(&image, &options(&["--webtoon"])?),
+            Detected::Color
+        );
         Ok(())
     }
 

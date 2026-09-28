@@ -27,8 +27,13 @@ use quantette::{dither::FloydSteinberg, ImageRef, PaletteSize, Pipeline, Quantiz
 use std::array;
 use std::borrow::Cow;
 
-use super::color::{color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb};
-use crate::ebook::model::{Background, EncodedPage, MediaType, OrderClass, Page, PageFlags};
+use super::color::{
+    color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb, Detected, OutputColor,
+};
+use crate::ebook::model::{
+    Background, EncodedPage, MediaType, OrderClass, Orientation, Page, PageFlags, ResolvedFill,
+    ScribeHalf,
+};
 use crate::ebook::options::{
     Autocontrast, BorderColor, Gamma, Geometry, Layout, Options, OutputEncoding, Splitter,
 };
@@ -50,7 +55,7 @@ pub(crate) const SCRIBE_MAX_DIMENSION: u32 = 1920;
 struct Payload {
     order: OrderClass,
     image: DynamicImage,
-    rotated: bool,
+    orientation: Orientation,
 }
 
 /// Process one decoded page into its encoded output page(s).
@@ -165,7 +170,7 @@ fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payloa
         return vec![Payload {
             order: OrderClass::Normal,
             image,
-            rotated: false,
+            orientation: Orientation::Upright,
         }];
     }
     if landscape_mismatch
@@ -184,12 +189,12 @@ fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payloa
             payloads.push(Payload {
                 order: OrderClass::SplitLeft,
                 image: first,
-                rotated: false,
+                orientation: Orientation::Upright,
             });
             payloads.push(Payload {
                 order: OrderClass::SplitRight,
                 image: second,
-                rotated: false,
+                orientation: Orientation::Upright,
             });
         }
         if options.processing.splitter != Splitter::Split
@@ -203,7 +208,7 @@ fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payloa
     vec![Payload {
         order: OrderClass::Normal,
         image,
-        rotated: false,
+        orientation: Orientation::Upright,
     }]
 }
 
@@ -228,7 +233,7 @@ fn maximize_strips(image: &DynamicImage, right_to_left: bool) -> Payload {
     Payload {
         order: OrderClass::Normal,
         image: DynamicImage::ImageRgb8(composed),
-        rotated: false,
+        orientation: Orientation::Upright,
     }
 }
 
@@ -252,7 +257,11 @@ fn rotate_payload(image: DynamicImage, options: &Options) -> Payload {
     Payload {
         order,
         image: rotated,
-        rotated: !options.processing.rotation.no_rotate,
+        orientation: if options.processing.rotation.no_rotate {
+            Orientation::Upright
+        } else {
+            Orientation::Rotated
+        },
     }
 }
 
@@ -292,21 +301,20 @@ fn encode_payload(
     page: &Page,
     fill: Background,
 ) -> Result<Vec<EncodedPage>> {
-    let original_is_grayscale = is_grayscale_image(&payload.image);
-    // `color_check` short-circuits to `false` for a grayscale source without ever
-    // looking at the pixels, so keep the luma plane instead of expanding it to RGB
-    // and back — one less full-image copy for the common manga scan.
-    let (image, color) = if original_is_grayscale {
-        (payload.image, false)
+    // A grayscale *source* is never colour (KCC's `L`/`1` shortcut), and keeping the
+    // luma plane avoids expanding it to RGB and back — one less full-image copy for
+    // the common manga scan.
+    let (image, detected) = if is_grayscale_image(&payload.image) {
+        (payload.image, Detected::Gray)
     } else {
         let rgb = match payload.image {
             DynamicImage::ImageRgb8(buffer) => buffer,
             other => other.to_rgb8(),
         };
-        let color = color_check(&rgb, false, options);
-        (DynamicImage::ImageRgb8(rgb), color)
+        let detected = color_check(&rgb, options);
+        (DynamicImage::ImageRgb8(rgb), detected)
     };
-    let color_output = color && options.processing.color.force_color;
+    let color_output = OutputColor::from_detection(detected, options.processing.color.force_color);
 
     let image = prepare_image(
         image,
@@ -314,16 +322,15 @@ fn encode_payload(
         size,
         payload.order,
         fill,
-        color,
+        detected,
         color_output,
     )?;
 
-    let flags = |above: bool, below: bool| PageFlags {
+    let flags = |half: ScribeHalf| PageFlags {
         order_class: payload.order,
-        rotated: payload.rotated,
-        black_background: fill == Background::Black,
-        above,
-        below,
+        orientation: payload.orientation,
+        background: ResolvedFill::new(fill),
+        half,
     };
 
     if options.processing.scribe {
@@ -340,32 +347,47 @@ fn encode_payload(
             let (below_type, below_bytes) = encode_image(&below, options, color_output)?;
             return Ok(vec![
                 EncodedPage {
-                    name: split_name(&page.source_name, payload.order, "above", above_type),
+                    name: split_name(
+                        &page.source_name,
+                        payload.order,
+                        PagePart::Above,
+                        above_type,
+                    ),
                     order_class: payload.order,
                     media_type: above_type,
                     bytes: above_bytes,
                     size: Size::new(image_size.width, SCRIBE_MAX_DIMENSION),
-                    flags: flags(true, false),
+                    flags: flags(ScribeHalf::Above),
                 },
                 EncodedPage {
-                    name: split_name(&page.source_name, payload.order, "below", below_type),
+                    name: split_name(
+                        &page.source_name,
+                        payload.order,
+                        PagePart::Below,
+                        below_type,
+                    ),
                     order_class: payload.order,
                     media_type: below_type,
                     bytes: below_bytes,
                     size: Size::new(image_size.width, image_size.height - SCRIBE_MAX_DIMENSION),
-                    flags: flags(false, true),
+                    flags: flags(ScribeHalf::Below),
                 },
             ]);
         }
 
         let (media_type, bytes) = encode_image(&image, options, color_output)?;
         return Ok(vec![EncodedPage {
-            name: split_name(&page.source_name, payload.order, "whole", media_type),
+            name: split_name(
+                &page.source_name,
+                payload.order,
+                PagePart::Whole,
+                media_type,
+            ),
             order_class: payload.order,
             media_type,
             bytes,
             size: image_size,
-            flags: flags(false, false),
+            flags: flags(ScribeHalf::NotSplit),
         }]);
     }
 
@@ -378,7 +400,7 @@ fn encode_payload(
         media_type,
         bytes,
         size: image_size,
-        flags: flags(false, false),
+        flags: flags(ScribeHalf::NotSplit),
     }])
 }
 
@@ -389,16 +411,16 @@ fn prepare_image(
     size: Size,
     order: OrderClass,
     fill: Background,
-    color: bool,
-    color_output: bool,
+    detected: Detected,
+    color_output: OutputColor,
 ) -> Result<DynamicImage> {
-    gamma_correct(&mut image, options, color);
-    if !color_output && !matches!(image, DynamicImage::ImageLuma8(_)) {
+    gamma_correct(&mut image, options, detected);
+    if color_output.is_gray() && !matches!(image, DynamicImage::ImageLuma8(_)) {
         // `to_luma601` is the identity on an L8 plane, so skipping the round-trip
         // keeps a grayscale page's working set to one buffer.
         image = DynamicImage::ImageLuma8(to_luma601(&image));
     }
-    autocontrast_image(&mut image, options, color);
+    autocontrast_image(&mut image, options, detected);
     resize_image(&mut image, options, size, order, fill)?;
     // The moiré eraser runs on the resized plane, after autocontrast and before
     // quantization (KCC's `optimizeForDisplay`).
@@ -422,14 +444,14 @@ pub(crate) fn is_grayscale_image(image: &DynamicImage) -> bool {
 ///
 /// `--gamma` defaults to 0, which falls back to the profile gamma (1.0 today, so
 /// a no-op). See docs/processing.md.
-fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
+fn gamma_correct(image: &mut DynamicImage, options: &Options, detected: Detected) {
     let mut gamma = match options.processing.gamma {
         Gamma::Auto => f64::from(options.device.data.gamma),
         Gamma::Linear(value) => f64::from(value),
     };
     if matches!(options.processing.gamma, Gamma::Auto)
         && (gamma - 1.0).abs() > f64::EPSILON
-        && color
+        && detected.is_color()
     {
         gamma = 1.0;
     }
@@ -444,29 +466,24 @@ fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
     });
 
     match image {
-        DynamicImage::ImageRgb8(buffer) => {
-            imageproc::map::map_subpixels_mut(buffer, |value| lut[value as usize]);
-        }
         DynamicImage::ImageLuma8(buffer) => {
             imageproc::map::map_subpixels_mut(buffer, |value| lut[value as usize]);
         }
-        other => {
-            let mut rgb = other.to_rgb8();
-            imageproc::map::map_subpixels_mut(&mut rgb, |value| lut[value as usize]);
-            *other = DynamicImage::ImageRgb8(rgb);
-        }
+        other => with_rgb8(other, |buffer| {
+            imageproc::map::map_subpixels_mut(buffer, |value| lut[value as usize]);
+        }),
     }
 }
 
 /// Autocontrast, plus the optional autolevel pass (see docs/processing.md).
 ///
-/// `color` is the page's colour *detection* result (not whether colour is kept):
+/// `detected` is the page's colour *detection* result (not whether colour is kept):
 /// KCC only autocontrasts detected-colour pages with `--color-autocontrast`.
-fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) {
+fn autocontrast_image(image: &mut DynamicImage, options: &Options, detected: Detected) {
     if options.main.webtoon || options.processing.autocontrast == Autocontrast::Off {
         return;
     }
-    if color && !options.processing.color.autocontrast_color {
+    if detected.is_color() && !options.processing.color.autocontrast_color {
         return;
     }
 
@@ -477,7 +494,7 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
     }
 
     if options.processing.autocontrast == Autocontrast::Level {
-        autolevel_image(image, color);
+        autolevel_image(image, detected);
     }
 
     // Pillow's autocontrast recomputes the range on the current pixels.
@@ -518,83 +535,78 @@ fn stretch_contrast(image: &mut DynamicImage, range: Range) {
     let lut = kernels::stretch_contrast_lut(range);
     match image {
         DynamicImage::ImageLuma8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
-        DynamicImage::ImageRgb8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
-        other => {
-            let mut rgb = other.to_rgb8();
-            kernels::apply_lut_in_place(&mut rgb, &lut);
-            *other = DynamicImage::ImageRgb8(rgb);
-        }
+        other => with_rgb8(other, |buffer| kernels::apply_lut_in_place(buffer, &lut)),
     }
 }
 
 /// `--auto-level`: clamp everything below the most common dark value up to it.
-fn autolevel_image(image: &mut DynamicImage, color: bool) {
-    let black_point = black_point(image, color);
+fn autolevel_image(image: &mut DynamicImage, detected: Detected) {
+    let black_point = black_point(image, detected);
 
-    if color {
-        // Level the plane in place when it is already RGB; only other pixel
-        // types pay for the `to_rgb8` conversion and a fresh buffer.
-        match image {
-            DynamicImage::ImageRgb8(buffer) => {
-                for pixel in buffer.pixels_mut() {
-                    let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-                    let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
-                    *pixel = Rgb([r, g, b]);
-                }
+    match detected {
+        // Level the Y′CbCr luma of a colour page; the plane is recycled in place
+        // when it is already RGB.
+        Detected::Color => with_rgb8(image, |buffer| {
+            for pixel in buffer.pixels_mut() {
+                let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+                let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
+                *pixel = Rgb([r, g, b]);
             }
-            other => {
-                let mut rgb = other.to_rgb8();
-                for pixel in rgb.pixels_mut() {
-                    let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-                    let (r, g, b) = ycbcr_to_rgb(y.max(black_point), cb, cr);
-                    *pixel = Rgb([r, g, b]);
-                }
-                *other = DynamicImage::ImageRgb8(rgb);
+        }),
+        // A grayscale page's luma is raised in place; other pixel types convert to
+        // L8 (`to_luma601`) first.
+        Detected::Gray => with_luma8(image, |buffer| {
+            for value in buffer.iter_mut() {
+                *value = (*value).max(black_point);
             }
+        }),
+    }
+}
+
+/// Run `f` on an image's RGB plane, converting and storing the result back only
+/// when it is not already RGB8 — so an already-RGB image is updated in place with
+/// no extra buffer copy.
+fn with_rgb8(image: &mut DynamicImage, f: impl FnOnce(&mut RgbImage)) {
+    match image {
+        DynamicImage::ImageRgb8(buffer) => f(buffer),
+        other => {
+            let mut buffer = other.to_rgb8();
+            f(&mut buffer);
+            *other = DynamicImage::ImageRgb8(buffer);
         }
-    } else {
-        match image {
-            DynamicImage::ImageLuma8(buffer) => {
-                for value in buffer.iter_mut() {
-                    *value = (*value).max(black_point);
-                }
-            }
-            other => {
-                let mut gray = to_luma601(other);
-                for value in gray.iter_mut() {
-                    *value = (*value).max(black_point);
-                }
-                *other = DynamicImage::ImageLuma8(gray);
-            }
+    }
+}
+
+/// Run `f` on an image's L8 plane, converting and storing the result back only when
+/// it is not already L8.
+fn with_luma8(image: &mut DynamicImage, f: impl FnOnce(&mut GrayImage)) {
+    match image {
+        DynamicImage::ImageLuma8(buffer) => f(buffer),
+        other => {
+            let mut buffer = to_luma601(other);
+            f(&mut buffer);
+            *other = DynamicImage::ImageLuma8(buffer);
         }
     }
 }
 
 /// The most common dark-pixel value, KCC's black point.
-fn black_point(image: &DynamicImage, color: bool) -> u8 {
+fn black_point(image: &DynamicImage, detected: Detected) -> u8 {
     let mut histogram = [0u32; 256];
 
-    if color {
-        if let Some(rgb) = image.as_rgb8() {
-            for pixel in rgb.pixels() {
-                let (y, _, _) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-                histogram[y as usize] += 1;
-            }
-        } else {
-            let rgb = image.to_rgb8();
-            for pixel in rgb.pixels() {
+    match detected {
+        // Borrow the native RGB plane, converting only when the page is not RGB8.
+        Detected::Color => {
+            for pixel in rgb_view(image).pixels() {
                 let (y, _, _) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
                 histogram[y as usize] += 1;
             }
         }
-    } else if let Some(gray) = image.as_luma8() {
-        for value in gray.iter() {
-            histogram[*value as usize] += 1;
-        }
-    } else {
-        let gray = to_luma601(image);
-        for value in gray.iter() {
-            histogram[*value as usize] += 1;
+        // `luma_view` borrows an existing L8 plane instead of converting it.
+        Detected::Gray => {
+            for value in luma_view(image).iter() {
+                histogram[*value as usize] += 1;
+            }
         }
     }
 
@@ -939,10 +951,10 @@ struct Quantized {
 fn encode_image(
     image: &DynamicImage,
     options: &Options,
-    color_output: bool,
+    color_output: OutputColor,
 ) -> Result<(MediaType, Vec<u8>)> {
-    let png_branch =
-        options.processing.png.force && (!color_output || options.processing.png.force_rgb);
+    let png_branch = options.processing.png.force
+        && (color_output.is_gray() || options.processing.png.force_rgb);
 
     if png_branch {
         if options.processing.webp_output {
@@ -952,7 +964,7 @@ fn encode_image(
             return Ok((MediaType::Gif, encode_gif(image)?));
         }
 
-        let prepared = if !color_output {
+        let prepared = if color_output.is_gray() {
             // Grayscale page under `--force-png`: optionally quantise to the
             // profile palette, then fall back to grayscale where KCC does.
             if options.processing.png.no_quantize {
@@ -1219,10 +1231,33 @@ fn unsuffixed_name(source_name: &str, media_type: MediaType) -> String {
     named_page(source_name, media_type, None, None)
 }
 
+/// The trailing part suffix of a Kindle Scribe split page name (KCC's `saveToDir`).
+#[derive(Clone, Copy)]
+enum PagePart {
+    Above,
+    Below,
+    Whole,
+}
+
+impl PagePart {
+    fn as_str(self) -> &'static str {
+        match self {
+            PagePart::Above => "above",
+            PagePart::Below => "below",
+            PagePart::Whole => "whole",
+        }
+    }
+}
+
 /// The output file name for a Kindle Scribe split half (`-above`/`-below`) or an
 /// unsplit `-whole` page: `kcc-0001-kcc-x-above.jpg` (KCC's `saveToDir`).
-fn split_name(source_name: &str, order: OrderClass, part: &str, media_type: MediaType) -> String {
-    named_page(source_name, media_type, Some(order), Some(part))
+fn split_name(
+    source_name: &str,
+    order: OrderClass,
+    part: PagePart,
+    media_type: MediaType,
+) -> String {
+    named_page(source_name, media_type, Some(order), Some(part.as_str()))
 }
 
 /// Build a page name from a source path, media type, optional order suffix and an
@@ -1327,7 +1362,7 @@ mod tests {
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
         let payloads = split_check(image, &options(&[])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
-        assert!(payloads[0].rotated);
+        assert_eq!(payloads[0].orientation, Orientation::Rotated);
         // Rotated 90°: dimensions swap.
         assert_eq!(payloads[0].image.dimensions(), (200, 500));
         Ok(())
@@ -1347,7 +1382,7 @@ mod tests {
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
         let payloads = split_check(image, &options(&["--no-rotate"])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
-        assert!(!payloads[0].rotated);
+        assert_eq!(payloads[0].orientation, Orientation::Upright);
         assert_eq!(payloads[0].image.dimensions(), (500, 200));
         Ok(())
     }
@@ -1499,7 +1534,7 @@ mod tests {
     #[test]
     fn gamma_correction_darkens_midtones() -> Result<()> {
         let mut image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([128, 128, 128])));
-        gamma_correct(&mut image, &options(&["--gamma", "2.0"])?, false);
+        gamma_correct(&mut image, &options(&["--gamma", "2.0"])?, Detected::Gray);
         let value = image.to_rgb8().get_pixel(0, 0)[0];
         // 255 * (128/255)^2 ≈ 64 (KCC rounds to 64).
         assert_eq!(value, 64);
@@ -1512,7 +1547,7 @@ mod tests {
         let mut image = DynamicImage::ImageLuma8(GrayImage::from_fn(256, 1, |x, _| {
             Luma([(10 + x * 220 / 255) as u8])
         }));
-        autocontrast_image(&mut image, &options(&[])?, false);
+        autocontrast_image(&mut image, &options(&[])?, Detected::Gray);
         let gray = to_luma601(&image);
         assert_eq!(gray.get_pixel(0, 0)[0], 0);
         assert_eq!(gray.get_pixel(255, 0)[0], 255);
@@ -1526,7 +1561,7 @@ mod tests {
             Luma([(x as u8).saturating_add(100)])
         }));
         let before = image.clone();
-        autocontrast_image(&mut image, &options(&[])?, false);
+        autocontrast_image(&mut image, &options(&[])?, Detected::Gray);
         assert_eq!(image.to_luma8(), before.to_luma8());
         Ok(())
     }
@@ -1539,7 +1574,7 @@ mod tests {
         values.extend(std::iter::repeat_n(200u8, 16));
         let mut image =
             DynamicImage::ImageLuma8(GrayImage::from_raw(1, 256, values).context("1x256 buffer")?);
-        autolevel_image(&mut image, false);
+        autolevel_image(&mut image, Detected::Gray);
         let gray = image.to_luma8();
         assert!(gray.pixels().all(|pixel| pixel[0] >= 30));
         assert_eq!(gray.get_pixel(0, 0)[0], 30);
@@ -1595,17 +1630,27 @@ mod tests {
             split_name(
                 "kcc-0001.png",
                 OrderClass::RotateLast,
-                "above",
+                PagePart::Above,
                 MediaType::Jpeg
             ),
             "kcc-0001-kcc-d-above.jpg"
         );
         assert_eq!(
-            split_name("kcc-0002.png", OrderClass::Normal, "below", MediaType::Gif),
+            split_name(
+                "kcc-0002.png",
+                OrderClass::Normal,
+                PagePart::Below,
+                MediaType::Gif
+            ),
             "kcc-0002-kcc-x-below.gif"
         );
         assert_eq!(
-            split_name("kcc-0003.png", OrderClass::Normal, "whole", MediaType::Png),
+            split_name(
+                "kcc-0003.png",
+                OrderClass::Normal,
+                PagePart::Whole,
+                MediaType::Png
+            ),
             "kcc-0003-kcc-x-whole.png"
         );
     }
@@ -1625,8 +1670,8 @@ mod tests {
         assert_eq!(encoded[1].name, "page-kcc-x-below.jpg");
         assert_eq!(encoded[0].size, Size::new(1653, SCRIBE_MAX_DIMENSION));
         assert_eq!(encoded[1].size, Size::new(1653, 560));
-        assert!(encoded[0].flags.above && !encoded[0].flags.below);
-        assert!(!encoded[1].flags.above && encoded[1].flags.below);
+        assert_eq!(encoded[0].flags.half, ScribeHalf::Above);
+        assert_eq!(encoded[1].flags.half, ScribeHalf::Below);
         Ok(())
     }
 
@@ -1639,7 +1684,7 @@ mod tests {
 
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].name, "page-kcc-x-whole.jpg");
-        assert!(!encoded[0].flags.above && !encoded[0].flags.below);
+        assert_eq!(encoded[0].flags.half, ScribeHalf::NotSplit);
         Ok(())
     }
 }

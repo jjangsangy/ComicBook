@@ -347,7 +347,10 @@ mod tests {
 
     #[test]
     fn a_scribe_above_page_adds_its_below_image_to_the_manifest() {
-        use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags};
+        use crate::ebook::model::{
+            Background, EncodedPage, MediaType, OrderClass, Orientation, PageFlags, ResolvedFill,
+            ScribeHalf,
+        };
 
         let below = EncodedPage {
             name: "kcc-0001-kcc-x-below.jpg".to_string(),
@@ -357,10 +360,9 @@ mod tests {
             size: Size::new(100, 50),
             flags: PageFlags {
                 order_class: OrderClass::Normal,
-                rotated: false,
-                black_background: false,
-                above: false,
-                below: true,
+                orientation: Orientation::Upright,
+                background: ResolvedFill::new(Background::White),
+                half: ScribeHalf::Below,
             },
         };
         let entry = PageRef {
@@ -370,10 +372,9 @@ mod tests {
             size: Size::new(100, 150),
             flags: PageFlags {
                 order_class: OrderClass::Normal,
-                rotated: false,
-                black_background: false,
-                above: true,
-                below: false,
+                orientation: Orientation::Upright,
+                background: ResolvedFill::new(Background::White),
+                half: ScribeHalf::Above,
             },
             media_type: MediaType::Jpeg,
             below: Some(&below),

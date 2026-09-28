@@ -4,8 +4,10 @@
 //! black/white mask, compare the bounding boxes of the two colours, and fall back
 //! to sampling the page border in 5-pixel strips when the areas are close.
 //!
-//! The result decides the padding colour for `pad` resizes and whether a page is
-//! flagged `BlackBackground` (see docs/architecture.md).
+//! The result decides the padding colour for `pad` resizes and the resolved fill
+//! stored in `PageFlags::background` (see docs/architecture.md).
+
+use std::cmp::Ordering;
 
 use image::{DynamicImage, GrayImage};
 
@@ -44,10 +46,9 @@ pub fn fill_check(image: &DynamicImage) -> Background {
         };
     }
 
-    if border_fill(&mask) > 0 {
-        Background::Black
-    } else {
-        Background::White
+    match border_fill(&mask) {
+        StripVote::Black => Background::Black,
+        StripVote::Mixed | StripVote::White => Background::White,
     }
 }
 
@@ -57,12 +58,35 @@ fn box_area(bbox: BBox<u32>) -> u64 {
     bbox.area()
 }
 
-/// Sum the border-strip histogram votes (KCC's tie-breaker).
+/// One 5-pixel border strip's histogram verdict (KCC's `-1/0/+1` tie-breaker
+/// vote): an all-white strip counts `-1`, an all-black strip `+1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StripVote {
+    /// No white pixels: an all-black strip (KCC's `+1`).
+    Black,
+    /// Black and white pixels both present (KCC's `0`).
+    Mixed,
+    /// No black pixels: an all-white strip (KCC's `-1`).
+    White,
+}
+
+impl StripVote {
+    /// The signed weight KCC sums; white strips count negative so a positive total
+    /// means a mostly-black border.
+    fn score(self) -> i64 {
+        match self {
+            StripVote::Black => 1,
+            StripVote::Mixed => 0,
+            StripVote::White => -1,
+        }
+    }
+}
+
+/// Sum the border-strip votes (KCC's tie-breaker).
 ///
-/// A strip with no black pixels votes `-1`, one with no white pixels votes `+1`,
-/// and a mixed strip votes `0`. A positive total means the border is mostly
-/// black.
-fn border_fill(mask: &GrayImage) -> i64 {
+/// A positive total means the border is mostly black; the sign is the only part
+/// [`fill_check`] reads.
+fn border_fill(mask: &GrayImage) -> StripVote {
     let (width, height) = mask.dimensions();
     let mut total = 0i64;
 
@@ -73,7 +97,7 @@ fn border_fill(mask: &GrayImage) -> i64 {
         } else {
             start_y
         };
-        total += strip_vote(mask, 0, top, width, (top + 5).min(height));
+        total += strip_vote(mask, 0, top, width, (top + 5).min(height)).score();
         start_y += 5;
     }
 
@@ -84,15 +108,19 @@ fn border_fill(mask: &GrayImage) -> i64 {
         } else {
             start_x
         };
-        total += strip_vote(mask, left, 0, (left + 5).min(width), height);
+        total += strip_vote(mask, left, 0, (left + 5).min(width), height).score();
         start_x += 5;
     }
 
-    total
+    match total.cmp(&0) {
+        Ordering::Greater => StripVote::Black,
+        Ordering::Less => StripVote::White,
+        Ordering::Equal => StripVote::Mixed,
+    }
 }
 
 /// The histogram vote for the rectangle `[left, right) x [top, bottom)`.
-fn strip_vote(mask: &GrayImage, left: u32, top: u32, right: u32, bottom: u32) -> i64 {
+fn strip_vote(mask: &GrayImage, left: u32, top: u32, right: u32, bottom: u32) -> StripVote {
     let black = kernels::count_lt(
         mask,
         i64::from(left),
@@ -107,9 +135,9 @@ fn strip_vote(mask: &GrayImage, left: u32, top: u32, right: u32, bottom: u32) ->
     let white = area - black;
 
     match (black, white) {
-        (0, _) => -1,
-        (_, 0) => 1,
-        _ => 0,
+        (0, _) => StripVote::White,
+        (_, 0) => StripVote::Black,
+        _ => StripVote::Mixed,
     }
 }
 

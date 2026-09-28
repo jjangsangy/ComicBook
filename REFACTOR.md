@@ -567,6 +567,8 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 5 — Processing enums
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
+
 - **Findings:** A5, A6, A7, A8, A9, A10, A11, C4, B13, B14, and the page-part string literals
   (`"above"`/`"below"`/`"whole"`, `page.rs:347,356,369`).
 - **Scope:** `processing/{page,color,rainbow,interpanel,kernels,fill,webtoon}.rs`,
@@ -577,6 +579,71 @@ landed; explicit dependencies are called out. The finished shape is described in
 - **Gate:** processing + output tests. `chunk.rs` and `output/epub` switch from
   `flags.above`/`flags.below` to `flags.half`.
 - **SIMD note:** enum/`const` parameterisation only; never `dyn`, never boxed predicates.
+
+**Completed notes.**
+
+- **Delivered as planned:** `Detected`/`OutputColor`, `ThresholdKind`, `Axis`, `Band`,
+  `ScribeHalf`, `Orientation`, `StripVote`, `Panel`, `FitPreference`, and the dropped
+  `color_check` parameter. The page-part literals became a private `PagePart` (`Above`/`Below`/
+  `Whole`) enum with `as_str()`, so the Scribe branch no longer spells the suffix as a bare string.
+  Because the output names are frozen bytes, `PagePart::as_str()` returns exactly the old literals
+  and `named_page` still takes `Option<&str>`.
+- **A7 is the one place the sketch did not map cleanly.** `black_background` was *not* a duplicate of
+  `Page::background` (the detected colour): it was the **resolved fill** from `page_fill` (the
+  `--borders` override wins over the detection). So `PageFlags` stores `background: Background` fed
+  from `fill`, not from `Page::background` — dropping the flag and reading `Page::background` in
+  `xhtml.rs` would have changed the XHTML body style under `--borders`. The field keeps the name
+  `background` (the finding's wording) with a doc comment marking it as the resolved fill; the
+  default `Background::White` reproduces the old `black_background == false` at every
+  `PageFlags::default()` site (cover, webtoon, ingest, `--no-processing`).
+- **A9 uses a `const`-generic core**, not a runtime enum match inside the loop:
+  `threshold_in_place(data, threshold, ThresholdKind)` dispatches once to
+  `threshold_mono::<INVERTED: bool>`, which monomorphises the polarity out of both the 16-lane loop
+  and the scalar tail (`crop.rs` passes `Below`, `webtoon.rs` passes `Above`). No `dyn`, no closure.
+- **A11 is a `Band` struct, not `BandKind`.** The two flags are independent (an empty band is
+  neither white nor black), so a sum type would be wrong; `Band { has_white, has_black }` names the
+  fields and removes the transposable tuple. The catalogue's `interpanel.rs:293` consumer was stale:
+  the only caller is `webtoon::band_is_solid`.
+- **A10's two booleans share one polarity** (`horizontal == true` and `remove_rows == true` both mean
+  rows), so both became `Axis::Rows`/`Axis::Columns`; the trap was the misleading name `horizontal`,
+  not an inverted value.
+- **A5's `render_target`/`Cropping` half was already resolved by Phase 2**, so only `render_zoom`
+  changed: it takes a `FitPreference` produced by the associated constructor
+  `FitPreference::new(pdf_width, page_width, page_height)`, and keeps the `page_height > 0.0`
+  fall-through inside the ratio selection.
+- **B13 (`Panel`)** is `{ top, bottom }` (`Copy`, private) with a saturating `height()`; the stored
+  tuple height was always `bottom - top`, so every construction is byte-identical and the two
+  recomputations collapse into the accessor.
+- **B14 (`StripVote`)** types both `strip_vote` and the summing `border_fill` (its sign is all
+  `fill_check` reads); the `-1`/`0`/`+1` weights now live only in `StripVote::score`.
+- **A8 (`Detected`/`OutputColor`).** `color_check` returns `Detected` and the single
+  `OutputColor::from_detection(detected, force_color)` call at the payload boundary reproduces
+  `color && force_color`; `prepare_image` keeps **both** parameters (detected-colour-but-gray-output
+  is a real state). `gamma_correct`/`autocontrast_image`/`autolevel_image`/`black_point` take
+  `Detected`, `encode_image`/`erase_rainbow_artifacts` take `OutputColor`. The dead parameter was
+  purely a performance shortcut (an `L`/`1` source converted to RGB always tests gray anyway), so the
+  guard stays at the two call sites that skip the RGB round-trip.
+- **Test note.** The only test change beyond mechanical field renames is the removal of
+  `color::tests::grayscale_sources_are_never_colour`, whose subject *was* the deleted parameter; its
+  behavioural claim is now covered by the call-site guards and the new
+  `color::tests::output_colour_keeps_colour_only_with_force_color` truth-table, plus
+  `pdf::tests::fit_preference_only_widens_a_portrait_pdf`. `PageFlags` literals and the
+  `flags.half`/`orientation`/`background` reads were updated across `chunk.rs`, `output/epub/*` and
+  `tests/ebook_processing_tests.rs`.
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **365 passed, 13 skipped** (Phase 4's 364, +2 new, −1 removed). The
+  Phase 5 ignored gate passes with `--run-ignored all`
+  (`scribe_profile_splits_a_tall_page_into_above_and_below` plus the webtoon panel and PDF raster
+  tests); the byte-exact goldens are unchanged.
+- **Changelog:** `## [Unreleased] → Changed` entry added; `docs/architecture.md`'s data-model block
+  updated for the `PageFlags`/`Orientation`/`ScribeHalf` change.
+- **Follow-up hardening (compiler-enforced invariants).** Post-review, the consumption sites were
+  tightened so the new enums do structural work instead of being read as bare values: `OutputColor`
+  is now an opaque newtype (`is_color`/`is_gray`) constructible only by `from_detection`; the
+  resolved fill is the `ResolvedFill` newtype so it cannot be swapped with the detected
+  `Page::background`; and the `Detected`/`ScribeHalf`/`Orientation` dispatches in `page.rs`,
+  `rainbow.rs`, `chunk.rs`, `output/epub/{mod,xhtml}.rs` and `processing/mod.rs` use exhaustive
+  `match`es rather than `if … == variant` comparisons or a `bool` re-collapse.
 
 ### Phase 6 — Page state machine and name identity
 
@@ -633,7 +700,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 | 2 CLI | — | CLI + option fields | low (user-visible) |
 | 3 Config ✅ | 2 | `options`/`profiles` + all readers | medium |
 | 4 Geometry ✅ | — | processing + output boundaries | medium (broad, mechanical) |
-| 5 Processing | 4 | processing hot paths | medium (perf) |
+| 5 Processing ✅ | 4 | processing hot paths | medium (perf) |
 | 6 Page state | 4 | `model` + input/processing | **high (memory)** |
 | 7 Output | 2, 3, 6 | `output/**` + templates | high (output bytes) |
 | 8 Sweep | 1–7 | cross-cutting | low |
@@ -996,7 +1063,7 @@ before merging.
 | 2 CLI | `cli_tests`, `ebook_tests` | — | numeric aliases still parse; named values parse; border conflict is a clap error |
 | 3 Config | `ebook_tests`, `ebook_epub_tests`, `ebook_kindle_tests` | — | resolution table: each preset/format → expected `OutputEncoding` |
 | 4 Geometry | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_chunk_tests` | (tooling: `alloc_count`/`bench.sh` baseline, §7.7) | coordinate round-trips through the new named types |
-| 5 Processing | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_epub_tests` | `scribe_profile_splits_a_tall_page_into_above_and_below` | `ScribeHalf`/`Axis` behaviour equivalence |
+| 5 Processing ✅ | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_epub_tests` | `scribe_profile_splits_a_tall_page_into_above_and_below` | `ScribeHalf`/`Axis` behaviour equivalence |
 | 6 Page state | `ebook_input_tests`, `ebook_input_epub_pdf_tests`, `ebook_processing_tests`, `ebook_robustness_tests` | `ingest_and_repack_stay_far_below_the_decoded_book_size`, `a_large_book_converts_under_a_memory_ceiling`, `huge_book_stress` | `--no-processing` still never decodes; decoded page still retains its encoded bytes |
 | 7 Output | `ebook_epub_tests`, `ebook_golden_tests`, `ebook_output_tests`, `ebook_kindle_tests` | `light_novel_...`, `smart_cover_crop_...`, `two_panel_and_vertical_4_panel_...` | none needed — the byte-exact goldens are the gate |
 | 8 Sweep | full suite + clippy | as touched | metadata field identity; exhaustive `Profile::entry`; `file_name` helper |
@@ -1155,7 +1222,7 @@ states 12 · **D** newtypes 18 · **E** guards/wildcards 16 · **G** duplication
 memory footguns 4.
 
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
-archive tag union (1 ✅) → typed CLI values (2) → config sum types (3) → geometry newtypes
-(4) → processing enums (5) → page state machine (6) → output types (7) → guard/dedup
+archive tag union (1 ✅) → typed CLI values (2 ✅) → config sum types (3 ✅) → geometry newtypes
+(4 ✅) → processing enums (5 ✅) → page state machine (6) → output types (7) → guard/dedup
 sweep (8) → docs close-out (9). The optional
 [crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).

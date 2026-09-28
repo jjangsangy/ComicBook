@@ -195,8 +195,8 @@ fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
         return false;
     }
     match image.as_rgb8() {
-        Some(rgb) => color::color_check(rgb, false, options),
-        None => color::color_check(&image.to_rgb8(), false, options),
+        Some(rgb) => color::color_check(rgb, options).is_color(),
+        None => color::color_check(&image.to_rgb8(), options).is_color(),
     }
 }
 
