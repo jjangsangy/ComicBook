@@ -20,14 +20,15 @@ use pdfboss_core::Document;
 use pdfboss_render::{extract_page_images, render_page, Pixmap};
 use std::path::Path;
 
-use crate::ebook::model::{ComicTree, MediaType};
-use crate::ebook::options::Options;
+use crate::ebook::model::{ComicTree, MediaType, PageData, Source, SourceName};
+use crate::ebook::options::{Cropping, Options};
+use crate::units::Size;
 
-use super::archive::{build_tree, LoadedPage};
+use super::archive::{build_tree, LoadedPage, RootStrip};
 
 /// Load a PDF source into a [`ComicTree`].
 pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
-    if options.legacy_extract {
+    if options.processing.source.legacy_extract {
         return legacy_extract(source);
     }
     rasterize(source, options)
@@ -54,13 +55,12 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
             (Some(pixmap), None) => pixmap,
             _ => {
                 let (page_width, page_height) = page.size();
-                let zoom = render_zoom(
-                    options.pdf_width,
-                    target_width,
-                    target_height,
+                let fit = FitPreference::new(
+                    options.processing.source.pdf_width,
                     page_width,
                     page_height,
                 );
+                let zoom = render_zoom(fit, target_width, target_height, page_width, page_height);
                 render_page(&doc, &page, zoom)
                     .with_context(|| format!("Failed to render PDF page {index}"))?
             }
@@ -74,36 +74,62 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
     if pages.is_empty() {
         bail!("Failed to extract images from PDF file.");
     }
-    Ok(build_tree(pages, None, false))
+    Ok(build_tree(pages, None, RootStrip::Keep))
 }
 
 /// The device target size KCC renders PDF pages against, widened to leave room
 /// for the margin/page-number crop (`getWorkFolder`'s `cropping` multipliers).
+/// The float device target used by the rasteriser, enlarged by the crop mode.
+///
+/// Deliberately `f32`: PDF rendering scales by a zoom factor, so this is float
+/// render geometry rather than an integer [`Size`]; it is intentionally outside the
+/// `Size`/`Pixels` toolkit (which names the `u32` page dimensions).
 fn render_target(options: &Options) -> (f32, f32) {
-    let width = options.profile_data.width as f32;
-    let height = options.profile_data.height as f32;
-    match options.cropping {
-        1 => (width * 1.2, height * 1.2),
-        2 => (width * 1.25, height * 1.25),
-        _ => (width, height),
+    let width = options.device.data.width as f32;
+    let height = options.device.data.height as f32;
+    match options.processing.cropping {
+        Cropping::Margins => (width * 1.2, height * 1.2),
+        Cropping::PageNumbers => (width * 1.25, height * 1.25),
+        Cropping::Off => (width, height),
     }
 }
 
-/// KCC's zoom choice: fit the page height, unless `--pdf-width` is set and the
-/// page is portrait, in which case fit the page width.
+/// Which axis a PDF page is fitted to (KCC's `getZoom`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FitPreference {
+    /// Fit the page height — the default, and always for landscape pages.
+    Height,
+    /// `--pdf-width` on a portrait page: fit the page width instead.
+    WidthForPortrait,
+}
+
+impl FitPreference {
+    /// Select the fit axis: `--pdf-width` only overrides the default when the page
+    /// is portrait.
+    fn new(pdf_width: bool, page_width: f32, page_height: f32) -> Self {
+        if !pdf_width || page_width > page_height {
+            FitPreference::Height
+        } else {
+            FitPreference::WidthForPortrait
+        }
+    }
+}
+
+/// KCC's zoom choice, driven by the hoisted [`FitPreference`].
+///
+/// The `page_height > 0.0` guard stays here (not in [`FitPreference::new`]) so a
+/// zero-height `Height` page still falls through to the width branch, as before.
 fn render_zoom(
-    pdf_width: bool,
+    fit: FitPreference,
     target_width: f32,
     target_height: f32,
     page_width: f32,
     page_height: f32,
 ) -> f32 {
-    if (!pdf_width || page_width > page_height) && page_height > 0.0 {
-        target_height / page_height
-    } else if page_width > 0.0 {
-        target_width / page_width
-    } else {
-        1.0
+    match fit {
+        FitPreference::Height if page_height > 0.0 => target_height / page_height,
+        _ if page_width > 0.0 => target_width / page_width,
+        _ => 1.0,
     }
 }
 
@@ -111,14 +137,13 @@ fn render_zoom(
 /// dimensions so `--no-processing` emits it untouched and ingest does not pin the
 /// decoded pixels (which the lazy pipeline re-decodes on demand).
 fn pixmap_page(name: String, pixmap: Pixmap) -> Result<LoadedPage> {
-    let dimensions = (pixmap.width, pixmap.height);
+    let dimensions = Size::new(pixmap.width, pixmap.height);
     let raw = pixmap
         .encode_png()
         .map_err(|error| anyhow::anyhow!("Failed to encode PDF page: {error}"))?;
     Ok(LoadedPage {
-        name,
-        media_type: Some(MediaType::Png),
-        raw,
+        name: SourceName::new(name),
+        data: PageData::Encoded(Source::new(raw, MediaType::Png)),
         dimensions,
     })
 }
@@ -159,7 +184,7 @@ fn legacy_extract(source: &Path) -> Result<ComicTree> {
     if pages.is_empty() {
         bail!("Failed to extract images from PDF file.");
     }
-    Ok(build_tree(pages, None, false))
+    Ok(build_tree(pages, None, RootStrip::Keep))
 }
 
 /// Index of the first occurrence of `needle` in `haystack` at or after `from`.
@@ -199,18 +224,40 @@ mod tests {
     fn zoom_fits_height_unless_pdf_width_portrait() {
         // Default (no --pdf-width): always fit the page height.
         assert_eq!(
-            render_zoom(false, 1000.0, 1500.0, 600.0, 800.0),
+            render_zoom(FitPreference::Height, 1000.0, 1500.0, 600.0, 800.0),
             1500.0 / 800.0
         );
         // --pdf-width portrait: fit width.
         assert_eq!(
-            render_zoom(true, 1000.0, 1500.0, 500.0, 800.0),
+            render_zoom(
+                FitPreference::WidthForPortrait,
+                1000.0,
+                1500.0,
+                500.0,
+                800.0
+            ),
             1000.0 / 500.0
         );
         // --pdf-width landscape: still fit height.
         assert_eq!(
-            render_zoom(true, 1000.0, 1500.0, 900.0, 600.0),
+            render_zoom(FitPreference::Height, 1000.0, 1500.0, 900.0, 600.0),
             1500.0 / 600.0
+        );
+    }
+
+    #[test]
+    fn fit_preference_only_widens_a_portrait_pdf() {
+        assert_eq!(
+            FitPreference::new(false, 600.0, 800.0),
+            FitPreference::Height
+        );
+        assert_eq!(
+            FitPreference::new(true, 500.0, 800.0),
+            FitPreference::WidthForPortrait
+        );
+        assert_eq!(
+            FitPreference::new(true, 900.0, 600.0),
+            FitPreference::Height
         );
     }
 

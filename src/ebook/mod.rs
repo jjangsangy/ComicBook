@@ -27,9 +27,12 @@ pub mod progress;
 
 pub use cli::EbookArgs;
 pub use metadata::BookMetadata;
-pub use model::{Background, Chapter, ComicTree, CoverSource, OrderClass, Page, PageFlags};
+pub use model::{
+    Background, Chapter, ChapterName, ComicTree, OrderClass, Orientation, Page, PageData,
+    PageFlags, PageName, RelPath, ScribeHalf, Source, SourceName,
+};
 pub use naming::Sanitized;
-pub use options::{BorderColor, DocType, Format, Options};
+pub use options::{BorderColor, DocType, Format, Layout, Options};
 pub use profiles::{DeviceKind, Profile, ProfileData};
 
 use anyhow::Result;
@@ -42,7 +45,7 @@ use std::path::{Path, PathBuf};
 /// `ComicInfo.xml` and the CLI overrides into a [`BookMetadata`], and
 /// [`naming::sanitize_tree`] renames every chapter directory and page to the
 /// deterministic output layout (see docs/architecture.md).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PreparedBook {
     pub tree: ComicTree,
     pub metadata: BookMetadata,
@@ -62,8 +65,7 @@ pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
         cover_override,
         source,
         options,
-        None,
-        false,
+        TitleOrigin::Derived,
         &progress::Reporter::standalone(),
     ))
 }
@@ -72,7 +74,7 @@ pub fn prepare_book(source: &Path, options: &Options) -> Result<PreparedBook> {
 pub fn run_ebook(args: EbookArgs) -> Result<()> {
     let options = Options::resolve(&args)?;
 
-    if options.file_fusion {
+    if options.main.file_fusion {
         return run_fusion(&options);
     }
 
@@ -84,15 +86,15 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
         progress::Reporter::standalone()
     };
 
-    for source in options.inputs.clone() {
-        let written = convert_source_with(&source, &options, &reporter)?;
+    for source in &options.inputs {
+        let written = convert_source_with(source, &options, &reporter)?;
         for path in &written {
             reporter.println(format!("Created {}", path.display()));
         }
         reporter.inc();
 
-        if options.delete {
-            delete_source(&source)?;
+        if options.session.delete {
+            delete_source(source)?;
         }
     }
     reporter.finish();
@@ -112,21 +114,23 @@ fn run_fusion(options: &Options) -> Result<()> {
     // KCC defaults a fused run's output directory to the first source's directory
     // (`options.output = fusion_source_parent`).
     let mut fusion_options = options.clone();
-    if fusion_options.output.is_none() {
-        fusion_options.output = Some(fused.output_dir.clone());
+    if fusion_options.output.destination.is_none() {
+        fusion_options.output.destination = Some(fused.output_dir.clone());
     }
 
+    // The synthetic source path KCC converts (`<first name> [fused]`); the title is
+    // the single source of truth (see [`TitleOrigin::Fusion`]).
+    let source = fused.output_dir.join(&fused.title);
     let reporter = progress::Reporter::standalone();
     let prepared = assemble(
         fused.tree,
         fused.cover,
-        &fused.source,
+        &source,
         &fusion_options,
-        Some(&fused.title),
-        true,
+        TitleOrigin::Fusion(fused.title.as_str()),
         &reporter,
     );
-    let written = convert_prepared(prepared, &fused.source, &fusion_options, &reporter)?;
+    let written = convert_prepared(prepared, &source, &fusion_options, &reporter)?;
     for path in &written {
         reporter.println(format!("Created {}", path.display()));
     }
@@ -151,38 +155,70 @@ pub fn convert_source_with(
     options: &Options,
     reporter: &progress::Reporter,
 ) -> Result<Vec<PathBuf>> {
-    if options.light_novel {
+    if options.main.layout == Layout::LightNovel {
         return output::lightnovel::convert_with(source, options, reporter);
     }
 
     let tree = input::load_tree(source, options)?;
     let cover_override = naming::select_cover(source);
-    let prepared = assemble(tree, cover_override, source, options, None, false, reporter);
+    let prepared = assemble(
+        tree,
+        cover_override,
+        source,
+        options,
+        TitleOrigin::Derived,
+        reporter,
+    );
     convert_prepared(prepared, source, options, reporter)
+}
+
+/// Where [`assemble`] takes the book's default title from.
+#[derive(Debug, Clone, Copy)]
+enum TitleOrigin<'a> {
+    /// Derive the title from the source path (KCC's usual rule).
+    Derived,
+    /// A `--file-fusion` run: the synthetic `<name> [fused]` title, whose
+    /// `fusion_NNNN_` ordering prefix is stripped from the navigation titles.
+    Fusion(&'a str),
+}
+
+impl<'a> TitleOrigin<'a> {
+    /// The title override passed to metadata resolution.
+    fn default_title(self) -> Option<&'a str> {
+        match self {
+            TitleOrigin::Derived => None,
+            TitleOrigin::Fusion(title) => Some(title),
+        }
+    }
+
+    /// Whether the `fusion_NNNN_` prefix must be stripped from chapter titles.
+    fn is_fusion(self) -> bool {
+        matches!(self, TitleOrigin::Fusion(_))
+    }
 }
 
 /// Resolve a tree's metadata, sanitize its names and build the [`PreparedBook`].
 ///
-/// `default_title` overrides the title derived from `source` (used by fusion,
-/// where the source is a synthetic `<name> [fused]` directory); `fusion` strips
-/// the `fusion_NNNN_` ordering prefix from the navigation titles.
+/// `title_origin` supplies the default title (fusion overrides the title derived
+/// from `source`, where the source is a synthetic `<name> [fused]` directory) and
+/// whether to strip the `fusion_NNNN_` ordering prefix from navigation titles.
 fn assemble(
     mut tree: ComicTree,
     cover_override: Option<PathBuf>,
     source: &Path,
     options: &Options,
-    default_title: Option<&str>,
-    fusion: bool,
+    title_origin: TitleOrigin<'_>,
     reporter: &progress::Reporter,
 ) -> PreparedBook {
-    let metadata = metadata::resolve_with(&tree, source, options, default_title);
+    let metadata =
+        metadata::resolve_with(&tree, source, &options.output, title_origin.default_title());
     // KCC warns about a likely-degraded conversion after the tree is extracted but
     // before it is renamed (`detectSuboptimalProcessing`).
     for warning in processing::detect_suboptimal_processing(&tree, options) {
         reporter.warn(&warning);
     }
     let mut sanitized = naming::sanitize_tree(&mut tree, options);
-    if fusion {
+    if title_origin.is_fusion() {
         for title in sanitized.chapter_titles.values_mut() {
             *title = naming::strip_fusion_prefix(title);
         }
@@ -207,19 +243,16 @@ fn convert_prepared(
     options: &Options,
     reporter: &progress::Reporter,
 ) -> Result<Vec<PathBuf>> {
-    let cover = if options.webtoon && prepared.cover_override.is_none() {
+    let cover = if options.main.webtoon && prepared.cover_override.is_none() {
         None
     } else {
         processing::cover::process(&prepared.tree, prepared.cover_override.as_deref(), options)?
     };
-    if options.webtoon {
+    if options.main.webtoon {
         processing::webtoon::transform(&mut prepared.tree, options)?;
     }
     let mut processed = processing::process_tree_with(&mut prepared.tree, options, reporter)?;
-    if let Some(cover) = cover {
-        processed.cover = Some(cover.page);
-        processed.cover_smart_crop = cover.smart_cropped;
-    }
+    processed.cover = cover;
     // The output builders read only the *encoded* book, so the decoded-source tree
     // (source bytes and any residual pixels) can be released before packaging.
     prepared.tree = ComicTree::new();

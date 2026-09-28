@@ -1,12 +1,62 @@
 use super::kind::ArchiveKind;
-use super::path::{copy_dir_all, find_single_root_dir, is_matching_root};
-use super::reader::{open_reader, read_entries_with_scratch};
+use super::path::{
+    copy_dir_all, find_single_root_dir, is_matching_root, ArchiveEntry, NormalizedArchivePath,
+};
+use super::reader::{open_reader, read_entries_with_scratch, ArchiveReader, EntryContent};
 use super::writer::ArchiveWriter;
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Context, Result};
 use image::DynamicImage;
 use std::fs;
 use std::path::Path;
+
+/// The final path component of an archive entry (its file name), as a stored image is named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct BaseName(String);
+
+impl BaseName {
+    /// The file name as a borrowed string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A decoded image together with the base name it was stored under.
+pub struct DecodedImage {
+    pub name: BaseName,
+    pub image: DynamicImage,
+}
+
+/// When a single redundant root folder should be stripped while extracting an archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootStripPolicy {
+    /// Never collapse a wrapper folder, even if one exists.
+    Never,
+    /// Collapse the wrapper folder whenever the archive has exactly one.
+    Always,
+    /// Collapse the wrapper folder only when its name matches the destination folder or the
+    /// source file stem.
+    IfMatchingDestination,
+}
+
+/// A wrapper folder to collapse on extraction: its normalized name and the `"<name>/"`
+/// prefix every member shares.
+///
+/// The two were previously separate `Option`s (`root_to_strip` and a derived
+/// `root_prefix`) whose mixed `(Some, None)` state could not occur but was still
+/// representable in the type (docs/refactor.md E3).
+struct RootStrip {
+    name: String,
+    prefix: String,
+}
+
+impl RootStrip {
+    fn new(name: String) -> Self {
+        let prefix = format!("{name}/");
+        RootStrip { name, prefix }
+    }
+}
 
 /// Stream or read archive entries in memory without extracting loose files to the filesystem.
 ///
@@ -18,17 +68,17 @@ pub fn read_archive_entries<P: AsRef<Path>, F>(
     mut on_entry: F,
 ) -> Result<()>
 where
-    F: FnMut(&str, bool, &[u8]) -> Result<()>,
+    F: FnMut(&NormalizedArchivePath, EntryContent<'_>) -> Result<()>,
 {
     let mut scratch = Vec::new();
     read_entries_with_scratch(kind, path, &mut scratch, &mut on_entry)
 }
 
-/// List all entry names and whether they are directories from an archive or folder.
+/// List all entries (names and kinds) from an archive or folder.
 pub fn list_archive_entry_names<P: AsRef<Path>>(
     kind: ArchiveKind,
     path: P,
-) -> Result<Vec<(String, bool)>> {
+) -> Result<Vec<ArchiveEntry>> {
     let mut reader = open_reader(kind, path.as_ref())?;
     reader.list_entries()
 }
@@ -41,7 +91,13 @@ pub fn convert_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     target_kind: ArchiveKind,
     dest_path: Q,
 ) -> Result<()> {
-    convert_archive_ext(src_kind, src_path, target_kind, dest_path, false)
+    convert_archive_ext(
+        src_kind,
+        src_path,
+        target_kind,
+        dest_path,
+        RootStripPolicy::IfMatchingDestination,
+    )
 }
 
 /// Convert an archive or directory to a destination format, optionally stripping a single common root folder on extraction.
@@ -50,7 +106,7 @@ pub fn convert_archive_ext<P: AsRef<Path>, Q: AsRef<Path>>(
     src_path: P,
     target_kind: ArchiveKind,
     dest_path: Q,
-    strip_common_root: bool,
+    policy: RootStripPolicy,
 ) -> Result<()> {
     let mut scratch = Vec::new();
     convert_archive_ext_with_scratch(
@@ -58,7 +114,7 @@ pub fn convert_archive_ext<P: AsRef<Path>, Q: AsRef<Path>>(
         src_path,
         target_kind,
         dest_path,
-        strip_common_root,
+        policy,
         &mut scratch,
     )
 }
@@ -72,13 +128,15 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
     src_path: P,
     target_kind: ArchiveKind,
     dest_path: Q,
-    strip_common_root: bool,
+    policy: RootStripPolicy,
     scratch: &mut Vec<u8>,
 ) -> Result<()> {
     let src = src_path.as_ref();
     let dest = dest_path.as_ref();
 
-    if same_file::is_same_file(src, dest).unwrap_or(false) {
+    // A failed `is_same_file` (for instance when the destination does not exist yet) means
+    // "not the same file"; only a positive match blocks the conversion.
+    if matches!(same_file::is_same_file(src, dest), Ok(true)) {
         return Err(anyhow!("Cannot convert '{}' into itself", src.display()));
     }
 
@@ -97,46 +155,44 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
         }
     }
 
-    let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let src_stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    // An absent destination file name or source stem stays `None` rather than collapsing to a
+    // (matching-irrelevant) empty string.
+    let dest_name = dest.file_name().and_then(|s| s.to_str());
+    let src_stem = src.file_stem().and_then(|s| s.to_str());
 
     // Open the source once. The single reader is used both to enumerate entry names
     // (for root detection) and to stream the entries themselves, so extraction no longer
     // opens/parses the source archive twice.
     let mut reader = open_reader(src_kind, src)?;
 
-    let root_to_strip: Option<String> =
-        if target_kind == ArchiveKind::Directory && src_kind != ArchiveKind::Directory {
-            reader
-                .list_entries()
-                .ok()
-                .and_then(|entries| find_single_root_dir(&entries))
-                .filter(|root| strip_common_root || is_matching_root(root, dest_name, src_stem))
-        } else {
-            None
-        };
-
-    let root_prefix = root_to_strip.as_ref().map(|root| format!("{}/", root));
+    // A wrapper folder can only be collapsed when extracting an archive into a directory.
+    let root_strip: Option<RootStrip> = match policy {
+        RootStripPolicy::Never => None,
+        RootStripPolicy::Always => {
+            single_collapsible_root(reader.as_mut(), target_kind, src_kind).map(RootStrip::new)
+        }
+        RootStripPolicy::IfMatchingDestination => {
+            single_collapsible_root(reader.as_mut(), target_kind, src_kind)
+                .filter(|root| is_matching_root(root, dest_name, src_stem))
+                .map(RootStrip::new)
+        }
+    };
 
     let mut writer = ArchiveWriter::new(target_kind, dest)?;
     let result = (|| -> Result<()> {
-        reader.read_entries(scratch, &mut |name, is_dir, data| {
-            if let Some(ref root) = root_to_strip {
-                if name == root {
+        reader.read_entries(scratch, &mut |name, content| {
+            if let Some(strip) = root_strip.as_ref() {
+                if name.as_str() == strip.name {
                     return Ok(());
                 }
-                if let Some(ref prefix) = root_prefix {
-                    if let Some(stripped) = name.strip_prefix(prefix) {
-                        if stripped.is_empty() {
-                            return Ok(());
-                        }
-                        // `name` was normalized by the reader, so `stripped` is too.
-                        return writer.add_entry_normalized(stripped, is_dir, data);
-                    }
+                if let Some(stripped) = name.strip_prefix(&strip.prefix) {
+                    // `name` and `prefix` are normalized, so `stripped` is too, and it is
+                    // never empty (the bare-root entry is returned early above).
+                    return writer.add_entry_normalized(&stripped, content);
                 }
             }
             // Reader names are already normalized; avoid normalizing a second time.
-            writer.add_entry_normalized(name, is_dir, data)
+            writer.add_entry_normalized(name, content)
         })?;
         writer.finish()?;
         Ok(())
@@ -147,6 +203,32 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
     }
 
     result
+}
+
+/// The archive's single wrapper directory, when the destination layout can collapse it
+/// (an archive extracted into a directory). `None` otherwise, without listing.
+fn single_collapsible_root(
+    reader: &mut dyn ArchiveReader,
+    target_kind: ArchiveKind,
+    src_kind: ArchiveKind,
+) -> Option<String> {
+    if !target_kind.is_archive() && src_kind.is_archive() {
+        single_root_dir(reader)
+    } else {
+        None
+    }
+}
+
+/// The archive's single wrapper directory, if listing succeeds.
+///
+/// A listing failure is deliberately non-fatal: the caller is about to stream the same archive,
+/// so root-stripping is skipped and extraction proceeds — `read_entries` will surface the real
+/// error if the archive is genuinely unreadable.
+fn single_root_dir(reader: &mut dyn ArchiveReader) -> Option<String> {
+    reader
+        .list_entries()
+        .ok()
+        .and_then(|entries| find_single_root_dir(&entries))
 }
 
 /// Extract an archive or directory to a destination folder.
@@ -172,20 +254,91 @@ pub fn compress_archive<P: AsRef<Path>, Q: AsRef<Path>>(
 pub fn get_images_from_source<P: AsRef<Path>>(
     kind: ArchiveKind,
     path: P,
-) -> Result<Vec<(String, DynamicImage)>> {
+) -> Result<Vec<DecodedImage>> {
     let path = path.as_ref();
     let mut images = Vec::new();
 
-    read_archive_entries(kind, path, |name, is_dir, data| {
-        if !is_dir && is_image_file(name) {
-            let img = image::load_from_memory(data)
-                .with_context(|| format!("Failed to decode image {}", name))?;
-            let filename = name.rsplit(['/', '\\']).next().unwrap_or(name).to_string();
-            images.push((filename, img));
+    read_archive_entries(kind, path, |name, content| {
+        if let EntryContent::File(data) = content {
+            if is_image_file(name.as_str()) {
+                let image = image::load_from_memory(data)
+                    .with_context(|| format!("Failed to decode image {name}"))?;
+                let basename = name.as_relative().file_name().unwrap_or("").to_string();
+                images.push(DecodedImage {
+                    name: BaseName(basename),
+                    image,
+                });
+            }
         }
         Ok(())
     })?;
 
-    images.sort_by(|a, b| natord::compare(&a.0, &b.0));
+    images.sort_by(|a, b| natord::compare(a.name.as_str(), b.name.as_str()));
     Ok(images)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::writer::ArchiveWriter;
+
+    fn write_cbz(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
+        let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, path)?;
+        for (name, data) in entries {
+            writer.add_entry(name, EntryContent::File(data))?;
+        }
+        writer.finish()
+    }
+
+    #[test]
+    fn root_strip_policy_controls_wrapper_collapse() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("book.cbz");
+        write_cbz(&src, &[("Root/a.jpg", b"a"), ("Root/b.jpg", b"b")])?;
+
+        // `Never` keeps the wrapper directory.
+        let kept = tmp.path().join("kept");
+        convert_archive_ext(
+            ArchiveKind::Cbz,
+            &src,
+            ArchiveKind::Directory,
+            &kept,
+            RootStripPolicy::Never,
+        )?;
+        assert!(kept.join("Root/a.jpg").is_file());
+
+        // `Always` collapses a single wrapper directory.
+        let collapsed = tmp.path().join("collapsed");
+        convert_archive_ext(
+            ArchiveKind::Cbz,
+            &src,
+            ArchiveKind::Directory,
+            &collapsed,
+            RootStripPolicy::Always,
+        )?;
+        assert!(collapsed.join("a.jpg").is_file());
+        assert!(!collapsed.join("Root").exists());
+
+        // `IfMatchingDestination` collapses only when the destination matches the root.
+        let matching = tmp.path().join("Root");
+        convert_archive_ext(
+            ArchiveKind::Cbz,
+            &src,
+            ArchiveKind::Directory,
+            &matching,
+            RootStripPolicy::IfMatchingDestination,
+        )?;
+        assert!(matching.join("a.jpg").is_file());
+
+        let unmatched = tmp.path().join("elsewhere");
+        convert_archive_ext(
+            ArchiveKind::Cbz,
+            &src,
+            ArchiveKind::Directory,
+            &unmatched,
+            RootStripPolicy::IfMatchingDestination,
+        )?;
+        assert!(unmatched.join("Root/a.jpg").is_file());
+        Ok(())
+    }
 }

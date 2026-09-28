@@ -6,7 +6,7 @@ built and where it deliberately differs from KCC. The user-facing behaviour is s
 
 ## Phase history
 
-Each phase ended with `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings` and
+Each phase ended with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings` and
 `cargo nextest run` green on the CI matrix.
 
 | Phase | Scope | Where it landed |
@@ -150,3 +150,27 @@ dependency (`remove_dir_all`/`dircpy`/`thousands`) were rejected because they pu
 transitive crates than they shrink our source; `bitvec` was already transitive, so promoting it
 adds no weight. Irreproducible KCC/Pillow behaviour (crop grouping/merging, spread/rotate
 decisions, archive-format wrappers) stays hand-rolled by design.
+
+## Crate-backed path layer (refactor.md §8.1)
+
+The archive/page name newtypes (`NormalizedArchivePath`, `SourceName`, `RelPath`, `PageName`,
+`ChapterName`) are now backed by `relative-path`'s `RelativePathBuf` instead of `String`, and the
+private `path_text` separator helpers are deleted; call sites use
+`RelativePath::{file_name, parent, file_stem, extension, components, strip_prefix}`. The crate was
+chosen over `camino`/`typed-path` (host-sensitive or heavier separator models) and `path-clean`/
+`normpath` (they keep the leading `..` that is precisely the zip-slip case to remove): it is the
+only crate whose model is "a relative, `/`-separated path". `std::path` remains the OS-boundary type
+(real files, `safe_join`'s `PathBuf`); the two models meet only at conversion points.
+
+**Kept bespoke:** the sanitizer rules in `normalize_archive_path` (traversal, drive prefixes,
+per-component trimming, empty → `None`) — `RelativePath::normalize` keeps leading `..` and does not
+drop drive letters or trim, so it cannot stand in; `safe_join`'s drop-`..` semantics (sanitize, then
+`to_path`, *not* `to_logical_path`); and `is_os_metadata`'s backslash-aware split, because it also
+classifies raw host paths, which the `/`-only `RelativePath` model never sees.
+`image_ops::path_extension` now uses `std::path::Path::extension`, since it operates on a host
+path rather than an archive name. The newtypes gained `as_relative()`; their `as_str()`/`Deref`/
+`Display`/comparison surface is unchanged and emitted bytes are byte-identical. The gate is the
+full suite — in particular `integration_tests::test_normalize_archive_path`, `test_safe_join`,
+`test_cross_platform_nested_directory_extraction` and the new `sanitizer_neutralizes_hostile_names`
+(hostile names cross-checked against `zip::enclosed_name`), plus `ebook_input_tests` and
+`ebook_robustness_tests`.

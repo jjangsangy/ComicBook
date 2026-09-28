@@ -55,8 +55,8 @@ Feature requests and performance improvement ideas are welcome! Open an issue us
    [cargo-nextest](https://nexte.st/) (install once with
    `cargo install cargo-nextest --locked`):
    ```bash
-   # Run all tests
-   cargo nextest run
+   # Run all tests (tail keeps only the pass/fail summary and the failing cases)
+   cargo nextest run 2>&1 | tail -n 20
 
    # Check formatting
    cargo fmt --check

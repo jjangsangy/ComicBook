@@ -68,11 +68,11 @@ fn shape(tree: &comic_book::ebook::ComicTree) -> Vec<(String, Vec<String>)> {
         .iter()
         .map(|chapter| {
             (
-                chapter.name.clone(),
+                chapter.name.to_string(),
                 chapter
                     .pages
                     .iter()
-                    .map(|page| page.source_name.clone())
+                    .map(|page| page.source_name.to_string())
                     .collect(),
             )
         })

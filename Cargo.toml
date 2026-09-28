@@ -31,6 +31,15 @@ webp = "0.3"
 walkdir = "2.5"
 same-file = "1.0"
 infer = "0.22.0"
+# The internal archive/page name model: `RelativePath`/`RelativePathBuf` are always
+# `/`-separated and platform-independent, which is exactly the shape of every
+# archive-relative name the pipeline carries. They back the path newtypes instead of
+# `String`, so cross-platform name surgery is delegated rather than hand-rolled
+# (docs/refactor.md §8.1). `std::path::Path` stays the OS-boundary type (real files,
+# `safe_join`'s result); this crate is the in-archive model. MIT OR Apache-2.0, pure
+# Rust. `std` is needed so `safe_join` can reuse the sanitizer via `to_path`, and
+# `alloc` for `RelativePathBuf` (this crate's `std` does *not* imply `alloc`).
+relative-path = { version = "2", default-features = false, features = ["std", "alloc"] }
 # Image processing for `comic-book ebook` (see docs/dependencies.md). `imageproc` supplies the
 # contrast/threshold/filter primitives, `quantette` the fixed-palette quantisation and
 # Floyd-Steinberg dithering. Both are MIT/Apache-2.0 and pure Rust.

@@ -39,9 +39,9 @@ fn summary(page: &EncodedPage) -> (OrderClass, MediaType, u32, u32, bool) {
     (
         page.order_class,
         page.media_type,
-        page.width,
-        page.height,
-        page.flags.black_background,
+        page.size.width,
+        page.size.height,
+        page.flags.background.is_black(),
     )
 }
 
@@ -73,8 +73,8 @@ fn fixture_book_snapshot() -> Result<()> {
         .flat_map(|chapter| chapter.pages.iter())
         .collect();
     assert_eq!(book.chapters.len(), 1);
-    assert_eq!(
-        book.chapters[0].name, "",
+    assert!(
+        book.chapters[0].name.is_root(),
         "all pages are in the root chapter"
     );
 
@@ -108,7 +108,7 @@ fn fixture_book_snapshot() -> Result<()> {
     for page in &pages {
         let decoded = image::load_from_memory(&page.bytes)
             .with_context(|| format!("{} is not decodable", page.name))?;
-        assert_eq!(decoded.dimensions(), (page.width, page.height));
+        assert_eq!(decoded.dimensions(), (page.size.width, page.size.height));
     }
     Ok(())
 }
@@ -167,9 +167,9 @@ fn no_processing_copies_source_bytes_verbatim() -> Result<()> {
 
     let mut tree = load_tree(&archive, &options(&[])?)?;
     let pristine = tree.chapters[0].pages[0]
-        .raw
-        .clone()
-        .context("the source page keeps its bytes")?;
+        .source_bytes()
+        .context("the source page keeps its bytes")?
+        .to_vec();
 
     let options = options(&["-p", "KoE", "--no-processing"])?;
     let book = process_tree(&mut tree, &options)?;

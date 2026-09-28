@@ -18,5 +18,6 @@ Fixes #(issue)
 - [ ] I have performed a self-review of my own code
 - [ ] I have run `cargo clippy --all-targets --all-features` and resolved any warnings
 - [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] Existing and new unit / integration tests pass locally (`cargo nextest run`)
+- [ ] Existing and new unit / integration tests pass locally
+      (`cargo nextest run 2>&1 | tail -n 20` keeps only the summary and the failing cases)
 - [ ] I have updated the documentation accordingly

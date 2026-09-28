@@ -1,7 +1,7 @@
-use crate::archive::{detect_archive_kind, parse_target_extension, ArchiveKind};
+use crate::archive::{detect_archive_kind, ArchiveFormat, ArchiveKind, RootStripPolicy};
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Result};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -254,15 +254,16 @@ fn collect_path_tasks(
 
 fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     let pb = ProgressBar::new(tasks.len() as u64);
-    let style = ProgressStyle::default_bar().template(
+    pb.set_style(crate::progress_style::bar_with_chars(
         "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}",
-    );
-    pb.set_style(match style {
-        Ok(style) => style.progress_chars("#->"),
-        Err(_) => ProgressStyle::default_bar(),
-    });
+        "#->",
+    ));
 
-    let should_strip = target_kind == ArchiveKind::Directory;
+    let policy = if target_kind == ArchiveKind::Directory {
+        RootStripPolicy::Always
+    } else {
+        RootStripPolicy::Never
+    };
     // One reusable buffer for the whole batch: each archive's entry data is streamed through this
     // same allocation, so converting a directory of files never grows the footprint beyond the
     // largest single entry.
@@ -280,7 +281,7 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
             &task.source_path,
             target_kind,
             &task.dest_path,
-            should_strip,
+            policy,
             &mut scratch,
         ) {
             pb.println(format!("Error processing {}: {}", file_name, e));
@@ -293,21 +294,14 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     println!("Conversion complete.");
 }
 
-pub fn run_convert(paths: &[PathBuf], target_ext_raw: &str) -> Result<()> {
+pub fn run_convert(paths: &[PathBuf], target: ArchiveFormat) -> Result<()> {
     if paths.is_empty() {
         return Err(anyhow!("No files or directories specified for conversion."));
     }
 
-    let (target_ext_clean, target_kind) = parse_target_extension(target_ext_raw).ok_or_else(|| {
-        anyhow!(
-            "Target extension '{}' is not supported. Supported: cbz, zip, cbr, rar, cb7, 7z, cbt, tar, dir",
-            target_ext_raw
-        )
-    })?;
-
     let target = TargetFormat {
-        kind: target_kind,
-        ext: target_ext_clean,
+        kind: target.kind(),
+        ext: target.extension(),
     };
 
     let mut tasks = Vec::new();

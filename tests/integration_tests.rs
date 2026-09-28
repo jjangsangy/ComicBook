@@ -2,13 +2,14 @@ use anyhow::{bail, Context};
 use comic_book::archive::{
     compress_archive, detect_archive_kind, detect_archive_kind_from_bytes, extract_archive,
     get_images_from_source, is_os_metadata, normalize_archive_path, parse_target_extension,
-    read_archive_entries, safe_join, ArchiveKind, ArchiveWriter,
+    read_archive_entries, safe_join, ArchiveKind, ArchiveWriter, EntryContent,
 };
 use comic_book::clamp::{remove_dir_all_force, Approach};
 use comic_book::image_ops::{
     is_image_extension, is_image_file, resize_image_by_total_pixels, resize_image_by_width,
     save_image_as_webp, split_image_iterative,
 };
+use comic_book::units::Pixels;
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,7 +37,7 @@ fn test_image_split_even() -> anyhow::Result<()> {
     // Threshold 6,000:
     // Split 1: two 100x100 (10,000 pixels each) -> both > 6,000
     // Split 2: each splits into two 100x50 (5,000 pixels each) -> all 4 < 6,000
-    let pieces = split_image_iterative(img, 6000);
+    let pieces = split_image_iterative(img, Pixels::new(6000));
     assert_eq!(pieces.len(), 4);
     for piece in &pieces {
         let (w, h) = piece.dimensions();
@@ -56,7 +57,7 @@ fn test_image_split_odd_height_and_ordering() -> anyhow::Result<()> {
     buf.put_pixel(0, 200, Rgb([0, 0, 255]));
     let img = DynamicImage::ImageRgb8(buf);
 
-    let pieces = split_image_iterative(img, 15_000);
+    let pieces = split_image_iterative(img, Pixels::new(15_000));
     assert_eq!(pieces.len(), 2);
 
     let (w1, h1) = pieces[0].dimensions();
@@ -74,7 +75,7 @@ fn test_image_split_odd_height_and_ordering() -> anyhow::Result<()> {
 #[test]
 fn test_image_split_already_under_threshold() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(50, 50));
-    let pieces = split_image_iterative(img, 5000);
+    let pieces = split_image_iterative(img, Pixels::new(5000));
     assert_eq!(pieces.len(), 1);
     assert_eq!(pieces[0].dimensions(), (50, 50));
     Ok(())
@@ -83,7 +84,7 @@ fn test_image_split_already_under_threshold() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
-    let resized = resize_image_by_total_pixels(img, 250_000);
+    let resized = resize_image_by_total_pixels(img, Pixels::new(250_000))?;
     let (w, h) = resized.dimensions();
     assert!((w as u64) * (h as u64) <= 250_000);
     assert_eq!(w, 500);
@@ -94,7 +95,7 @@ fn test_image_resize_total_pixels() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(200, 300));
-    let resized = resize_image_by_total_pixels(img, 100_000);
+    let resized = resize_image_by_total_pixels(img, Pixels::new(100_000))?;
     assert_eq!(resized.dimensions(), (200, 300));
     Ok(())
 }
@@ -102,7 +103,7 @@ fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1200, 800));
-    let resized = resize_image_by_width(img, 600);
+    let resized = resize_image_by_width(img, Pixels::new(600))?;
     let (w, h) = resized.dimensions();
     assert_eq!(w, 600);
     assert_eq!(h, 400);
@@ -112,7 +113,7 @@ fn test_image_resize_max_width() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(400, 800));
-    let resized = resize_image_by_width(img, 600);
+    let resized = resize_image_by_width(img, Pixels::new(600))?;
     assert_eq!(resized.dimensions(), (400, 800));
     Ok(())
 }
@@ -176,7 +177,7 @@ fn test_detect_archive_kind() -> anyhow::Result<()> {
     let cbz_path = tmp.path().join("test.cbz");
     {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, &cbz_path)?;
-        writer.add_entry("page.txt", false, b"data")?;
+        writer.add_entry("page.txt", EntryContent::File(b"data"))?;
         writer.finish()?;
     }
     assert_eq!(detect_archive_kind(&cbz_path), Some(ArchiveKind::Cbz));
@@ -194,7 +195,7 @@ fn test_detect_archive_kind() -> anyhow::Result<()> {
     let cbr_path = tmp.path().join("test.cbr");
     {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cbr, &cbr_path)?;
-        writer.add_entry("page.txt", false, b"data")?;
+        writer.add_entry("page.txt", EntryContent::File(b"data"))?;
         writer.finish()?;
     }
     assert_eq!(detect_archive_kind(&cbr_path), Some(ArchiveKind::Cbr));
@@ -208,7 +209,7 @@ fn test_detect_archive_kind() -> anyhow::Result<()> {
     let cb7_path = tmp.path().join("test.cb7");
     {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cb7, &cb7_path)?;
-        writer.add_entry("page.txt", false, b"data")?;
+        writer.add_entry("page.txt", EntryContent::File(b"data"))?;
         writer.finish()?;
     }
     assert_eq!(detect_archive_kind(&cb7_path), Some(ArchiveKind::Cb7));
@@ -217,7 +218,7 @@ fn test_detect_archive_kind() -> anyhow::Result<()> {
     let cbt_path = tmp.path().join("test.cbt");
     {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cbt, &cbt_path)?;
-        writer.add_entry("page.txt", false, b"data")?;
+        writer.add_entry("page.txt", EntryContent::File(b"data"))?;
         writer.finish()?;
     }
     assert_eq!(detect_archive_kind(&cbt_path), Some(ArchiveKind::Cbt));
@@ -322,10 +323,10 @@ fn test_cbr_archive_roundtrip() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Cbr, &cbr_path)?;
     assert_eq!(images.len(), 4);
-    assert_eq!(images[0].0, "page_1.png");
-    assert_eq!(images[1].0, "page_2.png");
-    assert_eq!(images[2].0, "page_10.png");
-    assert_eq!(images[3].0, "page_20.png");
+    assert_eq!(images[0].name.as_str(), "page_1.png");
+    assert_eq!(images[1].name.as_str(), "page_2.png");
+    assert_eq!(images[2].name.as_str(), "page_10.png");
+    assert_eq!(images[3].name.as_str(), "page_20.png");
 
     let extract_dir = tmp.path().join("extracted");
     extract_archive(ArchiveKind::Cbr, &cbr_path, &extract_dir)?;
@@ -339,13 +340,16 @@ fn test_cbr_large_archive_many_entries() -> anyhow::Result<()> {
     let cbr_path = tmp.path().join("large.cbr");
     let mut writer = ArchiveWriter::new(ArchiveKind::Cbr, &cbr_path)?;
     for i in 0..300 {
-        writer.add_entry(&format!("page_{:03}.txt", i), false, b"dummy data")?;
+        writer.add_entry(
+            &format!("page_{:03}.txt", i),
+            EntryContent::File(b"dummy data"),
+        )?;
     }
     writer.finish()?;
     assert!(cbr_path.exists());
 
     let mut count = 0;
-    read_archive_entries(ArchiveKind::Cbr, &cbr_path, |_name, _is_dir, _data| {
+    read_archive_entries(ArchiveKind::Cbr, &cbr_path, |_name, _content| {
         count += 1;
         Ok(())
     })?;
@@ -372,7 +376,7 @@ fn test_convert_file_cbz_to_cbr() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Cbr, &cbr_path)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "01.png");
+    assert_eq!(images[0].name.as_str(), "01.png");
     Ok(())
 }
 
@@ -395,7 +399,7 @@ fn test_convert_file_cbr_to_cbz() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Cbz, &cbz_path)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "01.png");
+    assert_eq!(images[0].name.as_str(), "01.png");
     Ok(())
 }
 
@@ -419,10 +423,10 @@ fn test_cbz_archive_roundtrip() -> anyhow::Result<()> {
     let images = get_images_from_source(ArchiveKind::Cbz, &cbz_path)?;
     assert_eq!(images.len(), 4);
     // Verified natural sort order: page_1, page_2, page_10, page_20
-    assert_eq!(images[0].0, "page_1.png");
-    assert_eq!(images[1].0, "page_2.png");
-    assert_eq!(images[2].0, "page_10.png");
-    assert_eq!(images[3].0, "page_20.png");
+    assert_eq!(images[0].name.as_str(), "page_1.png");
+    assert_eq!(images[1].name.as_str(), "page_2.png");
+    assert_eq!(images[2].name.as_str(), "page_10.png");
+    assert_eq!(images[3].name.as_str(), "page_20.png");
 
     let extract_dir = tmp.path().join("extracted");
     extract_archive(ArchiveKind::Cbz, &cbz_path, &extract_dir)?;
@@ -447,7 +451,7 @@ fn test_cbt_archive_roundtrip() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Cbt, &cbt_path)?;
     assert_eq!(images.len(), 3);
-    assert_eq!(images[0].0, "page_01.png");
+    assert_eq!(images[0].name.as_str(), "page_01.png");
 
     let extract_dir = tmp.path().join("extracted_tar");
     extract_archive(ArchiveKind::Cbt, &cbt_path, &extract_dir)?;
@@ -470,7 +474,7 @@ fn test_cb7_archive_roundtrip() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Cb7, &cb7_path)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "p01.png");
+    assert_eq!(images[0].name.as_str(), "p01.png");
 
     let extract_dir = tmp.path().join("extracted_7z");
     extract_archive(ArchiveKind::Cb7, &cb7_path, &extract_dir)?;
@@ -486,7 +490,7 @@ fn test_cb7_speed_benchmark() -> anyhow::Result<()> {
     let cb7_path = tmp.path().join("bench.cb7");
     let mut writer = ArchiveWriter::new(ArchiveKind::Cb7, &cb7_path)?;
     let start = Instant::now();
-    writer.add_entry("large_page.jpg", false, &data)?;
+    writer.add_entry("large_page.jpg", EntryContent::File(&data))?;
     writer.finish()?;
     let elapsed = start.elapsed();
     println!("10MB archive write with COPY elapsed: {:?}", elapsed);
@@ -520,8 +524,8 @@ fn test_directory_archive_roundtrip() -> anyhow::Result<()> {
 
     let images = get_images_from_source(ArchiveKind::Directory, &dir_chapter)?;
     assert_eq!(images.len(), 2);
-    assert_eq!(images[0].0, "scan_1.png");
-    assert_eq!(images[1].0, "scan_2.png");
+    assert_eq!(images[0].name.as_str(), "scan_1.png");
+    assert_eq!(images[1].name.as_str(), "scan_2.png");
     Ok(())
 }
 
@@ -589,7 +593,7 @@ fn test_convert_file_cbz_to_cbt() -> anyhow::Result<()> {
     assert!(expected_cbt.exists());
     let images = get_images_from_source(ArchiveKind::Cbt, &expected_cbt)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "page1.png");
+    assert_eq!(images[0].name.as_str(), "page1.png");
     Ok(())
 }
 
@@ -611,7 +615,7 @@ fn test_convert_file_cbt_to_cb7() -> anyhow::Result<()> {
     assert!(expected_cb7.exists());
     let images = get_images_from_source(ArchiveKind::Cb7, &expected_cb7)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "page1.png");
+    assert_eq!(images[0].name.as_str(), "page1.png");
     Ok(())
 }
 
@@ -633,7 +637,7 @@ fn test_convert_file_cb7_to_cbz() -> anyhow::Result<()> {
     assert!(expected_cbz.exists());
     let images = get_images_from_source(ArchiveKind::Cbz, &expected_cbz)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "page1.png");
+    assert_eq!(images[0].name.as_str(), "page1.png");
     Ok(())
 }
 
@@ -656,7 +660,7 @@ fn test_convert_file_cb7_to_cbr() -> anyhow::Result<()> {
     assert!(expected_cbr.exists());
     let images = get_images_from_source(ArchiveKind::Cbr, &expected_cbr)?;
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].0, "page1.png");
+    assert_eq!(images[0].name.as_str(), "page1.png");
 
     let extract_dir = tmp.path().join("extracted");
     extract_archive(ArchiveKind::Cbr, &expected_cbr, &extract_dir)?;
@@ -886,9 +890,12 @@ fn test_convert_archive_with_root_dir_avoids_extra_wrapping_dir() -> anyhow::Res
     let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, &cbz_path)?;
 
     // Archive entries already prefixed with "Issue_01/" and nested "Issue_01/extras/"
-    writer.add_entry("Issue_01/01.jpg", false, b"page one")?;
-    writer.add_entry("Issue_01/02.jpg", false, b"page two")?;
-    writer.add_entry("Issue_01/extras/bonus.jpg", false, b"bonus art")?;
+    writer.add_entry("Issue_01/01.jpg", EntryContent::File(b"page one"))?;
+    writer.add_entry("Issue_01/02.jpg", EntryContent::File(b"page two"))?;
+    writer.add_entry(
+        "Issue_01/extras/bonus.jpg",
+        EntryContent::File(b"bonus art"),
+    )?;
     writer.finish()?;
 
     // Unpack archive into directory using run_convert
@@ -917,8 +924,8 @@ fn test_convert_archive_with_mismatched_root_dir_avoids_extra_dir() -> anyhow::R
     let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, &cbz_path)?;
 
     // Internal root is "Chapter 01" while archive is "chapter_01.cbz"
-    writer.add_entry("Chapter 01/01.jpg", false, b"first page")?;
-    writer.add_entry("Chapter 01/sub/02.jpg", false, b"second page")?;
+    writer.add_entry("Chapter 01/01.jpg", EntryContent::File(b"first page"))?;
+    writer.add_entry("Chapter 01/sub/02.jpg", EntryContent::File(b"second page"))?;
     writer.finish()?;
 
     run_convert(&[cbz_path], "dir")?;
@@ -947,7 +954,7 @@ fn test_convert_misnamed_archive_detected_by_magic_bytes() -> anyhow::Result<()>
     let misnamed_cbr = tmp.path().join("misnamed.cbz");
     {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cbr, &misnamed_cbr)?;
-        writer.add_entry("01.jpg", false, b"image content")?;
+        writer.add_entry("01.jpg", EntryContent::File(b"image content"))?;
         writer.finish()?;
     }
 
@@ -1454,53 +1461,85 @@ fn test_remove_dir_all_force_is_idempotent() -> anyhow::Result<()> {
 
 #[test]
 fn test_normalize_archive_path() -> anyhow::Result<()> {
+    // `normalize_archive_path` now returns `Option<NormalizedArchivePath>` (`None` for a path
+    // that normalizes to nothing), so the assertions compare the borrowed normalized path.
     // Unix forward slashes
-    assert_eq!(normalize_archive_path("pages/001.png"), "pages/001.png");
-    assert_eq!(normalize_archive_path("a/b/c/d.jpg"), "a/b/c/d.jpg");
+    assert_eq!(
+        normalize_archive_path("pages/001.png").as_deref(),
+        Some("pages/001.png")
+    );
+    assert_eq!(
+        normalize_archive_path("a/b/c/d.jpg").as_deref(),
+        Some("a/b/c/d.jpg")
+    );
 
     // Windows backslashes
-    assert_eq!(normalize_archive_path("pages\\001.png"), "pages/001.png");
-    assert_eq!(normalize_archive_path("a\\b\\c\\d.jpg"), "a/b/c/d.jpg");
+    assert_eq!(
+        normalize_archive_path("pages\\001.png").as_deref(),
+        Some("pages/001.png")
+    );
+    assert_eq!(
+        normalize_archive_path("a\\b\\c\\d.jpg").as_deref(),
+        Some("a/b/c/d.jpg")
+    );
 
     // Mixed slashes
-    assert_eq!(normalize_archive_path("a/b\\c/d.jpg"), "a/b/c/d.jpg");
+    assert_eq!(
+        normalize_archive_path("a/b\\c/d.jpg").as_deref(),
+        Some("a/b/c/d.jpg")
+    );
 
     // Leading and trailing slashes
-    assert_eq!(normalize_archive_path("/pages/001.png/"), "pages/001.png");
     assert_eq!(
-        normalize_archive_path("\\pages\\001.png\\"),
-        "pages/001.png"
+        normalize_archive_path("/pages/001.png/").as_deref(),
+        Some("pages/001.png")
     );
-    assert_eq!(normalize_archive_path("///a//b///"), "a/b");
+    assert_eq!(
+        normalize_archive_path("\\pages\\001.png\\").as_deref(),
+        Some("pages/001.png")
+    );
+    assert_eq!(normalize_archive_path("///a//b///").as_deref(), Some("a/b"));
 
     // Redundant current directory dots
-    assert_eq!(normalize_archive_path("./pages/./001.png"), "pages/001.png");
     assert_eq!(
-        normalize_archive_path(".\\pages\\.\\001.png"),
-        "pages/001.png"
+        normalize_archive_path("./pages/./001.png").as_deref(),
+        Some("pages/001.png")
+    );
+    assert_eq!(
+        normalize_archive_path(".\\pages\\.\\001.png").as_deref(),
+        Some("pages/001.png")
     );
 
     // Directory traversal segments
-    assert_eq!(normalize_archive_path("../../etc/passwd"), "etc/passwd");
-    assert_eq!(normalize_archive_path("..\\..\\secret.png"), "secret.png");
-    assert_eq!(normalize_archive_path("a/../b/c.png"), "a/b/c.png");
+    assert_eq!(
+        normalize_archive_path("../../etc/passwd").as_deref(),
+        Some("etc/passwd")
+    );
+    assert_eq!(
+        normalize_archive_path("..\\..\\secret.png").as_deref(),
+        Some("secret.png")
+    );
+    assert_eq!(
+        normalize_archive_path("a/../b/c.png").as_deref(),
+        Some("a/b/c.png")
+    );
 
     // Windows drive prefixes
     assert_eq!(
-        normalize_archive_path("C:\\comics\\001.png"),
-        "comics/001.png"
+        normalize_archive_path("C:\\comics\\001.png").as_deref(),
+        Some("comics/001.png")
     );
     assert_eq!(
-        normalize_archive_path("d:/comics/001.png"),
-        "comics/001.png"
+        normalize_archive_path("d:/comics/001.png").as_deref(),
+        Some("comics/001.png")
     );
 
-    // Empty or separator-only paths
-    assert_eq!(normalize_archive_path(""), "");
-    assert_eq!(normalize_archive_path("/"), "");
-    assert_eq!(normalize_archive_path("\\"), "");
-    assert_eq!(normalize_archive_path("./"), "");
-    assert_eq!(normalize_archive_path("."), "");
+    // Empty or separator-only paths normalize to nothing (no `""` sentinel)
+    assert_eq!(normalize_archive_path(""), None);
+    assert_eq!(normalize_archive_path("/"), None);
+    assert_eq!(normalize_archive_path("\\"), None);
+    assert_eq!(normalize_archive_path("./"), None);
+    assert_eq!(normalize_archive_path("."), None);
     Ok(())
 }
 
@@ -1565,6 +1604,90 @@ fn test_safe_join() -> anyhow::Result<()> {
 }
 
 #[test]
+fn sanitizer_neutralizes_hostile_names() -> anyhow::Result<()> {
+    // Hostile entry names: traversal (`../`, `..\`), a nested traversal, an absolute
+    // POSIX path, a Windows drive prefix, and an empty name. The cross-check packs them
+    // verbatim with the `zip` crate and reads them back, so hostility is judged by the
+    // same crate that extracts archives (docs/refactor.md §8.1) rather than by a re-stated
+    // rule, and the sanitizer is required to agree with that verdict.
+    use std::io::{Cursor, Write};
+
+    let hostile = [
+        "../escape.png",
+        "..\\escape.png",
+        "a/../../escape.png",
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+        "",
+    ];
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for name in hostile {
+        // A future `zip` that refuses one of these must not silently shrink the check.
+        assert!(
+            writer.start_file(name, options).is_ok(),
+            "zip refused to store the hostile name {name:?}"
+        );
+        writer.write_all(b"x")?;
+    }
+    let bytes = writer.finish()?.into_inner();
+
+    let base = Path::new("/safe/base");
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+    assert_eq!(
+        archive.len(),
+        hostile.len(),
+        "not all hostile names survived the zip round-trip"
+    );
+
+    // `(name, whether zip considers it enclosable)`.
+    let mut verdicts: Vec<(String, bool)> = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        let name = file.name().to_string();
+        let enclosed = file.enclosed_name().is_some();
+
+        // Whatever `zip` decided, `safe_join` must keep the entry inside `base`: the
+        // sanitizer neutralises traversal, an absolute path, a drive prefix and "".
+        let joined = safe_join(base, &name);
+        assert!(
+            joined.starts_with(base),
+            "sanitizer let {name:?} escape base: {joined:?}"
+        );
+
+        // For exactly the names `zip` refuses to enclose, our normalized form must carry
+        // no traversal component: every component is `Normal`, or the name is dropped
+        // entirely (`None`). `zip`'s `enclosed_name()` is the oracle for "hostile".
+        if !enclosed {
+            if let Some(normalized) = normalize_archive_path(&name) {
+                assert!(
+                    normalized
+                        .as_relative()
+                        .components()
+                        .all(|component| matches!(component, relative_path::Component::Normal(_))),
+                    "{name:?} normalized to a traversal: {normalized}"
+                );
+            }
+        }
+        verdicts.push((name, enclosed));
+    }
+
+    // If `zip` stopped treating the traversal/absolute names as hostile, the assertions
+    // above would be vacuous. These cases are separator-independent, so they are rejected
+    // on every platform.
+    for hostile_name in ["../escape.png", "a/../../escape.png", "/etc/passwd"] {
+        assert!(
+            verdicts
+                .iter()
+                .any(|(name, enclosed)| name == hostile_name && !enclosed),
+            "zip no longer rejects {hostile_name:?}; the cross-check is vacuous"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn test_cross_platform_nested_directory_extraction() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let cbz_path = tmp.path().join("nested.cbz");
@@ -1578,15 +1701,15 @@ fn test_cross_platform_nested_directory_extraction() -> anyhow::Result<()> {
         image::ImageFormat::Png,
     )?;
 
-    writer.add_entry("vol1\\ch1\\p01.png", false, &img_bytes)?;
-    writer.add_entry("vol1/ch2/p01.png", false, &img_bytes)?;
+    writer.add_entry("vol1\\ch1\\p01.png", EntryContent::File(&img_bytes))?;
+    writer.add_entry("vol1/ch2/p01.png", EntryContent::File(&img_bytes))?;
     writer.finish()?;
 
     // Verify images retrieved regardless of separator used
     let images = get_images_from_source(ArchiveKind::Cbz, &cbz_path)?;
     assert_eq!(images.len(), 2);
-    assert_eq!(images[0].0, "p01.png");
-    assert_eq!(images[1].0, "p01.png");
+    assert_eq!(images[0].name.as_str(), "p01.png");
+    assert_eq!(images[1].name.as_str(), "p01.png");
 
     // Extract to disk and verify nested directory structure created natively
     let extract_dir = tmp.path().join("extracted_nested");

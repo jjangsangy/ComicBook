@@ -16,7 +16,7 @@ use image::{DynamicImage, GrayImage, Luma, Rgb, RgbImage};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
-use crate::ebook::processing::color::luma_view;
+use crate::ebook::processing::color::{luma_view, OutputColor};
 
 /// Frequencies at or above this many cycles/pixel are eligible (0.5 is Nyquist).
 const FREQ_THRESHOLD: f64 = 0.30;
@@ -29,10 +29,10 @@ const ATTENUATION: f64 = 0.10;
 
 /// Remove colour e-ink moiré from a page (KCC's `erase_rainbow_artifacts`).
 ///
-/// `is_color` must be the page's *output* colour mode (KCC passes `colorOutput`),
-/// which also selects the YUV or grayscale path.
-pub fn erase_rainbow_artifacts(image: &DynamicImage, is_color: bool) -> DynamicImage {
-    if is_color {
+/// `color_output` must be the page's *output* colour mode (KCC passes
+/// `colorOutput`), which also selects the YUV or grayscale path.
+pub fn erase_rainbow_artifacts(image: &DynamicImage, color_output: OutputColor) -> DynamicImage {
+    if color_output.is_color() {
         // Borrow the plane when it is already RGB8; only other pixel types pay
         // for the conversion.
         match image.as_rgb8() {
@@ -230,6 +230,7 @@ fn yuv_to_rgb(y: f64, u: f64, v: f64) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ebook::processing::color::Detected;
     use image::GenericImageView;
 
     /// Standard deviation of a grayscale image's samples.
@@ -330,7 +331,8 @@ mod tests {
         let image = DynamicImage::ImageRgb8(RgbImage::from_fn(48, 32, |x, y| {
             Rgb([(x * 5) as u8, (y * 7) as u8, 128])
         }));
-        let filtered = erase_rainbow_artifacts(&image, true);
+        let filtered =
+            erase_rainbow_artifacts(&image, OutputColor::from_detection(Detected::Color, true));
         assert_eq!(filtered.dimensions(), (48, 32));
     }
 
@@ -338,7 +340,8 @@ mod tests {
     fn the_grayscale_path_returns_grayscale() {
         let image =
             DynamicImage::ImageRgb8(RgbImage::from_fn(16, 16, |x, _| Rgb([(x * 16) as u8; 3])));
-        let filtered = erase_rainbow_artifacts(&image, false);
+        let filtered =
+            erase_rainbow_artifacts(&image, OutputColor::from_detection(Detected::Gray, false));
         assert!(matches!(filtered, DynamicImage::ImageLuma8(_)));
     }
 }

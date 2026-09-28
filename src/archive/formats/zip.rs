@@ -1,5 +1,5 @@
-use crate::archive::path::parse_entry_info;
-use crate::archive::reader::{ArchiveReader, EntryCallback};
+use crate::archive::path::{parse_entry_info, ArchiveEntry, EntryKind, NormalizedArchivePath};
+use crate::archive::reader::{ArchiveReader, EntryCallback, EntryContent};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs::File;
@@ -32,29 +32,29 @@ impl ArchiveReader for ZipReader {
             let mut file_entry = self.archive.by_index(i)?;
             // Parse straight from the borrowed name; the previous `.to_string()` was a
             // throwaway allocation per entry.
-            let parsed = parse_entry_info(file_entry.name(), file_entry.is_dir());
-            if let Some((clean_name, is_dir)) = parsed {
-                if is_dir {
-                    on_entry(&clean_name, true, &[])?;
-                } else {
-                    // Reuse the caller's buffer instead of allocating per entry.
-                    scratch.clear();
-                    file_entry.read_to_end(scratch)?;
-                    on_entry(&clean_name, false, scratch)?;
+            if let Some(entry) = parse_entry_info(file_entry.name(), file_entry.is_dir()) {
+                match entry.kind {
+                    EntryKind::Directory => {
+                        on_entry(&entry.name, EntryContent::Directory)?;
+                    }
+                    EntryKind::File => {
+                        // Reuse the caller's buffer instead of allocating per entry.
+                        scratch.clear();
+                        file_entry.read_to_end(scratch)?;
+                        on_entry(&entry.name, EntryContent::File(scratch))?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
+    fn list_entries(&mut self) -> Result<Vec<ArchiveEntry>> {
         let mut entries = Vec::with_capacity(self.archive.len());
         for i in 0..self.archive.len() {
             let file_entry = self.archive.by_index(i)?;
-            if let Some((clean_name, is_dir)) =
-                parse_entry_info(file_entry.name(), file_entry.is_dir())
-            {
-                entries.push((clean_name, is_dir));
+            if let Some(entry) = parse_entry_info(file_entry.name(), file_entry.is_dir()) {
+                entries.push(entry);
             }
         }
         Ok(entries)
@@ -81,28 +81,36 @@ impl ZipArchiveWriter {
         })
     }
 
-    pub fn add_entry(&mut self, normalized_name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
-        if is_dir {
-            let dir_name = format!("{}/", normalized_name);
-            if self.seen_dirs.insert(dir_name.clone()) {
-                self.zip
-                    .add_directory(dir_name, SimpleFileOptions::default())?;
-            }
-        } else {
-            // Ensure intermediate parent directories are registered in the zip.
-            // Walk the separators in place instead of collecting a `Vec<&str>` per entry.
-            for (idx, _) in normalized_name.match_indices('/') {
-                let dir_entry = format!("{}/", &normalized_name[..idx]);
-                if self.seen_dirs.insert(dir_entry.clone()) {
+    pub fn add_entry(
+        &mut self,
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
+        let name = normalized_name.as_str();
+        match content {
+            EntryContent::Directory => {
+                let dir_name = format!("{}/", name);
+                if self.seen_dirs.insert(dir_name.clone()) {
                     self.zip
-                        .add_directory(dir_entry, SimpleFileOptions::default())?;
+                        .add_directory(dir_name, SimpleFileOptions::default())?;
                 }
             }
+            EntryContent::File(data) => {
+                // Ensure intermediate parent directories are registered in the zip.
+                // Walk the separators in place instead of collecting a `Vec<&str>` per entry.
+                for (idx, _) in name.match_indices('/') {
+                    let dir_entry = format!("{}/", &name[..idx]);
+                    if self.seen_dirs.insert(dir_entry.clone()) {
+                        self.zip
+                            .add_directory(dir_entry, SimpleFileOptions::default())?;
+                    }
+                }
 
-            let options =
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-            self.zip.start_file(normalized_name, options)?;
-            self.zip.write_all(data)?;
+                let options =
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                self.zip.start_file(name, options)?;
+                self.zip.write_all(data)?;
+            }
         }
         Ok(())
     }

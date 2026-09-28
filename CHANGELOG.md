@@ -10,11 +10,212 @@ release when a version tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+
+- Hardened the `archive` public API so that invalid archive states are unrepresentable (the
+  archive/path step of the type-safety refactor tracked in `docs/refactor.md`):
+  - `normalize_archive_path` returns `Option<NormalizedArchivePath>` instead of a `String` with an
+    empty-string sentinel, and `parse_entry_info`/`list_archive_entry_names` return an
+    `ArchiveEntry { name, kind }` whose `EntryKind` is `File` or `Directory` (no positional `bool`).
+  - `read_archive_entries` and `ArchiveReader::read_entries` hand their callback an
+    `EntryContent::{Directory, File(&[u8])}`, so a directory can no longer be spelled as an empty
+    file; `ArchiveWriter::add_entry`/`add_entry_normalized` take the same `EntryContent`.
+  - `convert_archive_ext` takes a `RootStripPolicy` (`Never`/`Always`/`IfMatchingDestination`)
+    instead of a `strip_root: bool`.
+  - `get_images_from_source` returns `Vec<DecodedImage>` (`name: BaseName`, `image`) instead of
+    `Vec<(String, DynamicImage)>`.
+- Typed the `comic-book` command-line values so invalid modes are rejected by `clap` instead of
+  being re-interpreted from bare integers (the CLI step of the type-safety refactor tracked in
+  `docs/refactor.md`):
+  - `ebook --splitter`, `--cropping`, `--inter-panel-crop`, `--metadata-title` and `--batch-split`
+    now accept named values (`--splitter split`, `--cropping pages`, `--inter-panel-crop both`,
+    `--metadata-title combine`, `--batch-split per-subdir`) as well as their previous `0`/`1`/`2`
+    spellings, which are kept as aliases.
+  - `ebook --borders <white|black>` replaces `--black-borders`/`--white-borders`; the two old flags
+    are hidden aliases for `--borders white`/`--borders black` and conflict with each other (passing
+    both is now a `clap` error rather than silently letting white win).
+  - `convert --to` is now a validated `ValueEnum` (`cbz`, `zip`, `cbr`, `rar`, `cb7`, `7z`, `cbt`,
+    `tar`, `dir`), so an unsupported target is rejected while parsing.
+- Split the resolved `ebook` run configuration into cohesive groups and replaced the derived
+  boolean flags with enums (the configuration step of the type-safety refactor tracked in
+  `docs/refactor.md`):
+  - `ebook::options::Options` is now a thin aggregate of `DeviceOptions`/`MainOptions`/
+    `ProcessingOptions`/`OutputOptions`/`SessionOptions` (plus `inputs`). `metadata::resolve_with`
+    takes `&OutputOptions`, and the `chunk`/`kindle` helpers take the single group they read.
+  - The `is_kindle`/`is_kobo`/`device_kind` triple is a `ReaderFamily`; `custom_profile` plus the
+    `"Custom"` name sentinel is a `Geometry`; `panel_view`/`two_panel`/`legacy_panel_view` is a
+    `PanelView` (with `--vertical-4-panel` kept as an independent flag, since it only affects the
+    OPF writing mode); and `format` plus the `kfx`/`kepub`/`keep_epub`/`kindle_azw3` flags is an
+    `OutputEncoding` (`write_tome` matches it exhaustively, and `Options::resolve` derives a concrete
+    `ResolvedFormat` so its encoding match is exhaustive too — no `bail!` remains).
+    `kindle_scribe_azw3` becomes `ProcessingOptions::scribe`, because it also applies to EPUB/MOBI
+    output on a Scribe. `right_to_left` is now `MainOptions::right_to_left()`, and the Kindle
+    Panel View predicate is `Options::panel_view_enabled()`.
+  - `Profile::is_kobo_brand()`/`is_scribe()` no longer test the human-facing profile code string;
+    they read `DeviceKind` and an explicit Scribe set respectively.
+  - `assemble` now takes a `TitleOrigin` (`Derived`/`Fusion`) instead of the covarying
+    `default_title` + `fusion` pair, and `naming::slugify` takes a `NameStyle` (`Slug`/`Cbz`)
+    rather than the whole request `Format`.
+- Replaced the geometry and measurement primitives with named, compiler-checked newtypes (the
+  geometry/unit step of the type-safety refactor tracked in `docs/refactor.md`), collected in the new
+  `units` module:
+  - `Size { width, height }` replaces the bare `(u32, u32)`/adjacent `u32` size pairs: a page's
+    header `dimensions`, an `EncodedPage`'s `width`/`height`, the profile/cover/light-novel page
+    size, and the `fit`/`contain`/`thumbnail`/`pad`/`resize` targets.
+  - `BBox<T>` (Pillow's `left`/`upper`/`right`/`lower` order) and `IndexBox` (`x1`/`x2`/`y1`/`y2`,
+    KCC's axis-grouped inclusive order) replace the interchangeable positional 4-tuples in the
+    crop/kernel bounding-box code, and `Range { min, max }` replaces the `(u8, u8)` luma/chroma
+    pairs.
+  - `Percent`/`Fraction` replace bare `f64` percentages and fractions (`--preserve-margin` is now
+    `Option<Percent>`, `--cropping-minimum` a `Fraction`); `Pixels`/`Bytes`/`Megabytes` replace the
+    `u64`/`u32` pixel counts, byte caps and MB options (a pixel threshold can no longer be compared
+    against an encoded-size cap); the resolved `--jpeg-quality` is a validated `Quality`; and the
+    quantiser's palette and index plane are `Palette`/`PaletteIndices`.
+  - The public helpers `clamp::run_clamp`, `image_ops::split_image_iterative`,
+    `image_ops::resize_image_by_total_pixels` and `image_ops::resize_image_by_width` now take the
+    typed `Pixels` (and `resize_lanczos3` a `Size`) instead of bare `u64`/`u32` — a signature-level
+    change for library callers. The `BBox`/`Range`/`IndexBox` span accessors saturate rather than
+    subtracting unchecked, so a transposed box can no longer panic a debug build.
+- Updated the `docs/cli.md` and `docs/processing.md` reference tables to describe the typed mode
+  values and the consolidated `--borders` flag introduced by the CLI step above.
+- Replaced the boolean-blind flags, magic tri-states and stringly page parts in the
+  image-processing pipeline with fieldless enums (the processing step of the type-safety refactor
+  tracked in `docs/refactor.md`). Behaviour and emitted bytes are unchanged:
+  - `PageFlags` carries `orientation: Orientation` (`Upright`/`Rotated`), `background: ResolvedFill`
+    (the resolved `--borders` fill, distinct from the detected `Page::background`) and `half:
+    ScribeHalf` (`NotSplit`/`Above`/`Below`) instead of the `rotated`/`black_background` bools and the
+    `above`/`below` bool pair — so a page can no longer be both halves of a Kindle Scribe split.
+    `chunk` and `output/epub` now read `flags.half`.
+  - The colour decision is `color::Detected` plus `OutputColor::from_detection(Detected,
+    force_color)`, replacing the two same-typed `color`/`color_output` bools; the dead
+    `color_check(.., original_is_grayscale)` parameter is removed (the grayscale-source guard lives
+    at the call sites, which still skip the RGB round-trip).
+  - `kernels::threshold_in_place` takes a `ThresholdKind` (`Above`/`Below`) and monomorphises the
+    polarity through a `const`-generic core, so the 16-lane loop stays branch-free; `band_white_black`
+    returns a named `Band { has_white, has_black }` instead of a transposable `(bool, bool)`.
+  - The inter-panel helpers take an `Axis` (`Rows`/`Columns`) instead of the two inverted
+    `horizontal`/`remove_rows` boolean spellings; `fill::strip_vote` returns a `StripVote`
+    (`Black`/`Mixed`/`White`) instead of the `-1`/`0`/`+1` magic tri-state; the webtoon `Panel` is a
+    `{ top, bottom }` struct with a derived `height()` instead of a `(u32, u32, u32)` tuple; the PDF
+    fit choice is a `FitPreference` (`Height`/`WidthForPortrait`); and the Scribe page-part suffix is
+    a `PagePart` (`Above`/`Below`/`Whole`) rather than a bare `"above"`/`"below"`/`"whole"` literal.
+- Hardened the processing-step types so their invariants are compiler-checked rather than merely
+  documented (the `docs/refactor.md` Phase 5 follow-up). `OutputColor` is now an opaque newtype built only
+  by `OutputColor::from_detection`, with `is_color`/`is_gray` accessors in place of `==` against its
+  variants; the resolved `--borders` fill is the distinct `ResolvedFill` newtype rather than a bare
+  `Background`, so it cannot be confused with the detected `Page::background`; and the `Detected`
+  (colour mode) and `ScribeHalf`/`Orientation` (page flags) dispatches in the processing and output
+  pipeline use exhaustive `match`es instead of `if … == variant` comparisons or a `bool` re-collapse.
+- Made the page payload a move-only state machine and gave the page/chapter names distinct
+  compiler-checked identities (the page-state step of the type-safety refactor tracked in
+  `docs/refactor.md`). Emitted bytes are unchanged:
+  - `Page` replaces its `image: Option<DynamicImage>`/`raw: Option<Vec<u8>>`/`source_media_type:
+    Option<MediaType>` trio with one `PageData` (`Encoded(Source)`/`EncodedDecoded(Source,
+    DynamicImage)`/`Pixels(MediaType, DynamicImage)`/`Consumed`). The `(None, None)` page that four
+    call sites had to guard is no longer representable, a decode keeps the encoded bytes
+    (`EncodedDecoded`) so `--no-processing` still emits them without decoding, and every state
+    transition matches the enum exhaustively so a new state is a compile error.
+  - `Page` no longer derives `Clone` (nor do `Chapter`/`ComicTree`/`PreparedBook`/`ProcessedBook`/
+    `ProcessedChapter`), so a stray clone cannot duplicate a decoded frame plus the encoded book.
+  - `SourceName` (book-relative source path), `RelPath` (chapter-relative file name) and `PageName`
+    (`EncodedPage::name`) are `#[repr(transparent)]` newtypes, and `ChapterName` is a `Root`/`Dir`
+    enum rather than an empty-string sentinel — so the names cannot be swapped and the root chapter
+    cannot be misspelled as an empty directory.
+  - The unread `ComicTree::cover`/`CoverSource` are removed (cover selection already flowed through
+    `PreparedBook::cover_override`/`processing::cover`); `ProcessedBook` carries the cover as one
+    `Option<Cover>` (page plus its smart-crop flag) instead of the split `cover`/`cover_smart_crop`
+    pair; `input::archive::LoadedPage` folds into the `PageData` carrier; and `input::fusion::Fused`
+    derives its synthetic source path from `output_dir.join(&title)` instead of storing it.
+  - Removed the vestigial `Page::flags`/`PageFlags::order_class` (never read; `EncodedPage::
+    order_class` is the single owner), and replaced the silent `media_type().unwrap_or(Jpeg)` and
+    the `--splitter` equality checks with explicit, exhaustive handling.
+- Gave the EPUB output pipeline compiler-checked identities instead of bare strings and booleans
+  (the output step of the type-safety refactor tracked in `docs/refactor.md`). Emitted bytes are
+  unchanged:
+  - `PageRef`'s three confusable `&str` fields are `ImageDir`/`FileName`/`Stem` newtypes, the
+    manifest/spine/navigation values are `ManifestId`/`Idref`/`Href`/`SpineAttr`/`NavId`/`NavTitle`
+    with the `page_`/`img_`/`-below` id conventions centralised, and the document modes are enums:
+    `PageSide`/`Direction` (with the `(invert_direction, right_to_left)` XOR computed once),
+    `WritingMode`, `ManifestMediaType` and `PanelId` (replacing the stringly Panel View id and its
+    wildcard `style` match).
+  - `Opf`'s `has_description`/`has_series`/`has_group` bool+payload pairs are
+    `Option<&str>`/`Option<Series>`; the never-set `OpfItem` `properties`/`has_properties_before`/
+    `has_properties_after` trio is deleted; `region_mag` is a `bool`; and `PageXhtml`'s
+    `has_below`/`below_image_src`/`below_img_width`/`below_img_height` group is one
+    `Option<BelowImage>`.
+  - The OEBPS entry list is a move-only `EpubEntries` of `ZipEntry`/`ZipPath` whose only constructor
+    prepends the stored `mimetype` entry, replacing the anonymous `(String, Cow<[u8]>)` vector whose
+    ordering rule lived only in a doc comment (nothing clones the borrowed book).
+  - The fifteen-positional-bool `kindling` call is a named `MobiFlags` struct; `PdfImage`'s
+    `gray: bool` and `jpeg_components() -> Option<u8>` are a `ColorSpace` enum; and the threaded
+    `drop_bookmarks: bool` is a `Tomes` (`Single`/`Split`) enum.
+- Removed the remaining runtime guards, `_` wildcards and duplicated helpers across the codebase
+  (the sweep step of the type-safety refactor tracked in `docs/refactor.md`). Emitted bytes are
+  unchanged:
+  - `archive::ops` collapses a wrapper folder through one `RootStrip { name, prefix }` value (its
+    `RootStripPolicy` match is exhaustive again, with no guarded `_` arm), and the repeated
+    basename/stem plumbing is now delegated to `relative-path`'s `RelativePath` methods used by the
+    archive, naming, chunk, webtoon, page and EPUB paths (the dead `rsplit(..).next().unwrap_or(..)`
+    fallbacks are gone, including the cover-name classifier and the wrapper-root component scan).
+  - `metadata::ComicInfo` keys its nine single-value fields on a `Field` enum (one spelling of
+    each name, with `Field::from_name` as its inverse) and drains them through one exhaustive
+    `match`, replacing three separate string lists; a malformed (non-UTF-8) element name now
+    discards the document through the existing rule rather than silently failing every comparison.
+  - `ebook::progress::Reporter` holds one `Mode` (`Batch { .. }`/`Standalone`) instead of parallel
+    `Option<MultiProgress>`/`Option<ProgressBar>` fields, so a half-set reporter is unrepresentable;
+    the shared `progress_style::{bar, bar_with_chars, spinner}` helper replaces the copied
+    `ProgressStyle::default_bar().template(..)` idiom in `convert`/`clamp`/`ebook`.
+  - `processing::cover` draws the tome label through a `CoverPixels` (`Luma`/`Rgb`) enum, so the
+    pixel-writing helper no longer has a `_ => {}` wildcard that silently drops other pixel types;
+    `color::rgb_to_luma` builds its buffer infallibly (no `unwrap_or_else` blank-image fallback);
+    and `webtoon::detect_panels` tracks the open panel as a single `Option<u32>` instead of a
+    `bool`/`u32` pair mutated in lockstep, taking a validated `StripWidth` so the scan step can
+    never be zero.
+  - `Profile::entry` resolves its table row in O(1) with no fallback: the profile rows are one
+    `const` that both the `--profile` list and a compile-time discriminant check are derived from,
+    so there is no hand-kept variant list and no per-variant match; `BatchSplit::ensure_splitting`
+    replaces the free `force_split`; the EPUB `dcterms:modified` formatting returns `Result`
+    instead of an epoch-string `unwrap_or_else`; `output::kindle`'s `--temp-dir` lookup is an
+    `and_then` rather than a `then(..).flatten()`; and the `ebook` run no longer clones the input
+    `Vec` to iterate it.
+  - `image_ops::resize_lanczos3` (and the `resize_image_by_*` wrappers) return `Result` instead of
+    silently returning a full copy of the original image on an impossible buffer mismatch, removing
+    three hidden `DynamicImage::clone`s. `image_ops::is_image_file` is now built on a single
+    `image_ops::path_extension(&Path)` helper (no `to_string_lossy` ladder); as a consequence a
+    leading-dot name (`.png`) and a non-UTF-8 file name are no longer treated as images by
+    `convert`/`clamp`.
+- Backed the archive-relative path newtypes (`NormalizedArchivePath`, `SourceName`, `RelPath`,
+  `PageName`, `ChapterName`) with the `relative-path` crate's `RelativePathBuf` instead of `String`,
+  and removed the private hand-rolled separator helpers in favour of `RelativePath`'s
+  `file_name`/`parent`/`file_stem`/`extension`/`components`/`strip_prefix` operations (the optional
+  path-layer side quest in `docs/refactor.md`). The newtypes gained an `as_relative()` accessor; their
+  `as_str()`/`Deref`/`Display`/comparison surface and every emitted archive/EPUB byte is unchanged.
+  `std::path` remains the host-filesystem type (`safe_join`'s `PathBuf` and
+  `image_ops::path_extension`), and `is_os_metadata` keeps its backslash-aware split because it also
+  classifies raw host paths.
+
 ### Fixed
 
 - `scripts/set-version.sh` and `scripts/set-version.ps1` (with `--changelog` / `-Changelog`) now
   re-open an empty `## [Unreleased]` heading above the dated release, so the default branch keeps a
   section for the next release's entries instead of losing it on roll-over.
+
+### Docs
+
+- Moved the type-safety refactor record to [`docs/refactor.md`](docs/refactor.md), distilled to the
+  binding rules, the completed phases and their behaviour-visible deviations, the resulting option
+  and enum shapes, and the test/lint guardrails. The former root-level `REFACTOR.md` is removed and
+  every reference repointed.
+- Corrected the lint command in `AGENTS.md`, `docs/refactor.md`, `docs/development.md` and
+  `docs/porting.md` to `cargo clippy --all-targets --all-features -- -D warnings` (the missing `--`
+  made cargo reject `-D warnings` as an unexpected argument).
+- Required piping `cargo nextest` through `tail` (`cargo nextest run 2>&1 | tail -n 20`) in
+  `AGENTS.md`, `docs/refactor.md`, `docs/development.md`, `CONTRIBUTING.md`, `README.md` and the pull
+  request template: only the pass/fail summary and the names of the failing cases matter, so the
+  full run output is not echoed. CI keeps the unfiltered `cargo nextest run --no-fail-fast`.
+- Noted in `AGENTS.md` that the `cargo nextest`-through-`tail` rule overrides the built-in
+  `terminal` tool's default guidance against piping to `head`/`tail`, and dropped the rule's
+  trailing cross-reference.
 
 ## [0.2.7] - 2026-09-27
 

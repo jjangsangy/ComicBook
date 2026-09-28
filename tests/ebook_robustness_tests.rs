@@ -236,18 +236,19 @@ fn hostile_archive_entry_names_are_neutralized() -> Result<()> {
 
     for chapter in &tree.chapters {
         assert!(
-            !chapter.name.starts_with('/') && !chapter.name.contains(".."),
+            !chapter.name.as_str().starts_with('/') && !chapter.name.as_str().contains(".."),
             "chapter escaped the root: {:?}",
             chapter.name
         );
         for page in &chapter.pages {
             assert!(
-                !page.source_name.starts_with('/') && !page.source_name.contains(".."),
+                !page.source_name.as_str().starts_with('/')
+                    && !page.source_name.as_str().contains(".."),
                 "page escaped the root: {:?}",
                 page.source_name
             );
             assert!(
-                !page.source_name.contains('\\'),
+                !page.source_name.as_str().contains('\\'),
                 "page name kept a backslash: {:?}",
                 page.source_name
             );
@@ -287,8 +288,7 @@ fn windows_authored_archive_entries_load_as_nested_chapters() -> Result<()> {
 /// never embeds a Windows-reserved character (see docs/development.md).
 #[test]
 fn slugified_names_avoid_windows_reserved_characters() {
-    use comic_book::ebook::naming::slugify;
-    use comic_book::ebook::options::Format;
+    use comic_book::ebook::naming::{slugify, NameStyle};
 
     let raw_names = [
         "a:b?c*d|e",
@@ -300,7 +300,7 @@ fn slugified_names_avoid_windows_reserved_characters() {
         "\u{1F600} emoji",
     ];
     for raw in raw_names {
-        let slug = slugify(raw, Format::Epub, false);
+        let slug = slugify(raw, NameStyle::Slug, false);
         for forbidden in ['<', '>', ':', '"', '/', '\\', '|', '?', '*'] {
             assert!(
                 !slug.contains(forbidden),

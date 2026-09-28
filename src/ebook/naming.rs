@@ -18,9 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::Regex;
+use relative_path::{RelativePath, RelativePathBuf};
 
-use crate::ebook::model::{ComicTree, MediaType, Page};
-use crate::ebook::options::{Format, Options};
+use crate::ebook::model::{ChapterName, ComicTree, MediaType, Page, RelPath, SourceName};
+use crate::ebook::options::{Options, OutputEncoding};
 
 /// KCC's deterministic page-name prefix (`kcc-0001`).
 const PAGE_PREFIX: &str = "kcc";
@@ -43,16 +44,25 @@ pub struct Sanitized {
     pub cover_path: Option<String>,
 }
 
+/// How [`slugify`] treats a name: the reference only keeps CBZ names verbatim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameStyle {
+    /// Slugify the name (every non-CBZ output).
+    Slug,
+    /// Keep the name verbatim (CBZ output).
+    Cbz,
+}
+
 /// KCC's `slugify`.
 ///
-/// The format and `is_natural_sorted` arguments reproduce the two shortcuts in
+/// The style and `is_natural_sorted` arguments reproduce the two shortcuts in
 /// the reference: a naturally ordered CBZ keeps its directory names verbatim,
 /// and an already-naturally-ordered tree skips the number zero-padding.
-pub fn slugify(value: &str, format: Format, is_natural_sorted: bool) -> String {
-    if format == Format::Cbz && is_natural_sorted {
+pub fn slugify(value: &str, style: NameStyle, is_natural_sorted: bool) -> String {
+    if style == NameStyle::Cbz && is_natural_sorted {
         return value.to_string();
     }
-    let mut value = if format == Format::Cbz {
+    let mut value = if style == NameStyle::Cbz {
         value.to_string()
     } else {
         slug::slugify(value)
@@ -90,22 +100,18 @@ pub fn sanitize_tree(tree: &mut ComicTree, options: &Options) -> Sanitized {
     let mut page_number = 1u32;
     let mut cover_path = None;
     for chapter in &mut tree.chapters {
-        if let Some(slug) = slug_map.get(&chapter.name) {
-            chapter.name = slug.clone();
+        if let Some(slug) = slug_map.get(chapter.name.as_str()).cloned() {
+            chapter.name = ChapterName::new(slug);
         }
         let directory = chapter.name.clone();
         for page in &mut chapter.pages {
             let stem = format!("{PAGE_PREFIX}-{page_number:04}");
             page_number += 1;
             let file = format!("{stem}.{}", page_extension(page));
-            page.rel_path = file.clone();
-            page.source_name = if directory.is_empty() {
-                file
-            } else {
-                format!("{directory}/{file}")
-            };
+            page.rel_path = RelPath::new(file.clone());
+            page.source_name = SourceName::new(join(directory.as_str(), &file));
             if cover_path.is_none() {
-                cover_path = Some(page.source_name.clone());
+                cover_path = Some(page.source_name.as_str().to_string());
             }
         }
     }
@@ -129,32 +135,37 @@ fn slugify_directories(
     // Every directory path (all prefixes of the chapter paths).
     let mut directories: BTreeSet<String> = BTreeSet::new();
     for chapter in &tree.chapters {
-        let name = chapter.name.trim_matches('/');
-        if name.is_empty() {
+        if chapter.name.is_root() {
             continue;
         }
-        let mut prefix = String::new();
-        for segment in name.split('/') {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(segment);
-            directories.insert(prefix.clone());
+        let mut prefix = RelativePathBuf::new();
+        // Every directory prefix of the chapter path, built component-wise.
+        for segment in chapter.name.as_relative().components() {
+            prefix.push(segment);
+            directories.insert(prefix.as_str().to_string());
         }
     }
 
     // Parent path → immediate child basenames.
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     for directory in &directories {
-        let (parent, base) = split_dir_file(directory);
+        let path = RelativePath::new(directory);
+        let parent = path.parent().unwrap_or(RelativePath::new(""));
         children
-            .entry(parent.to_string())
+            .entry(parent.as_str().to_string())
             .or_default()
-            .push(base.to_string());
+            .push(path.file_name().unwrap_or("").to_string());
     }
 
     let mut slug_map: HashMap<String, String> = HashMap::new();
     let mut titles: HashMap<String, String> = HashMap::new();
+
+    // The slug style is a property of the whole run, not of a directory.
+    let style = if matches!(options.output.encoding, OutputEncoding::Cbz) {
+        NameStyle::Cbz
+    } else {
+        NameStyle::Slug
+    };
 
     // Breadth-first so a parent is always resolved before its children.
     let mut queue: Vec<(String, String)> = vec![(String::new(), String::new())];
@@ -168,7 +179,7 @@ fn slugify_directories(
 
         let mut used: HashSet<String> = HashSet::new();
         for sibling in order {
-            let mut slug = slugify(&sibling, options.format, natural_sorted);
+            let mut slug = slugify(&sibling, style, natural_sorted);
             while used.contains(&slug) && sibling.to_uppercase() != slug.to_uppercase() {
                 slug.push('A');
             }
@@ -209,22 +220,18 @@ pub fn output_filename(
     options: &Options,
 ) -> PathBuf {
     // KCC's `folder_output` (`-f folder`) is not ported; output is always a file.
-    let ext = if options.format == Format::Epub && options.kepub {
+    let ext = match options.output.encoding {
         // Kobo's canonical extension is `.kepub.epub`; `--kepub-short-ext` trims it
         // to `.kepub`.
-        if options.kepub_short_ext {
-            ".kepub".to_string()
-        } else {
-            ".kepub.epub".to_string()
-        }
-    } else {
-        ext.to_string()
+        OutputEncoding::Kepub { short_ext: true } => ".kepub".to_string(),
+        OutputEncoding::Kepub { short_ext: false } => ".kepub.epub".to_string(),
+        _ => ext.to_string(),
     };
 
     match wanted {
         Some(wanted) => wanted_filename(source, wanted, &ext, tome_number),
         None if source.is_dir() => append_str(source, &format!("{tome_number}{ext}")),
-        None if options.format == Format::Epub && options.kepub => {
+        None if matches!(options.output.encoding, OutputEncoding::Kepub { .. }) => {
             let base = if source.is_file() {
                 source.file_stem()
             } else {
@@ -345,28 +352,22 @@ fn read_names(directory: &Path) -> Vec<String> {
 
 /// Whether `name` has one of the cover image extensions.
 fn is_cover_image(name: &str) -> bool {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => {
-            COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
-        }
-        _ => false,
-    }
+    RelativePath::new(name)
+        .extension()
+        .is_some_and(|ext| COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// The lower-cased image extension of a page's source name.
 fn page_extension(page: &Page) -> String {
-    let file = page
-        .source_name
-        .rsplit('/')
-        .next()
-        .unwrap_or(&page.source_name);
-    match file.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
-        _ => page
-            .source_media_type
-            .unwrap_or(MediaType::Jpeg)
-            .extension()
-            .to_string(),
+    match page.source_name.as_relative().extension() {
+        Some(ext) => ext.to_ascii_lowercase(),
+        // A name with no extension: fall back to the payload's media type. A
+        // `Consumed` page has none, but it cannot reach the naming pass, which
+        // runs before decoding; keep the historical default rather than fail.
+        None => match page.media_type() {
+            Some(media_type) => media_type.extension().to_string(),
+            None => MediaType::Jpeg.extension().to_string(),
+        },
     }
 }
 
@@ -379,21 +380,9 @@ fn kobo_name(name: &str) -> String {
     pattern.replace_all(name, "_").into_owned()
 }
 
-/// Split a book-relative path into `(directory, base)`; the root is `""`.
-fn split_dir_file(path: &str) -> (&str, &str) {
-    match path.rfind('/') {
-        Some(index) => (&path[..index], &path[index + 1..]),
-        None => ("", path),
-    }
-}
-
-/// Join a directory and a name, skipping the separator at the root.
+/// Join a directory and a name, dropping the separator at the root.
 fn join(directory: &str, name: &str) -> String {
-    if directory.is_empty() {
-        name.to_string()
-    } else {
-        format!("{directory}/{name}")
-    }
+    RelativePath::new(directory).join(name).as_str().to_string()
 }
 
 /// Python's `os.path.splitext(...)[0]`: drop the last extension of the basename.
@@ -430,30 +419,33 @@ mod tests {
 
     #[test]
     fn slugify_transliterates_and_collapses() {
-        assert_eq!(slugify("Chapter 1", Format::Epub, true), "chapter-1");
-        assert_eq!(slugify("Über Stück", Format::Epub, true), "uber-stuck");
-        assert_eq!(slugify("A   B", Format::Epub, true), "a-b");
+        assert_eq!(slugify("Chapter 1", NameStyle::Slug, true), "chapter-1");
+        assert_eq!(slugify("Über Stück", NameStyle::Slug, true), "uber-stuck");
+        assert_eq!(slugify("A   B", NameStyle::Slug, true), "a-b");
     }
 
     #[test]
     fn slugify_collapses_underscores_and_dots() {
         // Deliberate deviation from python-slugify, whose custom pattern preserves
         // `_`/`.` — see docs/porting.md.
-        assert_eq!(slugify("a_b.c", Format::Epub, true), "a-b-c");
+        assert_eq!(slugify("a_b.c", NameStyle::Slug, true), "a-b-c");
     }
 
     #[test]
     fn slugify_pads_numbers_unless_naturally_sorted() {
         // "chapter-10" is not naturally sorted, so the first two runs are padded.
-        assert_eq!(slugify("Chapter 10", Format::Epub, false), "chapter-0010");
-        assert_eq!(slugify("Chapter 10", Format::Epub, true), "chapter-10");
-        assert_eq!(slugify("2 Vol 3", Format::Epub, false), "0002-vol-0003");
+        assert_eq!(
+            slugify("Chapter 10", NameStyle::Slug, false),
+            "chapter-0010"
+        );
+        assert_eq!(slugify("Chapter 10", NameStyle::Slug, true), "chapter-10");
+        assert_eq!(slugify("2 Vol 3", NameStyle::Slug, false), "0002-vol-0003");
     }
 
     #[test]
     fn slugify_keeps_cbz_names_when_naturally_sorted() {
-        assert_eq!(slugify("Chapter 1", Format::Cbz, true), "Chapter 1");
-        assert_eq!(slugify("Chapter 1", Format::Cbz, false), "Chapter 0001");
+        assert_eq!(slugify("Chapter 1", NameStyle::Cbz, true), "Chapter 1");
+        assert_eq!(slugify("Chapter 1", NameStyle::Cbz, false), "Chapter 0001");
     }
 
     #[test]

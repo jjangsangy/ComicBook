@@ -38,6 +38,7 @@ The reference documentation lives in [`docs/`](docs/):
 | [docs/clamp.md](docs/clamp.md) | `clamp`: approaches, thresholds, output layout |
 | [docs/cli.md](docs/cli.md) | `ebook`: options, formats and device profiles |
 | [docs/architecture.md](docs/architecture.md) | `ebook`: pipeline, module map, data model, design principles |
+| [docs/refactor.md](docs/refactor.md) | Type-safety refactor: the completed `make impossible states unrepresentable` pass |
 | [docs/processing.md](docs/processing.md) | `ebook`: image-processing algorithms and fidelity rules |
 | [docs/output.md](docs/output.md) | `ebook`: EPUB/KePub/CBZ/PDF/Kindle document specs, chunking, fusion |
 | [docs/dependencies.md](docs/dependencies.md) | Off-the-shelf policy, crates, licences, clean-room rules |
@@ -627,10 +628,11 @@ comic-book completions powershell >> $PROFILE
 ## Development & Testing
 
 Run unit and integration tests with [cargo-nextest](https://nexte.st/) (install once with
-`cargo install cargo-nextest --locked`):
+`cargo install cargo-nextest --locked`). Pipe the run through `tail` so only the pass/fail
+summary and the failing cases survive:
 
 ```bash
-cargo nextest run
+cargo nextest run 2>&1 | tail -n 20
 ```
 
 Check code style and linter warnings:

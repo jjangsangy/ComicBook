@@ -17,34 +17,33 @@ pub mod webtoon;
 
 pub use page::process_page;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use image::DynamicImage;
 use rayon::prelude::*;
 
-use crate::ebook::model::{ComicTree, EncodedPage, Page};
-use crate::ebook::options::Options;
+use crate::ebook::model::{ChapterName, ComicTree, EncodedPage, Page};
+use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
+use crate::units::{Fraction, Size};
 
 /// Fraction of each inter-panel gutter KCC retains after cropping.
-const INTER_PANEL_KEEP: f64 = 0.04;
+const INTER_PANEL_KEEP: Fraction = Fraction::new(0.04);
 
 /// The encoded pages of one chapter, in reading order.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessedChapter {
     /// The chapter's source directory path (before slugification).
-    pub name: String,
+    pub name: ChapterName,
     pub pages: Vec<EncodedPage>,
 }
 
 /// Everything the processing stage produces for one book.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessedBook {
     pub chapters: Vec<ProcessedChapter>,
-    /// The processed cover, set by [`crate::ebook::convert_source`].
-    pub cover: Option<EncodedPage>,
-    /// Whether `--smart-cover-crop` actually cropped the cover (KCC's
-    /// `Cover.smartcover`), which CBZ/PDF output tests before writing a cover.
-    pub cover_smart_crop: bool,
+    /// The processed cover (its [`cover::Cover::smart_cropped`] flag gates the
+    /// CBZ/PDF cover write), set by [`crate::ebook::convert_source`].
+    pub cover: Option<cover::Cover>,
     /// Total encoded pages, which may exceed the source page count when spreads
     /// were bisected.
     pub page_count: usize,
@@ -68,7 +67,7 @@ pub fn process_tree_with(
     options: &Options,
     reporter: &progress::Reporter,
 ) -> Result<ProcessedBook> {
-    let size = page::profile_size(options);
+    let size = options.profile_size();
     let bar = reporter.child(tree.page_count() as u64, "Processing images");
 
     let mut chapters = Vec::with_capacity(tree.chapters.len());
@@ -84,7 +83,7 @@ pub fn process_tree_with(
             .enumerate()
             .map(|(page_index, page)| {
                 let is_first_page = first_chapter == Some(chapter_index) && page_index == 0;
-                let result = if options.no_processing {
+                let result = if options.processing.no_processing {
                     // Passthrough needs only the source bytes and the header
                     // dimensions, so the page is never decoded; its bytes are moved
                     // into the output rather than copied.
@@ -109,7 +108,6 @@ pub fn process_tree_with(
     Ok(ProcessedBook {
         chapters,
         cover: None,
-        cover_smart_crop: false,
         page_count,
     })
 }
@@ -119,7 +117,7 @@ pub fn process_tree_with(
 fn process_page_owned(
     page: &mut Page,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
     is_first_page: bool,
 ) -> Result<Vec<crate::ebook::model::EncodedPage>> {
     prepare_page(page, options, is_first_page)?;
@@ -137,35 +135,44 @@ fn process_page_owned(
 /// untouched, and webtoon mode skips the margin/page-number crops but still runs
 /// the inter-panel pass, exactly as the reference does.
 fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Result<()> {
-    page.ensure_decoded()?;
-    let image = match page.image.as_mut() {
-        Some(image) => image,
-        None => bail!("page has no decoded image to prepare"),
-    };
+    // Detect the fill from the decoded pixels; `ensure_decoded` is the state
+    // transition, so no defensive "is there an image" guard is needed.
+    let background = fill::fill_check(page.ensure_decoded()?);
+    page.background = background;
 
-    page.background = fill::fill_check(image);
-    let background = page.background;
-
+    let image = page.ensure_decoded()?;
     if is_first_page && is_colour_page(image, options) {
         return Ok(());
     }
 
-    let power = f64::from(options.cropping_power);
-    let minimum = f64::from(options.cropping_minimum);
-    if !options.webtoon {
-        match options.cropping {
-            2 => crop::crop_page_number(image, power, minimum, options.preserve_margin, background),
-            1 => crop::crop_margin(image, power, minimum, options.preserve_margin, background),
-            _ => {}
+    let power = f64::from(options.processing.cropping_power);
+    let minimum = options.processing.cropping_minimum;
+    if !options.main.webtoon {
+        match options.processing.cropping {
+            Cropping::PageNumbers => crop::crop_page_number(
+                image,
+                power,
+                minimum,
+                options.processing.preserve_margin,
+                background,
+            ),
+            Cropping::Margins => crop::crop_margin(
+                image,
+                power,
+                minimum,
+                options.processing.preserve_margin,
+                background,
+            ),
+            Cropping::Off => {}
         }
     }
 
-    if options.inter_panel_crop > 0 {
-        let direction = if options.inter_panel_crop == 1 {
-            interpanel::Direction::Horizontal
-        } else {
-            interpanel::Direction::Both
-        };
+    let direction = match options.processing.inter_panel_crop {
+        InterPanelCrop::Off => None,
+        InterPanelCrop::Horizontal => Some(interpanel::Direction::Horizontal),
+        InterPanelCrop::Both => Some(interpanel::Direction::Both),
+    };
+    if let Some(direction) = direction {
         let cropped =
             interpanel::crop_empty_inter_panel(image, direction, INTER_PANEL_KEEP, background);
         *image = cropped;
@@ -182,8 +189,8 @@ fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
         return false;
     }
     match image.as_rgb8() {
-        Some(rgb) => color::color_check(rgb, false, options),
-        None => color::color_check(&image.to_rgb8(), false, options),
+        Some(rgb) => color::color_check(rgb, options).is_color(),
+        None => color::color_check(&image.to_rgb8(), options).is_color(),
     }
 }
 
@@ -210,12 +217,18 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     for chapter in &tree.chapters {
         for page in &chapter.pages {
             any_page = true;
-            if !already_processed && file_stem(&page.rel_path).contains("-kcc") {
+            if !already_processed
+                && page
+                    .rel_path
+                    .as_relative()
+                    .file_stem()
+                    .is_some_and(|stem| stem.contains("-kcc"))
+            {
                 already_processed = true;
             }
-            let (width, height) = page.dimensions();
+            let size = page.dimensions();
             image_number += 1;
-            if options.profile_data.width > width && options.profile_data.height > height {
+            if options.device.data.width > size.width && options.device.data.height > size.height {
                 image_smaller += 1;
             }
         }
@@ -236,9 +249,9 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     // `imageSmaller > imageNumber * 0.25` compares floats in the reference; the
     // integer form below is exact and avoids the exact-multiple edge case.
     if image_smaller * 4 > image_number
-        && !options.upscale
-        && !options.stretch
-        && !options.profile.is_scribe()
+        && !options.processing.sizing.upscale
+        && !options.processing.sizing.stretch
+        && !options.device.profile.is_scribe()
     {
         warnings.push(
             "WARNING: More than 25% of images are smaller than target device resolution. \
@@ -248,13 +261,4 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     }
 
     warnings
-}
-
-/// A page file name without its final extension.
-fn file_stem(name: &str) -> &str {
-    let base = name.rsplit('/').next().unwrap_or(name);
-    match base.rfind('.') {
-        Some(index) if index > 0 => &base[..index],
-        _ => base,
-    }
 }

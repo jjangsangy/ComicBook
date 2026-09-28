@@ -16,6 +16,7 @@ use image::{DynamicImage, GrayImage};
 use wide::{i16x8, u16x8, u8x16};
 
 use crate::ebook::processing::color::luma601;
+use crate::units::{BBox, Range};
 
 /// A 16-byte SIMD block loaded from `src` at `at`.
 #[inline(always)]
@@ -36,7 +37,7 @@ fn store16(dst: &mut [u8], at: usize, value: u8x16) {
 /// The minimum and maximum samples of a byte slice, or `None` when it is empty.
 ///
 /// Replaces `imageproc::stats::min_max` for the single-channel case.
-pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
+pub(crate) fn min_max(data: &[u8]) -> Option<Range> {
     if data.is_empty() {
         return None;
     }
@@ -54,7 +55,7 @@ pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
         lo = lo.min(value);
         hi = hi.max(value);
     }
-    Some((lo, hi))
+    Some(Range::new(lo, hi))
 }
 
 /// The Rec.601 luma minimum and maximum of an image, without materialising a
@@ -62,7 +63,7 @@ pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
 ///
 /// This is `min_max(to_luma601(image))` with the same per-pixel weighting, so
 /// the detected contrast range is unchanged.
-pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<(u8, u8)> {
+pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<Range> {
     if let Some(gray) = image.as_luma8() {
         return min_max(gray.as_raw());
     }
@@ -78,7 +79,7 @@ pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<(u8, u8)> {
             lo = lo.min(value);
             hi = hi.max(value);
         }
-        return Some((lo, hi));
+        return Some(Range::new(lo, hi));
     }
     luma_min_max(&DynamicImage::ImageRgb8(image.to_rgb8()))
 }
@@ -100,17 +101,37 @@ pub(crate) fn invert_in_place(data: &mut [u8]) {
     }
 }
 
-/// Apply one of the two binary thresholds `imageproc::contrast::threshold`
-/// exposes, in place: `255` where `value > threshold` when `inverted` is
-/// `false` (`ThresholdType::Binary`), or `255` where `value <= threshold` when
-/// it is `true` (`ThresholdType::BinaryInverted`).
-pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool) {
+/// Which side of the threshold becomes white — the two modes of
+/// `imageproc::contrast::threshold` (`Binary` / `BinaryInverted`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThresholdKind {
+    /// `255` where `value > threshold` (was `inverted == false`).
+    Above,
+    /// `255` where `value <= threshold` (was `inverted == true`).
+    Below,
+}
+
+/// Apply a binary threshold in place.
+///
+/// The polarity is hoisted out of the loops by monomorphising on `INVERTED`, so
+/// each instantiation is the hand-written loop for its mode and nothing indirect
+/// enters the 16-lane body (see docs/architecture.md).
+pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, kind: ThresholdKind) {
+    match kind {
+        ThresholdKind::Above => threshold_mono::<false>(data, threshold),
+        ThresholdKind::Below => threshold_mono::<true>(data, threshold),
+    }
+}
+
+/// The `const`-generic threshold core: `255` where `value <= threshold` when
+/// `INVERTED`, else `255` where `value > threshold`.
+fn threshold_mono<const INVERTED: bool>(data: &mut [u8], threshold: u8) {
     let t = u8x16::splat(threshold);
     let full = data.len() / 16 * 16;
     let mut index = 0;
     while index < full {
         let block = load16(data, index);
-        let mask = if inverted {
+        let mask = if INVERTED {
             block.simd_le(t)
         } else {
             block.simd_gt(t)
@@ -119,7 +140,7 @@ pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool)
         index += 16;
     }
     while index < data.len() {
-        let hot = if inverted {
+        let hot = if INVERTED {
             data[index] <= threshold
         } else {
             data[index] > threshold
@@ -134,16 +155,16 @@ pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool)
 /// computes per pixel, precomputed once).
 ///
 /// `min < max` is required by the reference; callers guard it.
-pub(crate) fn stretch_contrast_lut(min: u8, max: u8) -> [u8; 256] {
-    let input_width = u16::from(max) - u16::from(min);
+pub(crate) fn stretch_contrast_lut(range: Range) -> [u8; 256] {
+    let input_width = u16::from(range.max) - u16::from(range.min);
     std::array::from_fn(|index| {
         let value = index as u16;
-        if value <= u16::from(min) {
+        if value <= u16::from(range.min) {
             0
-        } else if value >= u16::from(max) {
+        } else if value >= u16::from(range.max) {
             255
         } else {
-            (((value - u16::from(min)) * 255) / input_width) as u8
+            (((value - u16::from(range.min)) * 255) / input_width) as u8
         }
     })
 }
@@ -279,13 +300,7 @@ pub(crate) fn box_blur_1_in_place(image: &mut GrayImage) {
 // --- rectangle reductions -------------------------------------------------------
 
 /// A clipped `(left, top, right, bottom)` rectangle within an image.
-fn clip(
-    image: &GrayImage,
-    left: i64,
-    top: i64,
-    right: i64,
-    bottom: i64,
-) -> Option<(usize, usize, usize, usize)> {
+fn clip(image: &GrayImage, left: i64, top: i64, right: i64, bottom: i64) -> Option<BBox<usize>> {
     let width = i64::from(image.width());
     let height = i64::from(image.height());
     let left = left.max(0);
@@ -295,7 +310,12 @@ fn clip(
     if left >= right || top >= bottom {
         return None;
     }
-    Some((left as usize, top as usize, right as usize, bottom as usize))
+    Some(BBox::new(
+        left as usize,
+        top as usize,
+        right as usize,
+        bottom as usize,
+    ))
 }
 
 /// Count the samples of `[left, right) x [top, bottom)` for which `vector` (or
@@ -309,9 +329,10 @@ fn count_where(
     vector: impl Fn(u8x16) -> u8x16,
     scalar: impl Fn(u8) -> bool,
 ) -> u64 {
-    let Some((left, top, right, bottom)) = clip(image, left, top, right, bottom) else {
+    let Some(rect) = clip(image, left, top, right, bottom) else {
         return 0;
     };
+    let (left, top, right, bottom) = (rect.left, rect.upper, rect.right, rect.lower);
     let stride = image.width() as usize;
     let raw = image.as_raw();
     let mut count = 0u64;
@@ -378,7 +399,7 @@ fn bbox_where(
     image: &GrayImage,
     vector: impl Fn(u8x16) -> u8x16,
     scalar: impl Fn(u8) -> bool,
-) -> Option<(u32, u32, u32, u32)> {
+) -> Option<BBox<u32>> {
     let width = image.width() as usize;
     let height = image.height() as usize;
     if width == 0 || height == 0 {
@@ -421,11 +442,11 @@ fn bbox_where(
         }
     }
 
-    (min_x != u32::MAX).then_some((min_x, min_y, max_x + 1, max_y + 1))
+    (min_x != u32::MAX).then_some(BBox::new(min_x, min_y, max_x + 1, max_y + 1))
 }
 
 /// Bounding box of samples `>= threshold`.
-pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_ge(u8x16::splat(threshold)),
@@ -434,7 +455,7 @@ pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32
 }
 
 /// Bounding box of samples `< threshold`.
-pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_lt(u8x16::splat(threshold)),
@@ -443,12 +464,22 @@ pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32
 }
 
 /// Bounding box of non-zero samples.
-pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_ne(u8x16::splat(0)),
         |value| value != 0,
     )
+}
+
+/// Whether a band contained any non-zero (white) and any zero (black) sample.
+///
+/// Both facts are independent (an empty band is neither), so this is a struct,
+/// not a sum type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Band {
+    pub(crate) has_white: bool,
+    pub(crate) has_black: bool,
 }
 
 /// Whether the horizontal band `[x0, x1) x [y0, y1)` contains any non-zero
@@ -461,7 +492,7 @@ pub(crate) fn band_white_black(
     x1: u32,
     y1: u32,
     height: u32,
-) -> (bool, bool) {
+) -> Band {
     let width = image.width() as usize;
     let stride = width;
     let raw = image.as_raw();
@@ -486,7 +517,10 @@ pub(crate) fn band_white_black(
             x += 1;
         }
     }
-    (has_white, has_black)
+    Band {
+        has_white,
+        has_black,
+    }
 }
 
 /// The zero-based indices of the rows that are entirely zero.
@@ -624,21 +658,21 @@ mod tests {
     fn min_max_matches_the_scalar_extremes() {
         assert_eq!(min_max(&[]), None);
         let data: Vec<u8> = (0..=255).collect();
-        assert_eq!(min_max(&data), Some((0, 255)));
-        assert_eq!(min_max(&[7]), Some((7, 7)));
-        assert_eq!(min_max(&[200, 1, 3, 99, 42]), Some((1, 200)));
+        assert_eq!(min_max(&data), Some(Range::new(0, 255)));
+        assert_eq!(min_max(&[7]), Some(Range::new(7, 7)));
+        assert_eq!(min_max(&[200, 1, 3, 99, 42]), Some(Range::new(1, 200)));
     }
 
     #[test]
     fn threshold_matches_the_scalar_predicate() {
-        let mut inverted: Vec<u8> = (0..=255).collect();
-        threshold_in_place(&mut inverted, 128, true);
-        assert_eq!(inverted[128], 255);
-        assert_eq!(inverted[129], 0);
-        let mut binary: Vec<u8> = (0..=255).collect();
-        threshold_in_place(&mut binary, 128, false);
-        assert_eq!(binary[128], 0);
-        assert_eq!(binary[129], 255);
+        let mut below: Vec<u8> = (0..=255).collect();
+        threshold_in_place(&mut below, 128, ThresholdKind::Below);
+        assert_eq!(below[128], 255);
+        assert_eq!(below[129], 0);
+        let mut above: Vec<u8> = (0..=255).collect();
+        threshold_in_place(&mut above, 128, ThresholdKind::Above);
+        assert_eq!(above[128], 0);
+        assert_eq!(above[129], 255);
     }
 
     #[test]
@@ -661,9 +695,9 @@ mod tests {
                 Luma([10])
             }
         });
-        assert_eq!(bbox_ge(&image, 100), Some((10, 5, 20, 15)));
-        assert_eq!(bbox_lt(&image, 100), Some((0, 0, 40, 23)));
-        assert_eq!(bbox_nonzero(&image), Some((0, 0, 40, 23)));
+        assert_eq!(bbox_ge(&image, 100), Some(BBox::new(10, 5, 20, 15)));
+        assert_eq!(bbox_lt(&image, 100), Some(BBox::new(0, 0, 40, 23)));
+        assert_eq!(bbox_nonzero(&image), Some(BBox::new(0, 0, 40, 23)));
         let blank = GrayImage::new(8, 8);
         assert_eq!(bbox_nonzero(&blank), None);
     }
@@ -687,12 +721,36 @@ mod tests {
             image.put_pixel(x, 0, Luma([255]));
         }
         // Row 0: mixed over x in [0, 32) -> both.
-        assert_eq!(band_white_black(&image, 0, 0, 32, 1, 8), (true, true));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 32, 1, 8),
+            Band {
+                has_white: true,
+                has_black: true
+            }
+        );
         // Row 1 is all black.
-        assert_eq!(band_white_black(&image, 0, 1, 32, 2, 8), (false, true));
+        assert_eq!(
+            band_white_black(&image, 0, 1, 32, 2, 8),
+            Band {
+                has_white: false,
+                has_black: true
+            }
+        );
         // Row 0, left half only: all white, no black.
-        assert_eq!(band_white_black(&image, 0, 0, 16, 1, 8), (true, false));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 16, 1, 8),
+            Band {
+                has_white: true,
+                has_black: false
+            }
+        );
         // A band overhanging the bottom is black-padded.
-        assert_eq!(band_white_black(&image, 0, 0, 16, 20, 8), (true, true));
+        assert_eq!(
+            band_white_black(&image, 0, 0, 16, 20, 8),
+            Band {
+                has_white: true,
+                has_black: true
+            }
+        );
     }
 }

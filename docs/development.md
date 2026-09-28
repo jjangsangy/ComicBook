@@ -15,7 +15,12 @@ undocumented.
   (`cargo install cargo-nextest --locked`) is the standard runner here: each test runs in its
   own process, failures are clearer, and parallelisation is better. There are no doctests, so
   nextest covers the whole suite; use `cargo test` only where nextest cannot run a target.
-- **Quality gates:** `cargo fmt` and `cargo clippy --all-targets --all-features -D warnings`
+- **Always pipe `cargo nextest` through `tail`.** A full run prints hundreds of lines, and only
+  whether the run passed and which cases failed matter — both are in the trailing summary. `2>&1`
+  is required because nextest writes to stderr; without it `tail` sees nothing. `tail -n 20`
+  captures the summary plus the failing cases; raise the count only when a run has more failures
+  than fit.
+- **Quality gates:** `cargo fmt` and `cargo clippy --all-targets --all-features -- -D warnings`
   must stay green.
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
@@ -79,10 +84,10 @@ Run them explicitly with `--run-ignored`:
 ```bash
 # Every ignored test: the long-running set, the stress test, and the
 # `epubcheck` conformance test (which needs `epubcheck` on PATH)
-cargo nextest run --run-ignored ignored-only
+cargo nextest run --run-ignored ignored-only 2>&1 | tail -n 20
 
 # One suite, its ignored tests included (no external tools needed)
-cargo nextest run --run-ignored all --test ebook_webtoon_tests
+cargo nextest run --run-ignored all --test ebook_webtoon_tests 2>&1 | tail -n 20
 ```
 
 ## Profiling

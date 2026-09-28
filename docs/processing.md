@@ -18,7 +18,7 @@ moiré erase → quantize/convert → encode.
    Rec. 709 grayscale, which would drift from KCC).
 2. **`fillCheck`** (`fill.rs`) — threshold ≤128 → 1-bit; compare black/white `getbbox` surface
    areas; if close, sample 5-px rows/columns via histograms to decide `white`/`black`. Returns
-   the page background; overridable with `--black-borders`/`--white-borders`.
+   the page background; overridable with `--borders <white|black>`.
 3. **`splitCheck`** (`page.rs`) — decide `N` (normal), `R` (rotated spread), `S1`/`S2` (split
    halves) from the aspect ratios vs. the device ratio, `--splitter`, `--no-rotate`,
    `--rotate-right`, `--maximize-strips` and webtoon. `BISECT_THRESHOLD = 1.8`; split when

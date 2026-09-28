@@ -16,10 +16,14 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::templates::{render_lf, Opf, OpfItem, SpineItem, StyleCss};
-use super::{html_escape, images_dir, text_dir, unique_id, PageRef};
+use super::templates::{
+    render_lf, Direction, Href, Idref, ManifestId, ManifestMediaType, Opf, OpfItem, PageSide,
+    Series, SpineAttr, SpineItem, StyleCss, WritingMode,
+};
+use super::{html_escape, images_dir, text_dir, unique_id, FileName, PageRef};
 use crate::ebook::metadata::BookMetadata;
-use crate::ebook::options::Options;
+use crate::ebook::model::OrderClass;
+use crate::ebook::options::{Geometry, Options, OutputEncoding, ReaderFamily};
 
 /// KCC's `KindleComicConverter-<version>` contributor string.
 const CONTRIBUTOR: &str = "KindleComicConverter-11.3.2";
@@ -46,51 +50,38 @@ pub(crate) fn build_opf(
     modified: &str,
     options: &Options,
 ) -> Result<String> {
-    let device = (options.profile_data.width, options.profile_data.height);
+    let device = options.device_size();
 
-    // `--vertical-4-panel` writes top-to-bottom; `--invert-direction` swaps the
-    // two suffixes relative to the normal rule.
-    let writing_mode = format!(
-        "{}{}",
-        if options.vertical_4_panel {
-            "vertical"
-        } else {
-            "horizontal"
-        },
-        match (options.invert_direction, options.right_to_left) {
-            (true, true) | (false, false) => "-lr",
-            _ => "-rl",
-        }
-    );
+    // The reading direction is the `(invert_direction, right_to_left)` XOR,
+    // computed once (docs/refactor.md B8/G1) and shared by the writing mode, the spine
+    // progression and the initial page side.
+    let direction =
+        Direction::from_flags(options.main.invert_direction, options.main.right_to_left());
+    let writing_mode = WritingMode::resolve(options.main.vertical_4_panel, direction);
 
     let manifest = manifest_items(filelist);
 
-    let (direction, initial_side) = match (options.invert_direction, options.right_to_left) {
-        (true, false) | (false, true) => ("rtl", "right"),
-        _ => ("ltr", "left"),
-    };
-    let initial_side = flip_for_source(initial_side, source, options);
-    let reflist: Vec<String> = filelist.iter().map(unique_id).collect();
-    let spread = spread_properties(&reflist, options.right_to_left, initial_side);
-    let spine: Vec<SpineItem> = reflist
+    let initial_side = flip_for_source(direction.opening_side(), source, options);
+    let order: Vec<OrderClass> = filelist.iter().map(|entry| entry.order_class).collect();
+    let spread = spread_properties(&order, options.main.right_to_left(), initial_side);
+    let spine: Vec<SpineItem> = filelist
         .iter()
         .zip(&spread)
-        .map(|(entry, property)| {
-            let property = if options.one_page_landscape {
-                "center"
+        .map(|(entry, &side)| {
+            let side = if options.output.one_page_landscape {
+                PageSide::Center
             } else {
-                property
+                side
             };
             SpineItem {
-                idref: format!("page_{entry}"),
-                attr: page_spread_property(property, options),
+                idref: Idref::page(&unique_id(entry)),
+                attr: SpineAttr::page_spread(side, options.device.reader),
             }
         })
         .collect();
 
     let title = html_escape(title);
-    let has_description = !metadata.summary.is_empty();
-    let description = html_escape(&metadata.summary);
+    let description = (!metadata.summary.is_empty()).then(|| html_escape(&metadata.summary));
     let creators: Vec<String> = metadata
         .authors
         .iter()
@@ -98,39 +89,32 @@ pub(crate) fn build_opf(
         .collect();
 
     // Series metadata is only meaningful for non-Kindle readers.
-    let has_series = !options.is_kindle && !metadata.series.is_empty();
-    let series = html_escape(&metadata.series);
-    let group = if !metadata.volume.is_empty() && !metadata.number.is_empty() {
-        Some(format!("{}.{}", metadata.volume, metadata.number))
-    } else if !metadata.volume.is_empty() {
-        Some(metadata.volume.clone())
-    } else if !metadata.number.is_empty() {
-        Some(metadata.number.clone())
+    let series_name = html_escape(&metadata.series);
+    let series_group = group_position(metadata).map(|value| html_escape(&value));
+    let series = if options.device.reader != ReaderFamily::Kindle && !metadata.series.is_empty() {
+        Some(Series {
+            name: &series_name,
+            group: series_group.as_deref(),
+        })
     } else {
         None
     };
-    let has_group = has_series && group.is_some();
-    let group = html_escape(group.as_deref().unwrap_or(""));
 
     let view = Opf {
         title: &title,
         language,
         uuid,
         contributor: CONTRIBUTOR,
-        has_description,
-        description: &description,
+        description: description.as_deref(),
         creators: &creators,
-        has_series,
-        series: &series,
-        has_group,
-        group: &group,
+        series,
         modified,
         has_cover,
-        kindle_layout: options.is_kindle && !options.custom_profile,
-        device_width: device.0,
-        device_height: device.1,
-        writing_mode: &writing_mode,
-        region_mag: if options.kfx { "false" } else { "true" },
+        kindle_layout: options.device.reader == ReaderFamily::Kindle
+            && !matches!(options.device.geometry, Geometry::Custom { .. }),
+        device,
+        writing_mode,
+        region_mag: !matches!(options.output.encoding, OutputEncoding::Epub { kfx: true }),
         manifest: &manifest,
         direction,
         spine: &spine,
@@ -149,31 +133,21 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
     for entry in filelist {
         let id = unique_id(entry);
         manifest.push(OpfItem {
-            id: format!("page_{id}"),
-            href: format!("{}/{}.xhtml", text_dir(entry.image_dir), entry.stem),
-            media_type: "application/xhtml+xml",
-            properties: String::new(),
-            has_properties_before: false,
-            has_properties_after: false,
+            id: ManifestId::page(&id),
+            href: Href::xhtml(&text_dir(entry.image_dir), entry.stem()),
+            media_type: ManifestMediaType::Xhtml,
         });
         manifest.push(OpfItem {
-            id: format!("img_{id}"),
-            href: format!("{}/{}", images_dir(entry.image_dir), entry.file),
-            media_type: entry.media_type.mime(),
-            properties: String::new(),
-            has_properties_before: false,
-            has_properties_after: false,
+            id: ManifestId::image(&id),
+            href: Href::image(&images_dir(entry.image_dir), entry.file),
+            media_type: ManifestMediaType::Image(entry.media_type),
         });
         if let Some(below) = entry.below {
-            let below_id = id.replace("above", "below");
-            let below_file = below.name.rsplit('/').next().unwrap_or(below.name.as_str());
+            let below_file = below.name.as_relative().file_name().unwrap_or("");
             manifest.push(OpfItem {
-                id: format!("img_{below_id}"),
-                href: format!("{}/{}", images_dir(entry.image_dir), below_file),
-                media_type: below.media_type.mime(),
-                properties: String::new(),
-                has_properties_before: false,
-                has_properties_after: false,
+                id: ManifestId::below_image(&id),
+                href: Href::image(&images_dir(entry.image_dir), FileName::new(below_file)),
+                media_type: ManifestMediaType::Image(below.media_type),
             });
         }
     }
@@ -183,139 +157,148 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
 /// The shared `style.css`.
 pub(crate) fn style_css(options: &Options) -> Result<String> {
     let view = StyleCss {
-        scribe: options.kindle_scribe_azw3,
-        panel: options.is_kindle && options.panel_view,
+        scribe: options.processing.scribe,
+        panel: options.panel_view_enabled(),
     };
     render_lf(&view)
 }
 
 /// The `page-spread-*` property for each spine item (KCC's two-pass algorithm).
 ///
-/// The forward pass alternates sides, letting the `-kcc-a`/`-kcc-d` spread
-/// specials reset direction and `-kcc-b`/`-kcc-c` pin a split half. The backward
-/// pass then walks from the end, anchoring the tail so the last pages line up
-/// with the book's opening side.
+/// The forward pass alternates sides, letting a rotated spread special
+/// ([`OrderClass::RotateFirst`]/[`OrderClass::RotateLast`]) reset the direction and
+/// a split half ([`OrderClass::SplitLeft`]/[`OrderClass::SplitRight`]) pin its
+/// physical side. The backward pass then walks from the end, anchoring the tail so
+/// the last pages line up with the book's opening side. The pass is driven by the
+/// [`OrderClass`] variants rather than by re-parsing the `-kcc-*` name suffix, so it
+/// is exhaustive over the classes and a new one is a compile error (docs/refactor.md B7).
 fn spread_properties(
-    reflist: &[String],
+    order: &[OrderClass],
     right_to_left: bool,
-    mut pageside: &'static str,
-) -> Vec<&'static str> {
-    let mut sides: Vec<&'static str> = Vec::with_capacity(reflist.len());
+    mut pageside: PageSide,
+) -> Vec<PageSide> {
+    let mut sides: Vec<PageSide> = Vec::with_capacity(order.len());
 
-    for entry in reflist {
-        let center = entry.contains("-kcc-a") || entry.contains("-kcc-d");
-        if right_to_left {
-            if center {
-                sides.push("center");
-                pageside = "right";
-            } else if entry.contains("-kcc-b") {
-                sides.push("right");
-                pageside = "right";
-            } else if entry.contains("-kcc-c") {
-                sides.push("left");
-                pageside = "right";
-            } else {
-                sides.push(pageside);
-                pageside = other(pageside);
+    for &order in order {
+        match (right_to_left, order) {
+            // A rotated spread special centres the page and re-anchors the side.
+            (_, OrderClass::RotateFirst | OrderClass::RotateLast) => {
+                sides.push(PageSide::Center);
+                pageside = if right_to_left {
+                    PageSide::Right
+                } else {
+                    PageSide::Left
+                };
             }
-        } else if center {
-            sides.push("center");
-            pageside = "left";
-        } else if entry.contains("-kcc-b") {
-            sides.push("left");
-            pageside = "left";
-        } else if entry.contains("-kcc-c") {
-            sides.push("right");
-            pageside = "left";
-        } else {
-            sides.push(pageside);
-            pageside = other(pageside);
+            // A split half pins its physical side.
+            (true, OrderClass::SplitLeft) => {
+                sides.push(PageSide::Right);
+                pageside = PageSide::Right;
+            }
+            (true, OrderClass::SplitRight) => {
+                sides.push(PageSide::Left);
+                pageside = PageSide::Right;
+            }
+            (false, OrderClass::SplitLeft) => {
+                sides.push(PageSide::Left);
+                pageside = PageSide::Left;
+            }
+            (false, OrderClass::SplitRight) => {
+                sides.push(PageSide::Right);
+                pageside = PageSide::Left;
+            }
+            // An ordinary page alternates from the running side.
+            (_, OrderClass::Normal) => {
+                sides.push(pageside);
+                pageside = pageside.other();
+            }
         }
     }
 
     // Backward fix-up: every page from the first spread special onward keeps the
-    // side set by that special; earlier `-kcc-x` pages are re-alternated.
+    // side set by that special; earlier ordinary pages are re-alternated.
     let mut spread_seen = false;
-    for index in (0..reflist.len()).rev() {
-        let entry = &reflist[index];
-        if !entry.contains("-kcc-x") {
+    for index in (0..order.len()).rev() {
+        if order[index] == OrderClass::Normal {
+            if spread_seen {
+                sides[index] = pageside;
+                pageside = pageside.other();
+            }
+        } else {
             spread_seen = true;
-            pageside = if right_to_left { "left" } else { "right" };
-        } else if spread_seen {
-            sides[index] = pageside;
-            pageside = other(pageside);
+            pageside = if right_to_left {
+                PageSide::Left
+            } else {
+                PageSide::Right
+            };
         }
     }
 
     sides
 }
 
-/// The opposite page side.
-fn other(side: &'static str) -> &'static str {
-    if side == "right" {
-        "left"
+/// KCC's `group-position`: `<volume>.<number>`, or whichever part is present.
+fn group_position(metadata: &BookMetadata) -> Option<String> {
+    if !metadata.volume.is_empty() && !metadata.number.is_empty() {
+        Some(format!("{}.{}", metadata.volume, metadata.number))
+    } else if !metadata.volume.is_empty() {
+        Some(metadata.volume.clone())
+    } else if !metadata.number.is_empty() {
+        Some(metadata.number.clone())
     } else {
-        "right"
+        None
     }
 }
 
 /// Flip the opening side for a PDF/EPUB source, then for `--spread-shift`, exactly
 /// as `buildOPF` does before its forward pass.
-fn flip_for_source(mut side: &'static str, source: &Path, options: &Options) -> &'static str {
+fn flip_for_source(mut side: PageSide, source: &Path, options: &Options) -> PageSide {
     let name = source.to_string_lossy().to_lowercase();
     if name.ends_with(".pdf") || name.ends_with(".epub") {
-        side = other(side);
+        side = side.other();
     }
-    if options.spread_shift {
-        side = other(side);
+    if options.output.spread_shift {
+        side = side.other();
     }
     side
 }
 
-/// KCC's `pageSpreadProperty`: a different attribute spelling per reader family.
-fn page_spread_property(property: &str, options: &Options) -> String {
-    if options.is_kindle {
-        format!("linear=\"yes\" properties=\"page-spread-{property}\"")
-    } else if options.is_kobo {
-        format!("properties=\"rendition:page-spread-{property}\"")
-    } else {
-        String::new()
-    }
-}
-
+/// KCC's `group-position`: `<volume>.<number>`, or whichever part is present.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::Size;
 
-    /// Run the spread algorithm over file stems.
-    fn spread(entries: &[&str], right_to_left: bool, initial: &'static str) -> Vec<&'static str> {
-        let reflist: Vec<String> = entries.iter().map(|entry| entry.to_string()).collect();
-        spread_properties(&reflist, right_to_left, initial)
+    /// Run the spread algorithm over page order classes.
+    fn spread(entries: &[OrderClass], right_to_left: bool, initial: PageSide) -> Vec<PageSide> {
+        spread_properties(entries, right_to_left, initial)
     }
 
     #[test]
     fn plain_pages_alternate_from_the_initial_side() {
+        use OrderClass::Normal;
         assert_eq!(
-            spread(&["a-kcc-x", "b-kcc-x", "c-kcc-x"], false, "left"),
-            vec!["left", "right", "left"]
+            spread(&[Normal, Normal, Normal], false, PageSide::Left),
+            vec![PageSide::Left, PageSide::Right, PageSide::Left]
         );
         assert_eq!(
-            spread(&["a-kcc-x", "b-kcc-x", "c-kcc-x"], true, "right"),
-            vec!["right", "left", "right"]
+            spread(&[Normal, Normal, Normal], true, PageSide::Right),
+            vec![PageSide::Right, PageSide::Left, PageSide::Right]
         );
     }
 
     #[test]
     fn split_halves_pin_their_sides() {
-        // Left-to-right: `-kcc-b` is the left half, `-kcc-c` the right half.
+        use OrderClass::{SplitLeft, SplitRight};
+        // Left-to-right: `SplitLeft` is the left half, `SplitRight` the right half.
         assert_eq!(
-            spread(&["a-kcc-b", "b-kcc-c"], false, "left"),
-            vec!["left", "right"]
+            spread(&[SplitLeft, SplitRight], false, PageSide::Left),
+            vec![PageSide::Left, PageSide::Right]
         );
         // Right-to-left: the split halves keep their physical sides.
         assert_eq!(
-            spread(&["a-kcc-b", "b-kcc-c"], true, "right"),
-            vec!["right", "left"]
+            spread(&[SplitLeft, SplitRight], true, PageSide::Right),
+            vec![PageSide::Right, PageSide::Left]
         );
     }
 
@@ -323,62 +306,62 @@ mod tests {
     fn a_rotated_spread_is_centred_and_re_anchors_the_pages_before_it() {
         // The backward fix-up pass re-anchors the page before a spread special so
         // the ends of the book meet.
+        use OrderClass::{Normal, RotateFirst, RotateLast};
         assert_eq!(
-            spread(&["a-kcc-x", "b-kcc-d", "c-kcc-x"], false, "left"),
-            vec!["right", "center", "left"]
+            spread(&[Normal, RotateLast, Normal], false, PageSide::Left),
+            vec![PageSide::Right, PageSide::Center, PageSide::Left]
         );
         assert_eq!(
-            spread(&["a-kcc-x", "b-kcc-a", "c-kcc-x"], true, "right"),
-            vec!["left", "center", "right"]
+            spread(&[Normal, RotateFirst, Normal], true, PageSide::Right),
+            vec![PageSide::Left, PageSide::Center, PageSide::Right]
         );
     }
 
     #[test]
     fn shifting_the_initial_side_flips_every_plain_page() {
+        use OrderClass::Normal;
         assert_eq!(
-            spread(&["a-kcc-x", "b-kcc-x"], false, "right"),
-            vec!["right", "left"]
+            spread(&[Normal, Normal], false, PageSide::Right),
+            vec![PageSide::Right, PageSide::Left]
         );
     }
 
     #[test]
     fn a_scribe_above_page_adds_its_below_image_to_the_manifest() {
-        use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags};
+        use crate::ebook::model::{
+            Background, EncodedPage, MediaType, OrderClass, Orientation, PageFlags, PageName,
+            ResolvedFill, ScribeHalf,
+        };
+        use crate::ebook::output::epub::ImageDir;
 
         let below = EncodedPage {
-            name: "kcc-0001-kcc-x-below.jpg".to_string(),
+            name: PageName::new("kcc-0001-kcc-x-below.jpg"),
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: Vec::new(),
-            width: 100,
-            height: 50,
+            size: Size::new(100, 50),
             flags: PageFlags {
-                order_class: OrderClass::Normal,
-                rotated: false,
-                black_background: false,
-                above: false,
-                below: true,
+                orientation: Orientation::Upright,
+                background: ResolvedFill::new(Background::White),
+                half: ScribeHalf::Below,
             },
         };
         let entry = PageRef {
-            image_dir: "Chapter 1",
-            file: "kcc-0001-kcc-x-above.jpg",
-            stem: "kcc-0001-kcc-x-above",
-            width: 100,
-            height: 150,
+            image_dir: ImageDir::new("Chapter 1"),
+            file: FileName::new("kcc-0001-kcc-x-above.jpg"),
+            size: Size::new(100, 150),
             flags: PageFlags {
-                order_class: OrderClass::Normal,
-                rotated: false,
-                black_background: false,
-                above: true,
-                below: false,
+                orientation: Orientation::Upright,
+                background: ResolvedFill::new(Background::White),
+                half: ScribeHalf::Above,
             },
+            order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             below: Some(&below),
         };
 
         let items = manifest_items(&[entry]);
-        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
         assert_eq!(
             ids,
             [
@@ -387,7 +370,10 @@ mod tests {
                 "img_Images_Chapter 1_kcc-0001-kcc-x-below",
             ]
         );
-        assert_eq!(items[2].href, "Images/Chapter 1/kcc-0001-kcc-x-below.jpg");
+        assert_eq!(
+            items[2].href.as_str(),
+            "Images/Chapter 1/kcc-0001-kcc-x-below.jpg"
+        );
     }
 
     #[test]

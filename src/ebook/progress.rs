@@ -52,7 +52,7 @@ fn bar_for_multi(len: u64, message: String) -> ProgressBar {
 ///
 /// The message is not set here: it must be set *after* the bar is attached, so the
 /// draw it triggers reaches the [`MultiProgress`] (a bar that never draws contributes
-/// no line). See [`Reporter::push_line`].
+/// no line). See `push_line`.
 fn line_bar() -> ProgressBar {
     let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::hidden())
         .with_finish(ProgressFinish::AndLeave);
@@ -62,22 +62,17 @@ fn line_bar() -> ProgressBar {
 
 /// The status-line style, with the same constant-template fallback as [`bar_style`].
 fn line_style() -> ProgressStyle {
-    match ProgressStyle::default_bar().template("{msg}") {
-        Ok(style) => style,
-        Err(_) => ProgressStyle::default_bar(),
-    }
+    crate::progress_style::bar("{msg}")
 }
 
 /// The primary bar style. The template is a constant we know parses; on the
 /// (impossible) template error, fall back to indicatif's default style rather
 /// than panicking.
 fn bar_style() -> ProgressStyle {
-    match ProgressStyle::default_bar().template(
+    crate::progress_style::bar_with_chars(
         "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
-    ) {
-        Ok(style) => style.progress_chars("#->"),
-        Err(_) => ProgressStyle::default_bar(),
-    }
+        "#->",
+    )
 }
 
 /// Progress for a batch of files: an overall bar plus the per-file bars below it.
@@ -99,12 +94,25 @@ fn bar_style() -> ProgressStyle {
 ///
 /// Status lines ([`Reporter::println`] and [`Reporter::warn`]) are drawn *below* the
 /// bars, so the bars hold their place while the text grows downward.
+/// A reporter's shape: a batch's shared [`MultiProgress`] plus its overall bar and
+/// status lines, or the single-file standalone form.
+///
+/// Modelled as one enum so the half-set `(Some(multi), None)`/`(None, Some(overall))`
+/// pair is unrepresentable; every accessor is an exhaustive `match` over the two
+/// states (docs/refactor.md C6).
+enum Mode {
+    Batch {
+        multi: MultiProgress,
+        overall: ProgressBar,
+        /// Status lines attached below the bars, kept alive so the [`MultiProgress`]
+        /// keeps drawing them.
+        lines: RefCell<Vec<ProgressBar>>,
+    },
+    Standalone,
+}
+
 pub struct Reporter {
-    multi: Option<MultiProgress>,
-    overall: Option<ProgressBar>,
-    /// Status lines attached below the bars, kept alive so the [`MultiProgress`]
-    /// keeps drawing them. Empty outside batch mode.
-    lines: RefCell<Vec<ProgressBar>>,
+    mode: Mode,
 }
 
 impl Reporter {
@@ -112,9 +120,7 @@ impl Reporter {
     /// there is no overall bar.
     pub fn standalone() -> Self {
         Self {
-            multi: None,
-            overall: None,
-            lines: RefCell::new(Vec::new()),
+            mode: Mode::Standalone,
         }
     }
 
@@ -127,38 +133,44 @@ impl Reporter {
         let multi = MultiProgress::new();
         let overall = multi.add(bar_for_multi(total, message.into()));
         Self {
-            multi: Some(multi),
-            overall: Some(overall),
-            lines: RefCell::new(Vec::new()),
+            mode: Mode::Batch {
+                multi,
+                overall,
+                lines: RefCell::new(Vec::new()),
+            },
         }
     }
 
     /// A per-file bar: nested under the overall bar in batch mode, top-level
     /// otherwise.
     pub fn child(&self, len: u64, message: impl Into<String>) -> ProgressBar {
-        match (&self.multi, &self.overall) {
-            (Some(multi), Some(overall)) => {
+        match &self.mode {
+            Mode::Batch { multi, overall, .. } => {
                 multi.insert_after(overall, bar_for_multi(len, message.into()))
             }
-            _ => bar(len, message),
+            Mode::Standalone => bar(len, message),
         }
     }
 
     /// Record one completed file on the overall bar (a no-op without one).
     pub fn inc(&self) {
-        if let Some(overall) = &self.overall {
-            overall.inc(1);
+        match &self.mode {
+            Mode::Batch { overall, .. } => overall.inc(1),
+            Mode::Standalone => {}
         }
     }
 
     /// Clear the overall bar and settle the status lines once the batch is finished
     /// (a no-op without an overall bar).
     pub fn finish(&self) {
-        if let Some(overall) = &self.overall {
-            overall.finish_and_clear();
-        }
-        for line in self.lines.borrow().iter() {
-            line.finish();
+        match &self.mode {
+            Mode::Batch { overall, lines, .. } => {
+                overall.finish_and_clear();
+                for line in lines.borrow().iter() {
+                    line.finish();
+                }
+            }
+            Mode::Standalone => {}
         }
     }
 
@@ -167,38 +179,41 @@ impl Reporter {
     /// A plain `println!` between two draws leaves the `MultiProgress` redraw one line
     /// too low and stacks stale frames, so status lines must go through the multi.
     /// [`MultiProgress::println`] would draw them *above* the bars, pushing the bars
-    /// down on every line; [`Reporter::push_line`] attaches them below instead.
+    /// down on every line; `push_line` attaches them below instead.
     ///
     /// Because multi bars render to the draw target (stderr), an interactive
     /// multi-file run prints result lines to stderr; the headless path (redirected
     /// output) has no bars and keeps using stdout.
     pub fn println(&self, message: impl std::fmt::Display) {
-        match &self.multi {
-            Some(multi) => self.push_line(multi, message.to_string()),
-            None => println!("{message}"),
+        match &self.mode {
+            Mode::Batch { multi, lines, .. } => push_line(multi, lines, message.to_string()),
+            Mode::Standalone => println!("{message}"),
         }
     }
 
     /// Report a warning: below the bars in batch mode, on stderr otherwise.
     pub fn warn(&self, message: &str) {
-        match &self.multi {
-            Some(multi) => self.push_line(multi, message.to_string()),
-            None => warn(message),
+        match &self.mode {
+            Mode::Batch { multi, lines, .. } => push_line(multi, lines, message.to_string()),
+            Mode::Standalone => warn(message),
         }
     }
+}
 
-    /// Append `message` as a status line *below* the bars.
-    ///
-    /// [`MultiProgress::println`] draws a line *above* the bars, shoving the bars down
-    /// the screen on every call. To keep the bars in place and let the text run
-    /// downward, each line is attached as a trailing bar instead ([`line_bar`]). The
-    /// message is set after attaching so the draw it triggers reaches the multi; the
-    /// line is then retained so the multi keeps drawing it.
-    fn push_line(&self, multi: &MultiProgress, message: String) {
-        let line = multi.add(line_bar());
-        line.set_message(message);
-        self.lines.borrow_mut().push(line);
-    }
+/// Append `message` as a status line *below* the batch bars.
+///
+/// [`MultiProgress::println`] draws a line *above* the bars, shoving the bars down
+/// the screen on every call. To keep the bars in place and let the text run
+/// downward, each line is attached as a trailing bar instead ([`line_bar`]). The
+/// message is set after attaching so the draw it triggers reaches the multi; the
+/// line is then retained so the multi keeps drawing it.
+///
+/// A free function (rather than a method) so the batch `multi` is always pulled from
+/// the same enum variant that owns the lines it belongs to.
+fn push_line(multi: &MultiProgress, lines: &RefCell<Vec<ProgressBar>>, message: String) {
+    let line = multi.add(line_bar());
+    line.set_message(message);
+    lines.borrow_mut().push(line);
 }
 
 /// A spinner (indeterminate) progress bar, or a hidden bar when not interactive.
@@ -214,10 +229,7 @@ pub fn spinner(message: impl Into<String>) -> ProgressBar {
 
 /// The spinner style, with the same constant-template fallback as [`bar_style`].
 fn spinner_style() -> ProgressStyle {
-    match ProgressStyle::default_spinner().template("{spinner:.green} {msg}") {
-        Ok(style) => style,
-        Err(_) => ProgressStyle::default_spinner(),
-    }
+    crate::progress_style::spinner("{spinner:.green} {msg}")
 }
 
 /// A [`ProgressBar`] that never draws, for headless callers.

@@ -12,36 +12,93 @@
 
 use std::borrow::Cow;
 
-use image::{DynamicImage, GrayImage, RgbImage};
+use image::{DynamicImage, GrayImage, Luma, RgbImage};
 
 use crate::ebook::options::Options;
 use crate::ebook::processing::crop::trim_histogram_ends;
+use crate::units::{Percent, Range};
 
 /// `(cutoff percent, neutral diff threshold)` pairs, applied in order until one
 /// decides (see docs/processing.md).
-const CASCADE: [(f64, i32); 3] = [(0.0, 22), (0.2, 10), (3.0, 4)];
+const CASCADE: [(Percent, i32); 3] = [
+    (Percent::new(0.0), 22),
+    (Percent::new(0.2), 10),
+    (Percent::new(3.0), 4),
+];
 
 /// Below this chroma spread the page is treated as "not colourful" (KCC's bias
 /// adjustment; do not lower it).
 const SPREAD_THRESHOLD: u8 = 7;
 
+/// Whether a page was detected as colour (KCC's `colorCheck`).
+///
+/// This is the detection result *after* `--force-color` has biased the histogram;
+/// it is not the output mode — see [`OutputColor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Detected {
+    Gray,
+    Color,
+}
+
+impl Detected {
+    /// Whether the page was detected as colour.
+    pub fn is_color(self) -> bool {
+        matches!(self, Detected::Color)
+    }
+}
+
+/// The colour mode a page is actually encoded in (KCC's `colorOutput`).
+///
+/// Opaque: the inner mode is private, so `Color` can only be produced by
+/// [`OutputColor::from_detection`], and the invariant "a page is only output in
+/// colour if it was detected as colour" holds by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputColor(ColorMode);
+
+/// The private colour-mode payload of [`OutputColor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Gray,
+    Color,
+}
+
+impl OutputColor {
+    /// KCC's `colorOutput = color and forceColor`: a page keeps colour only when it
+    /// was detected as colour *and* `--force-color` is set.
+    pub fn from_detection(detected: Detected, force_color: bool) -> Self {
+        match (detected, force_color) {
+            (Detected::Color, true) => OutputColor(ColorMode::Color),
+            // `(Color, false)`, `(Gray, true)` and `(Gray, false)` all encode gray.
+            (Detected::Color, false) | (Detected::Gray, _) => OutputColor(ColorMode::Gray),
+        }
+    }
+
+    /// Whether the page is encoded in colour.
+    pub fn is_color(self) -> bool {
+        matches!(self, OutputColor(ColorMode::Color))
+    }
+
+    /// Whether the page is encoded in grayscale.
+    pub fn is_gray(self) -> bool {
+        !self.is_color()
+    }
+}
+
 /// Whether a page should be treated as colour.
 ///
-/// `original_is_grayscale` is the source's colour mode: a page that was decoded
-/// as `L`/`1` is never colour, matching KCC's `original_color_mode in ("L", "1")`
-/// shortcut.
-pub fn color_check(image: &RgbImage, original_is_grayscale: bool, options: &Options) -> bool {
-    if original_is_grayscale {
-        return false;
+/// The caller must not pass a grayscale *source* here (KCC's `original_color_mode
+/// in ("L", "1")` shortcut): a page decoded as `L`/`1` is never colour. That guard
+/// lives at the call sites, which short-circuit before the RGB round-trip — see
+/// [`crate::ebook::processing::page`].
+pub fn color_check(image: &RgbImage, options: &Options) -> Detected {
+    if options.main.webtoon {
+        return Detected::Color;
     }
-    if options.webtoon {
-        return true;
-    }
-    calculate_color(image, options.force_color)
+    calculate_color(image, options.processing.color.force_color)
 }
 
 /// The histogram cascade, returning as soon as a step decides.
-fn calculate_color(image: &RgbImage, force_color: bool) -> bool {
+fn calculate_color(image: &RgbImage, force_color: bool) -> Detected {
     let (cb_hist, cr_hist) = chroma_histograms(image);
 
     for (cutoff, diff_threshold) in CASCADE {
@@ -51,7 +108,7 @@ fn calculate_color(image: &RgbImage, force_color: bool) -> bool {
             return decision;
         }
     }
-    false
+    Detected::Gray
 }
 
 /// Cb and Cr histograms of an RGB image.
@@ -73,37 +130,34 @@ fn chroma_histograms(image: &RgbImage) -> ([u64; 256], [u64; 256]) {
 fn color_precision(
     cb_hist: &[u64; 256],
     cr_hist: &[u64; 256],
-    cutoff: f64,
+    cutoff: Percent,
     diff_threshold: i32,
     force_color: bool,
-) -> Option<bool> {
+) -> Option<Detected> {
     let mut cb = *cb_hist;
     let mut cr = *cr_hist;
     histograms_cutoff(&mut cb, &mut cr, cutoff);
 
-    let (cb_lo, cb_hi) = nonzero_bounds(&cb)?;
-    let (cr_lo, cr_hi) = nonzero_bounds(&cr)?;
-
-    let cb_spread = cb_hi - cb_lo;
-    let cr_spread = cr_hi - cr_lo;
+    let cb = nonzero_bounds(&cb)?;
+    let cr = nonzero_bounds(&cr)?;
 
     if force_color {
         // With `--force-color` a biased histogram is enough to call it colour.
-        if cb_lo > 128 || cr_lo > 128 || cb_hi < 128 || cr_hi < 128 {
-            return Some(true);
+        if cb.min > 128 || cr.min > 128 || cb.max < 128 || cr.max < 128 {
+            return Some(Detected::Color);
         }
-    } else if cb_spread < SPREAD_THRESHOLD && cr_spread < SPREAD_THRESHOLD {
-        return Some(false);
+    } else if cb.spread() < SPREAD_THRESHOLD && cr.spread() < SPREAD_THRESHOLD {
+        return Some(Detected::Gray);
     }
 
     let low = 128 - diff_threshold;
     let high = 128 + diff_threshold;
-    if i32::from(cb_lo) <= low
-        || i32::from(cr_lo) <= low
-        || i32::from(cb_hi) >= high
-        || i32::from(cr_hi) >= high
+    if i32::from(cb.min) <= low
+        || i32::from(cr.min) <= low
+        || i32::from(cb.max) >= high
+        || i32::from(cr.max) >= high
     {
-        return Some(true);
+        return Some(Detected::Color);
     }
 
     None
@@ -111,22 +165,22 @@ fn color_precision(
 
 /// Remove `cutoff` percent of samples from both ends of each histogram, which
 /// discards JPEG ringing artefacts before the spread is measured.
-fn histograms_cutoff(cb_hist: &mut [u64; 256], cr_hist: &mut [u64; 256], cutoff: f64) {
-    if cutoff == 0.0 {
+fn histograms_cutoff(cb_hist: &mut [u64; 256], cr_hist: &mut [u64; 256], cutoff: Percent) {
+    if cutoff.is_zero() {
         return;
     }
     for hist in [cb_hist, cr_hist] {
         let sample_count: u64 = hist.iter().sum();
-        let cut = ((sample_count as f64 * cutoff) / 100.0).floor() as u64;
+        let cut = ((sample_count as f64 * cutoff.value()) / 100.0).floor() as u64;
         trim_histogram_ends(hist, cut);
     }
 }
 
 /// The first and last non-zero bins of a histogram, or `None` when it is empty.
-fn nonzero_bounds(hist: &[u64; 256]) -> Option<(u8, u8)> {
+fn nonzero_bounds(hist: &[u64; 256]) -> Option<Range> {
     let first = hist.iter().position(|&count| count != 0)?;
     let last = hist.iter().rposition(|&count| count != 0)?;
-    Some((first as u8, last as u8))
+    Some(Range::new(first as u8, last as u8))
 }
 
 /// JFIF full-range RGB → YCbCr, the transform Pillow applies for `YCbCr`.
@@ -180,16 +234,20 @@ pub(crate) fn luma_view(image: &DynamicImage) -> Cow<'_, GrayImage> {
     }
 }
 
-/// Rec. 601 RGB → `L8`, written into an exactly-sized output buffer (no
-/// per-pixel allocation and no `Vec` growth, unlike `imageproc::map::map_pixels`).
+/// Rec. 601 RGB → `L8`, written into an exactly-sized output buffer (no per-pixel
+/// allocation and no `Vec` growth, unlike `imageproc::map::map_pixels`).
+///
+/// Iterates the source's raw triplets and the destination's pixels together, so there
+/// is no per-pixel bounds check, and constructs the output buffer infallibly — no
+/// `from_raw(..).unwrap_or_else(..)` blank-image fallback for a length that is
+/// `width * height` by construction (docs/refactor.md E10).
 fn rgb_to_luma(rgb: &RgbImage) -> GrayImage {
     let (width, height) = rgb.dimensions();
-    let raw = rgb.as_raw();
-    let mut out = Vec::with_capacity(raw.len() / 3);
-    for pixel in rgb.as_raw().as_chunks::<3>().0 {
-        out.push(luma601(pixel[0], pixel[1], pixel[2]));
+    let mut out = GrayImage::new(width, height);
+    for (target, pixel) in out.pixels_mut().zip(rgb.as_raw().as_chunks::<3>().0) {
+        *target = Luma([luma601(pixel[0], pixel[1], pixel[2])]);
     }
-    GrayImage::from_raw(width, height, out).unwrap_or_else(|| GrayImage::new(width, height))
+    out
 }
 
 fn clamp_u8(value: f64) -> u8 {
@@ -232,18 +290,18 @@ mod tests {
     }
 
     #[test]
-    fn grayscale_sources_are_never_colour() -> Result<()> {
-        let image = solid(8, 8, [0, 128, 255]);
-        assert!(!color_check(&image, true, &options(&[])?));
-        assert!(!color_check(&image, true, &options(&["--force-color"])?));
-        Ok(())
+    fn output_colour_keeps_colour_only_with_force_color() {
+        assert!(OutputColor::from_detection(Detected::Color, true).is_color());
+        assert!(OutputColor::from_detection(Detected::Color, false).is_gray());
+        assert!(OutputColor::from_detection(Detected::Gray, true).is_gray());
+        assert!(OutputColor::from_detection(Detected::Gray, false).is_gray());
     }
 
     #[test]
     fn grayscale_pixels_are_not_colour() -> Result<()> {
         // Cb == Cr == 128 everywhere, so the spread test bails out.
         let image = half_black(16, 16);
-        assert!(!color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Gray);
         Ok(())
     }
 
@@ -258,7 +316,7 @@ mod tests {
                 Rgb([0, 0, 255])
             }
         });
-        assert!(color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Color);
         Ok(())
     }
 
@@ -267,14 +325,17 @@ mod tests {
         // A single flat colour is treated as a (coloured) background, not as a
         // colourful page: KCC requires chroma variation.
         let image = solid(8, 8, [255, 0, 0]);
-        assert!(!color_check(&image, false, &options(&[])?));
+        assert_eq!(color_check(&image, &options(&[])?), Detected::Gray);
         Ok(())
     }
 
     #[test]
     fn webtoon_forces_colour() -> Result<()> {
         let image = half_black(16, 16);
-        assert!(color_check(&image, false, &options(&["--webtoon"])?));
+        assert_eq!(
+            color_check(&image, &options(&["--webtoon"])?),
+            Detected::Color
+        );
         Ok(())
     }
 

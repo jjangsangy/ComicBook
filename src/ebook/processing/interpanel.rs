@@ -19,6 +19,7 @@ use crate::ebook::processing::crop::{
     CROP_CUTOFF, INTERPANEL_POWER,
 };
 use crate::ebook::processing::kernels;
+use crate::units::Fraction;
 
 /// Which gutters to collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,27 +32,36 @@ pub enum Direction {
     Both,
 }
 
+/// The line kind a gutter operation acts on.
+///
+/// Both previous `bool`s (`horizontal` and `remove_rows`) used `true` for rows;
+/// this names the axis instead of relying on the reader to know the polarity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Rows,
+    Columns,
+}
+
 /// Split index `value` into `(first, last)` keeping `keep` of the span as margin.
-fn kept_span(start: i64, end: i64, keep: f64) -> (i64, i64) {
+fn kept_span(start: i64, end: i64, keep: Fraction) -> (i64, i64) {
     let span = (end - start) as f64;
-    let margin = keep / 2.0 * span;
+    let margin = keep.value() / 2.0 * span;
     ((start as f64 + margin) as i64, (end as f64 - margin) as i64)
 }
 
 /// The indices of the empty rows/columns that should be removed.
-fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize> {
+fn empty_sections(bw: &GrayImage, keep: Fraction, axis: Axis) -> BTreeSet<usize> {
     let (_, height) = bw.dimensions();
 
-    let empties: Vec<i64> = if horizontal {
-        kernels::empty_rows(bw)
+    let empties: Vec<i64> = match axis {
+        Axis::Rows => kernels::empty_rows(bw)
             .into_iter()
             .map(|y| y as i64)
-            .collect()
-    } else {
-        kernels::empty_columns(bw)
+            .collect(),
+        Axis::Columns => kernels::empty_columns(bw)
             .into_iter()
             .map(|x| x as i64)
-            .collect()
+            .collect(),
     };
 
     // The reference uses `img.size[1]` (the height) for the border test in both
@@ -81,7 +91,7 @@ fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize
 fn keep_lines<P>(
     source: &ImageBuffer<P, Vec<P::Subpixel>>,
     remove: &BTreeSet<usize>,
-    remove_rows: bool,
+    axis: Axis,
 ) -> ImageBuffer<P, Vec<P::Subpixel>>
 where
     P: Pixel + 'static,
@@ -91,39 +101,42 @@ where
     let channels = P::CHANNEL_COUNT as usize;
     let raw = source.as_raw();
 
-    if remove_rows {
-        let kept: Vec<usize> = (0..height).filter(|y| !remove.contains(y)).collect();
-        let stride = width * channels;
-        // Build the target buffer directly instead of `from_raw`ing a `Vec` and
-        // cloning the source in the (unreachable) length-mismatch branch.
-        let mut out = ImageBuffer::new(width as u32, kept.len() as u32);
-        let pixels: &mut [P::Subpixel] = &mut out;
-        for (target_y, &y) in kept.iter().enumerate() {
-            pixels[target_y * stride..(target_y + 1) * stride]
-                .copy_from_slice(&raw[y * stride..(y + 1) * stride]);
-        }
-        out
-    } else {
-        let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
-        let out_width = kept.len();
-        let mut out = ImageBuffer::new(out_width as u32, height as u32);
-        let pixels: &mut [P::Subpixel] = &mut out;
-        for y in 0..height {
-            for (target_x, &x) in kept.iter().enumerate() {
-                let from = (y * width + x) * channels;
-                let to = (y * out_width + target_x) * channels;
-                pixels[to..to + channels].copy_from_slice(&raw[from..from + channels]);
+    match axis {
+        Axis::Rows => {
+            let kept: Vec<usize> = (0..height).filter(|y| !remove.contains(y)).collect();
+            let stride = width * channels;
+            // Build the target buffer directly instead of `from_raw`ing a `Vec` and
+            // cloning the source in the (unreachable) length-mismatch branch.
+            let mut out = ImageBuffer::new(width as u32, kept.len() as u32);
+            let pixels: &mut [P::Subpixel] = &mut out;
+            for (target_y, &y) in kept.iter().enumerate() {
+                pixels[target_y * stride..(target_y + 1) * stride]
+                    .copy_from_slice(&raw[y * stride..(y + 1) * stride]);
             }
+            out
         }
-        out
+        Axis::Columns => {
+            let kept: Vec<usize> = (0..width).filter(|x| !remove.contains(x)).collect();
+            let out_width = kept.len();
+            let mut out = ImageBuffer::new(out_width as u32, height as u32);
+            let pixels: &mut [P::Subpixel] = &mut out;
+            for y in 0..height {
+                for (target_x, &x) in kept.iter().enumerate() {
+                    let from = (y * width + x) * channels;
+                    let to = (y * out_width + target_x) * channels;
+                    pixels[to..to + channels].copy_from_slice(&raw[from..from + channels]);
+                }
+            }
+            out
+        }
     }
 }
 
 /// [`keep_lines`] for a concrete [`DynamicImage`], preserving its pixel type.
-fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: bool) -> DynamicImage {
+fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, axis: Axis) -> DynamicImage {
     macro_rules! arm {
         ($variant:ident, $buffer:expr) => {
-            DynamicImage::$variant(keep_lines($buffer, remove, remove_rows))
+            DynamicImage::$variant(keep_lines($buffer, remove, axis))
         };
     }
 
@@ -138,7 +151,7 @@ fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: boo
         DynamicImage::ImageRgba16(buffer) => arm!(ImageRgba16, buffer),
         DynamicImage::ImageRgb32F(buffer) => arm!(ImageRgb32F, buffer),
         DynamicImage::ImageRgba32F(buffer) => arm!(ImageRgba32F, buffer),
-        other => DynamicImage::ImageRgb8(keep_lines(&other.to_rgb8(), remove, remove_rows)),
+        other => DynamicImage::ImageRgb8(keep_lines(&other.to_rgb8(), remove, axis)),
     }
 }
 
@@ -148,7 +161,7 @@ fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: boo
 pub fn crop_empty_inter_panel(
     image: &DynamicImage,
     direction: Direction,
-    keep: f64,
+    keep: Fraction,
     background: Background,
 ) -> DynamicImage {
     // One owned grayscale buffer, inverted/autocontrasted/blurred in place instead
@@ -161,24 +174,23 @@ pub fn crop_empty_inter_panel(
     kernels::box_blur_1_in_place(&mut gray);
     let bw = binarize_owned(gray, threshold_from_power(INTERPANEL_POWER));
 
-    let horizontal = matches!(direction, Direction::Horizontal | Direction::Both);
-    let vertical = matches!(direction, Direction::Vertical | Direction::Both);
-
-    // Only clone when a direction needs the untouched original; `remove_lines`
-    // already allocates the cropped buffer.
-    if horizontal && vertical {
-        let rows = empty_sections(&bw, keep, true);
-        let columns = empty_sections(&bw, keep, false);
-        let first = remove_lines(image, &rows, true);
-        remove_lines(&first, &columns, false)
-    } else if horizontal {
-        let rows = empty_sections(&bw, keep, true);
-        remove_lines(image, &rows, true)
-    } else if vertical {
-        let columns = empty_sections(&bw, keep, false);
-        remove_lines(image, &columns, false)
-    } else {
-        image.clone()
+    // Rows are collapsed before columns when both are requested; `remove_lines`
+    // allocates the cropped buffer, so no upfront clone is needed.
+    match direction {
+        Direction::Horizontal => {
+            let rows = empty_sections(&bw, keep, Axis::Rows);
+            remove_lines(image, &rows, Axis::Rows)
+        }
+        Direction::Vertical => {
+            let columns = empty_sections(&bw, keep, Axis::Columns);
+            remove_lines(image, &columns, Axis::Columns)
+        }
+        Direction::Both => {
+            let rows = empty_sections(&bw, keep, Axis::Rows);
+            let columns = empty_sections(&bw, keep, Axis::Columns);
+            let first = remove_lines(image, &rows, Axis::Rows);
+            remove_lines(&first, &columns, Axis::Columns)
+        }
     }
 }
 
@@ -189,12 +201,9 @@ mod tests {
 
     /// Two panels stacked vertically with a white gutter between them, matching
     /// the committed `interpanel-white.png` fixture.
-    fn two_panels(width: u32, height: u32, gutter: (u32, u32)) -> DynamicImage {
-        let (gutter_top, gutter_bottom) = gutter;
+    fn two_panels(width: u32, height: u32, gutter: std::ops::Range<u32>) -> DynamicImage {
         DynamicImage::ImageRgb8(RgbImage::from_fn(width, height, |x, y| {
-            let panel = (20..180).contains(&x)
-                && (20..280).contains(&y)
-                && !(gutter_top..gutter_bottom).contains(&y);
+            let panel = (20..180).contains(&x) && (20..280).contains(&y) && !gutter.contains(&y);
             if panel {
                 Rgb([0, 0, 0])
             } else {
@@ -205,30 +214,49 @@ mod tests {
 
     #[test]
     fn horizontal_crop_collapses_the_gutter() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped =
-            crop_empty_inter_panel(&image, Direction::Horizontal, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (200, 285));
     }
 
     #[test]
     fn vertical_crop_collapses_the_side_margins() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped = crop_empty_inter_panel(&image, Direction::Vertical, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Vertical,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (184, 300));
     }
 
     #[test]
     fn both_directions_compose() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped = crop_empty_inter_panel(&image, Direction::Both, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Both,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (184, 285));
     }
 
     #[test]
     fn a_solid_page_has_no_gutters_to_crop() {
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(200, 300, Rgb([0, 0, 0])));
-        let cropped = crop_empty_inter_panel(&image, Direction::Both, 0.04, Background::White);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Both,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (200, 300));
     }
 
@@ -239,7 +267,12 @@ mod tests {
                 (20..180).contains(&x) && (20..280).contains(&y) && !(140..160).contains(&y);
             image::Luma([if panel { 0 } else { 255 }])
         }));
-        let cropped = crop_empty_inter_panel(&gray, Direction::Horizontal, 0.04, Background::White);
+        let cropped = crop_empty_inter_panel(
+            &gray,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert!(matches!(cropped, DynamicImage::ImageLuma8(_)));
         assert_eq!(cropped.dimensions(), (200, 285));
     }
@@ -247,6 +280,6 @@ mod tests {
     #[test]
     fn kept_span_retains_half_the_margin_at_each_end() {
         // A 16-pixel gutter keeps 2 % at each end, so 15 rows are dropped.
-        assert_eq!(kept_span(142, 158, 0.04), (142, 157));
+        assert_eq!(kept_span(142, 158, Fraction::new(0.04)), (142, 157));
     }
 }

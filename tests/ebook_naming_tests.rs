@@ -41,11 +41,11 @@ fn shape(tree: &comic_book::ebook::ComicTree) -> Vec<(String, Vec<String>)> {
         .iter()
         .map(|chapter| {
             (
-                chapter.name.clone(),
+                chapter.name.to_string(),
                 chapter
                     .pages
                     .iter()
-                    .map(|page| page.source_name.clone())
+                    .map(|page| page.source_name.to_string())
                     .collect(),
             )
         })
@@ -121,7 +121,7 @@ fn unsorted_chapters_get_zero_padded_numbers() -> Result<()> {
     let mut tree = load_tree(&source, &options(&[])?)?;
     sanitize_tree(&mut tree, &options(&["-f", "epub"])?);
 
-    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.to_string()).collect();
     assert_eq!(names, vec!["chapter-0001", "chapter-0002", "chapter-0010"]);
     Ok(())
 }
@@ -136,7 +136,7 @@ fn cbz_keeps_naturally_ordered_directory_names() -> Result<()> {
     let mut tree = load_tree(&source, &options(&[])?)?;
     sanitize_tree(&mut tree, &options(&["-p", "KDX"])?);
 
-    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.to_string()).collect();
     assert_eq!(names, vec!["Chapter 1", "Chapter 2"]);
     Ok(())
 }
@@ -152,7 +152,7 @@ fn cbz_still_pads_unsorted_directory_numbers() -> Result<()> {
     let mut tree = load_tree(&source, &options(&[])?)?;
     sanitize_tree(&mut tree, &options(&["-p", "KDX"])?);
 
-    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.to_string()).collect();
     assert_eq!(names, vec!["Chapter 0001", "Chapter 0002", "Chapter 0010"]);
     Ok(())
 }
@@ -169,7 +169,7 @@ fn colliding_slugs_get_an_a_suffix() -> Result<()> {
     let mut tree = load_tree(&source, &options(&[])?)?;
     sanitize_tree(&mut tree, &options(&["-f", "epub"])?);
 
-    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = tree.chapters.iter().map(|c| c.name.to_string()).collect();
     assert_eq!(names, vec!["foo-bar", "foo-barA"]);
     Ok(())
 }
@@ -484,7 +484,7 @@ fn comicinfo_bookmarks_are_parsed_through_prepare_book() -> Result<()> {
         prepared.sanitized.cover_path.as_deref(),
         Some("kcc-0001.png")
     );
-    assert_eq!(prepared.tree.chapters[1].name, "chapter-1");
+    assert_eq!(prepared.tree.chapters[1].name.as_str(), "chapter-1");
     let comicinfo = prepared
         .tree
         .comicinfo

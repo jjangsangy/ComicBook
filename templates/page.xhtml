@@ -4,13 +4,13 @@
 <head>
 <title>{{ title }}</title>
 <link href="{{ style_href }}" type="text/css" rel="stylesheet"/>
-<meta name="viewport" content="width={{ viewport_width }}, height={{ viewport_height }}"/>
+<meta name="viewport" content="width={{ viewport.width }}, height={{ viewport.height }}"/>
 </head>
 <body style="{{ body_style }}">
 <div style="text-align:center;">
 {% if kindle_spacer %}<div style="display:none;">.</div>
-{% endif %}<img width="{{ img_width }}" height="{{ img_height }}" src="{{ image_src }}"/>
-{% if has_below %}<img style="top: 1920px" width="{{ below_img_width }}" height="{{ below_img_height }}" src="{{ below_image_src }}"/>
+{% endif %}<img width="{{ img_size.width }}" height="{{ img_size.height }}" src="{{ image_src }}"/>
+{% if let Some(below) = below %}<img style="top: 1920px" width="{{ below.size.width }}" height="{{ below.size.height }}" src="{{ below.src }}"/>
 {% endif %}</div>
 {% if panel %}<div id="PV">
 {% for region in boxes %}<div id="{{ region.id }}">
@@ -18,7 +18,7 @@
 </div>
 {% endfor %}</div>
 {% for region in boxes %}<div class="PV-P" id="{{ region.id }}-P" style="{{ body_style }}">
-<img style="{{ region.style }}" src="{{ image_src }}" width="{{ panel_width }}" height="{{ panel_height }}"/>
+<img style="{{ region.style }}" src="{{ image_src }}" width="{{ panel_size.width }}" height="{{ panel_size.height }}"/>
 </div>
 {% endfor %}{% endif %}</body>
 </html>

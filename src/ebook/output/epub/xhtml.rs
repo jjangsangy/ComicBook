@@ -12,12 +12,14 @@
 //! values it interpolates (see docs/dependencies.md).
 
 use anyhow::Result;
+use relative_path::RelativePath;
 
 use super::html_escape;
-use super::templates::{render_lf, PageXhtml, PanelBox};
+use super::templates::{render_lf, BelowImage, PageXhtml, PanelBox, PanelId};
 use super::PageRef;
-use crate::ebook::model::PageFlags;
-use crate::ebook::options::Options;
+use crate::ebook::model::{Orientation, PageFlags};
+use crate::ebook::options::{Options, PanelView, ReaderFamily};
+use crate::units::Size;
 
 /// Build one page's XHTML (`buildHTML`).
 ///
@@ -29,17 +31,13 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     let PageRef {
         image_dir,
         file,
-        stem,
-        width,
-        height,
+        size,
         flags,
         below,
         ..
     } = *page;
-    let depth = image_dir
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .count();
+    let stem = page.stem();
+    let depth = RelativePath::new(image_dir.as_str()).components().count();
     // KCC walks `dirpath` up to the `Images` component, counting one `../` per
     // level and one for the `Text/` level itself.
     let backref = depth + 1;
@@ -53,60 +51,56 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
 
     // The viewport spans the stacked page (KCC's `imgsizeframe`), but each `<img>`
     // keeps its own size.
-    let frame_height = height + below.map_or(0, |image| image.height);
-    let (viewport_width, viewport_height) = if options.hq {
-        (
-            (f64::from(width) / 1.5).floor() as u32,
+    let frame_height = size.height + below.map_or(0, |image| image.size.height);
+    let viewport = if options.main.hq {
+        Size::new(
+            (f64::from(size.width) / 1.5).floor() as u32,
             (f64::from(frame_height) / 1.5).floor() as u32,
         )
     } else {
-        (width, frame_height)
+        Size::new(size.width, frame_height)
     };
 
-    let body_style = if flags.black_background {
+    let body_style = if flags.background.is_black() {
         "background-color:#000000;"
     } else {
         ""
     };
-    let title = html_escape(stem);
+    let title = html_escape(stem.as_str());
 
-    let (below_src, below_width, below_height) = match below {
+    // The Scribe `-below` reference: `format!` allocates only when a companion
+    // exists; the absent case is an empty, never-referenced `String`.
+    let below_src = match below {
         Some(image) => {
-            let file = image.name.rsplit('/').next().unwrap_or(image.name.as_str());
-            (
-                format!("{}Images/{postfix}{file}", "../".repeat(backref)),
-                image.width,
-                image.height,
-            )
+            let file = image.name.as_relative().file_name().unwrap_or("");
+            format!("{}Images/{postfix}{file}", "../".repeat(backref))
         }
-        None => (String::new(), 0, 0),
+        None => String::new(),
     };
+    let below_image = below.map(|image| BelowImage {
+        src: below_src.as_str(),
+        size: image.size,
+    });
 
-    let panel = options.is_kindle && options.panel_view;
-    let (boxes, panel_width, panel_height) = if panel {
-        panel_layout(width, height, flags, options)
+    let panel = options.panel_view_enabled();
+    let (boxes, panel_size) = if panel {
+        panel_layout(size, flags, options)
     } else {
-        (Vec::new(), width, height)
+        (Vec::new(), size)
     };
 
     let view = PageXhtml {
         title: &title,
         style_href: &style_href,
-        viewport_width,
-        viewport_height,
+        viewport,
         body_style,
-        kindle_spacer: options.is_kindle,
-        img_width: width,
-        img_height: height,
+        kindle_spacer: options.device.reader == ReaderFamily::Kindle,
+        img_size: size,
         image_src: &image_src,
-        has_below: below.is_some(),
-        below_image_src: &below_src,
-        below_img_width: below_width,
-        below_img_height: below_height,
+        below: below_image,
         panel,
         boxes: &boxes,
-        panel_width,
-        panel_height,
+        panel_size,
     };
     // askama drops a single trailing newline from every template; KCC's page
     // XHTML is newline terminated (see docs/architecture.md).
@@ -115,93 +109,120 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     Ok(out.into_bytes())
 }
 
+/// Panel View regions for the 2x2 grid, in KCC's `boxes` order.
+const PANELS_2X2: [PanelId; 4] = [PanelId::Tl, PanelId::Tr, PanelId::Bl, PanelId::Br];
+/// Panel View regions when the page is narrower than the screen (`PV-T`/`PV-B`).
+const PANELS_STACKED: [PanelId; 2] = [PanelId::T, PanelId::B];
+/// Panel View regions when the page is shorter than the screen (`PV-L`/`PV-R`).
+const PANELS_SIDE_BY_SIDE: [PanelId; 2] = [PanelId::L, PanelId::R];
+
+/// The Panel View grid shape for a page (KCC's `buildHTML` axis test).
+///
+/// Modelling the shape as an enum (rather than a `(no_horizontal, no_vertical)`
+/// `bool` pair) makes the four reachable shapes exhaustive, and keys both the
+/// region list and its magnification order off one value, so the two can never
+/// disagree (docs/refactor.md §2.1/§2.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelGrid {
+    /// The page fills the screen in both axes: no panels.
+    None,
+    /// The page is smaller than the screen in both axes: the 2x2 quadrants.
+    Quadrants,
+    /// The page overflows one axis only: the top/bottom halves.
+    Stacked,
+    /// The page overflows the other axis only: the left/right halves.
+    SideBySide,
+}
+
+impl PanelGrid {
+    /// Classify from the two axis predicates: `no_horizontal` is the scaled width
+    /// not exceeding the screen, `no_vertical` the same for the height.
+    fn classify(no_horizontal: bool, no_vertical: bool) -> Self {
+        match (no_horizontal, no_vertical) {
+            (true, true) => PanelGrid::None,
+            (false, false) => PanelGrid::Quadrants,
+            (true, false) => PanelGrid::Stacked,
+            (false, true) => PanelGrid::SideBySide,
+        }
+    }
+
+    /// The regions in KCC's `boxes` order.
+    fn regions(self) -> &'static [PanelId] {
+        match self {
+            PanelGrid::None => &[],
+            PanelGrid::Quadrants => &PANELS_2X2,
+            PanelGrid::Stacked => &PANELS_STACKED,
+            PanelGrid::SideBySide => &PANELS_SIDE_BY_SIDE,
+        }
+    }
+
+    /// The magnification ordinals, keyed by orientation and reading direction.
+    fn order(self, orientation: Orientation, right_to_left: bool) -> &'static [u32] {
+        match self {
+            PanelGrid::None => &[],
+            PanelGrid::Quadrants => match (orientation, right_to_left) {
+                (Orientation::Rotated, true) => &[1, 3, 2, 4],
+                (Orientation::Rotated, false) => &[2, 4, 1, 3],
+                (Orientation::Upright, true) => &[2, 1, 4, 3],
+                (Orientation::Upright, false) => &[1, 2, 3, 4],
+            },
+            PanelGrid::Stacked => match (orientation, right_to_left) {
+                (Orientation::Rotated, true) => &[1, 2],
+                (Orientation::Rotated, false) => &[2, 1],
+                (Orientation::Upright, _) => &[1, 2],
+            },
+            PanelGrid::SideBySide => match (orientation, right_to_left) {
+                (Orientation::Rotated, _) => &[1, 2],
+                (Orientation::Upright, true) => &[2, 1],
+                (Orientation::Upright, false) => &[1, 2],
+            },
+        }
+    }
+}
+
 /// The Kindle virtual Panel View grid (`buildHTML`'s `PV-*` block).
 ///
 /// The panel grid depends on how the page's scaled size compares with the device
 /// screen: a page far smaller than the screen in one axis drops those panels.
-fn panel_layout(
-    width: u32,
-    height: u32,
-    flags: PageFlags,
-    options: &Options,
-) -> (Vec<PanelBox>, u32, u32) {
-    let device = (options.profile_data.width, options.profile_data.height);
+fn panel_layout(size: Size, flags: PageFlags, options: &Options) -> (Vec<PanelBox>, Size) {
+    let device = options.device_size();
 
     // `--two-panel` scales the page to the device width; `--hq` magnifies by 1.5x.
-    let size = if options.two_panel {
-        let scale = f64::from(device.0) / f64::from(width);
-        (device.0, (scale * f64::from(height)) as u32)
-    } else if options.hq {
-        (width, height)
-    } else {
-        (
-            (f64::from(width) * 1.5) as u32,
-            (f64::from(height) * 1.5) as u32,
-        )
+    let scaled = match options.main.panel_view {
+        PanelView::Two => {
+            let scale = f64::from(device.width) / f64::from(size.width);
+            Size::new(device.width, (scale * f64::from(size.height)) as u32)
+        }
+        PanelView::Hq => size,
+        PanelView::Legacy | PanelView::Off => Size::new(
+            (f64::from(size.width) * 1.5) as u32,
+            (f64::from(size.height) * 1.5) as u32,
+        ),
     };
 
-    let no_horizontal = f64::from(size.0) - f64::from(device.0) < f64::from(device.0) * 0.01;
-    let no_vertical = f64::from(size.1) - f64::from(device.1) < f64::from(device.1) * 0.01;
+    let no_horizontal =
+        f64::from(scaled.width) - f64::from(device.width) < f64::from(device.width) * 0.01;
+    let no_vertical =
+        f64::from(scaled.height) - f64::from(device.height) < f64::from(device.height) * 0.01;
 
-    let x = panel_offset(device.0, size.0);
-    let y = panel_offset(device.1, size.1);
+    let x = panel_offset(device.width, scaled.width);
+    let y = panel_offset(device.height, scaled.height);
 
-    // The panel order and grid follow `buildHTML`: a rotated page reorders the
-    // quadrants, and right-to-left reading mirrors them.
-    let (names, order): (&[&'static str], &[u32]) = if !no_horizontal && !no_vertical {
-        if flags.rotated {
-            if options.right_to_left {
-                (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[1, 3, 2, 4])
-            } else {
-                (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[2, 4, 1, 3])
-            }
-        } else if options.right_to_left {
-            (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[2, 1, 4, 3])
-        } else {
-            (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[1, 2, 3, 4])
-        }
-    } else if no_horizontal && !no_vertical {
-        if flags.rotated && !options.right_to_left {
-            (&["PV-T", "PV-B"], &[2, 1])
-        } else {
-            (&["PV-T", "PV-B"], &[1, 2])
-        }
-    } else if !no_horizontal && no_vertical {
-        if flags.rotated || !options.right_to_left {
-            (&["PV-L", "PV-R"], &[1, 2])
-        } else {
-            (&["PV-L", "PV-R"], &[2, 1])
-        }
-    } else {
-        (&[], &[])
-    };
+    let right_to_left = options.main.right_to_left();
+    let grid = PanelGrid::classify(no_horizontal, no_vertical);
 
-    let boxes = names
+    let boxes = grid
+        .regions()
         .iter()
-        .zip(order)
-        .map(|(&name, &ordinal)| PanelBox {
-            id: name,
+        .zip(grid.order(flags.orientation, right_to_left))
+        .map(|(&id, &ordinal)| PanelBox {
+            id,
             ordinal,
-            style: panel_style(name, x, y),
+            style: id.style(x, y),
         })
         .collect();
 
-    (boxes, size.0, size.1)
-}
-
-/// The `style` attribute of a Panel View region.
-fn panel_style(name: &str, x: i64, y: i64) -> String {
-    match name {
-        "PV-TL" => "position:absolute;left:0;top:0;".to_string(),
-        "PV-TR" => "position:absolute;right:0;top:0;".to_string(),
-        "PV-BL" => "position:absolute;left:0;bottom:0;".to_string(),
-        "PV-BR" => "position:absolute;right:0;bottom:0;".to_string(),
-        "PV-T" => format!("position:absolute;top:0;left:{x}%;"),
-        "PV-B" => format!("position:absolute;bottom:0;left:{x}%;"),
-        "PV-L" => format!("position:absolute;left:0;top:{y}%;"),
-        "PV-R" => format!("position:absolute;right:0;top:{y}%;"),
-        _ => String::new(),
-    }
+    (boxes, scaled)
 }
 
 /// KCC's `getPanelViewSize`: the percentage offset of a centred panel.
@@ -220,5 +241,13 @@ mod tests {
         assert_eq!(panel_offset(1072, 642), 20);
         // A panel wider than the screen overhangs both edges (negative offset).
         assert_eq!(panel_offset(600, 800), -16);
+    }
+
+    #[test]
+    fn panel_grids_are_classified_by_which_axis_the_page_fills() {
+        assert_eq!(PanelGrid::classify(true, true), PanelGrid::None);
+        assert_eq!(PanelGrid::classify(false, false), PanelGrid::Quadrants);
+        assert_eq!(PanelGrid::classify(true, false), PanelGrid::Stacked);
+        assert_eq!(PanelGrid::classify(false, true), PanelGrid::SideBySide);
     }
 }
