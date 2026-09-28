@@ -1,5 +1,7 @@
-use crate::archive::path::{parse_entry_info, safe_join};
-use crate::archive::reader::{ArchiveReader, EntryCallback};
+use crate::archive::path::{
+    parse_entry_info, safe_join, ArchiveEntry, EntryKind, NormalizedArchivePath,
+};
+use crate::archive::reader::{ArchiveReader, EntryCallback, EntryContent};
 use anyhow::Result;
 use std::fs;
 use std::io::Read;
@@ -37,31 +39,39 @@ impl DirectoryReader {
 impl ArchiveReader for DirectoryReader {
     fn read_entries(&mut self, scratch: &mut Vec<u8>, on_entry: EntryCallback) -> Result<()> {
         for entry in self.walk_sorted() {
+            let ft = entry.file_type();
             let p = entry.path();
             let rel_path = match p.strip_prefix(&self.path) {
                 Ok(rp) => rp,
                 Err(_) => continue,
             };
             let rel_str = rel_path.to_string_lossy();
-            if let Some((clean_name, _)) = parse_entry_info(&rel_str, entry.file_type().is_dir()) {
-                let ft = entry.file_type();
-                if ft.is_dir() {
-                    on_entry(&clean_name, true, &[])?;
-                } else if ft.is_file() || ft.is_symlink() {
-                    // Reuse the caller's buffer instead of a fresh `fs::read` allocation per file.
-                    if let Ok(mut file) = fs::File::open(p) {
-                        scratch.clear();
-                        if file.read_to_end(scratch).is_ok() {
-                            on_entry(&clean_name, false, scratch)?;
+            // Branch on the `EntryKind` parsed from the entry instead of discarding it and
+            // re-deriving directory-ness from `file_type()` a second time.
+            if let Some(parsed) = parse_entry_info(&rel_str, ft.is_dir()) {
+                match parsed.kind {
+                    EntryKind::Directory => {
+                        on_entry(&parsed.name, EntryContent::Directory)?;
+                    }
+                    // `EntryKind::File` also covers other node types (sockets, fifos); skip those,
+                    // as opening a fifo would block.
+                    EntryKind::File if ft.is_file() || ft.is_symlink() => {
+                        // Reuse the caller's buffer instead of a fresh `fs::read` allocation per file.
+                        if let Ok(mut file) = fs::File::open(p) {
+                            scratch.clear();
+                            if file.read_to_end(scratch).is_ok() {
+                                on_entry(&parsed.name, EntryContent::File(scratch))?;
+                            }
                         }
                     }
+                    EntryKind::File => {}
                 }
             }
         }
         Ok(())
     }
 
-    fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
+    fn list_entries(&mut self) -> Result<Vec<ArchiveEntry>> {
         let mut entries = Vec::new();
         for entry in self.walk_sorted() {
             let p = entry.path();
@@ -70,10 +80,8 @@ impl ArchiveReader for DirectoryReader {
                 Err(_) => continue,
             };
             let rel_str = rel_path.to_string_lossy();
-            if let Some((clean_name, is_dir)) =
-                parse_entry_info(&rel_str, entry.file_type().is_dir())
-            {
-                entries.push((clean_name, is_dir));
+            if let Some(parsed) = parse_entry_info(&rel_str, entry.file_type().is_dir()) {
+                entries.push(parsed);
             }
         }
         Ok(entries)
@@ -96,18 +104,25 @@ impl DirectoryArchiveWriter {
         })
     }
 
-    pub fn add_entry(&mut self, normalized_name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
-        let target = safe_join(&self.dest_dir, normalized_name);
+    pub fn add_entry(
+        &mut self,
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
+        let target = safe_join(&self.dest_dir, normalized_name.as_str());
         if target == self.dest_dir {
             return Ok(());
         }
-        if is_dir {
-            fs::create_dir_all(&target)?;
-        } else {
-            if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
-                fs::create_dir_all(parent)?;
+        match content {
+            EntryContent::Directory => {
+                fs::create_dir_all(&target)?;
             }
-            fs::write(&target, data)?;
+            EntryContent::File(data) => {
+                if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&target, data)?;
+            }
         }
         Ok(())
     }

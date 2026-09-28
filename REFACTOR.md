@@ -838,6 +838,112 @@ Existing always-on tests already pin two contracts the refactor must not break:
 
 ---
 
+## 8. Side quests
+
+These are optional and out-of-band with respect to the ordered phases: they are not required for
+the type-safety goal, they add a dependency, and they should only be scheduled when the code they
+delete is worth more than the crate they add (the off-the-shelf policy in
+[docs/dependencies.md](docs/dependencies.md) still holds: prefer the crate when it genuinely
+fits). Each is self-contained — land it on top of a green phase, keep the full suite green, and
+record a `[Unreleased]` entry.
+
+### 8.1 Back the path newtypes with `relative-path`
+
+**Motivation.** Phase 1 introduced [`NormalizedArchivePath`](#phase-1--archive-tag-union-and-path-identity)
+and, with it, a small pile of hand-rolled *cross-platform interop* helpers that re-implement what a
+maintained relative-path library already does — on exactly the semantics we care about (always
+`/`-separated, platform-independent, no root/prefix). The later phases add more of the same
+(D1 `SourceName`/`RelPath`/`PageName`, D10 `naming` slugs and `cover_path`, D12 `PageRef`, D13 the
+output ids, D14 `ChapterName`), so the bespoke surface only grows.
+
+**Proposal.** Adopt [`relative-path`](https://docs.rs/relative-path)
+(`RelativePath` borrowed, `RelativePathBuf` owned; MIT OR Apache-2.0, pure Rust) and make it the
+*backing store* of the path newtypes instead of exposing it:
+
+```rust
+#[repr(transparent)]
+pub struct NormalizedArchivePath(RelativePathBuf);   // (D7)
+
+impl NormalizedArchivePath {
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+    pub fn as_relative(&self) -> &RelativePath { self.0.as_relative_path() }
+}
+```
+
+The outer newtype **stays**: the invariant it encodes — sanitized, non-empty, zip-slip-safe — is
+not something `RelativePath` guarantees. `RelativePath::new("../..")` is a legal value, and
+`is_normalized()` even counts `"../.."` as normalized. So `relative-path` is a backing type and a
+helper source, never the public path type.
+
+**Interop helpers retired.** The helpers below are pure cross-platform string plumbing; each is
+subsumed by a `relative-path` method.
+
+| Finding | Hand-rolled helper | Replace with |
+|:--|:--|:--|
+| E5 | the repeated `.rsplit(['/', '\\']).next().unwrap_or(name)` (`archive/path.rs`, `archive/ops.rs`, `ebook/input/archive.rs`, `ebook/input/epub.rs`, `ebook/naming.rs`, `ebook/chunk.rs`, `output/epub/{mod,xhtml,opf}.rs`) | `RelativePath::file_name()` |
+| G6 | `image_extension` (`ebook/input/archive.rs`), the `stem` helper (`ebook/mod.rs`), `split_dir_file` (`ebook/input/archive.rs`), the webtoon/page stem helpers | `extension()`, `file_stem()`, `parent()` / `file_name()` |
+| D14 | `Chapter.name`'s `""` root sentinel plus the `split_dir_file`/`compare_dir_paths` walk | `parent()` / `components()` |
+| D1 | `LoadedPage.name` / `Page.source_name` / `Page.rel_path` string surgery | `RelativePathBuf` fields behind `SourceName`/`RelPath`/`PageName` |
+| — | the `['/', '\\']` separator ladders in `is_os_metadata`, `find_single_root_dir`, `parse_entry_info` and the EPUB container path resolution | `components()` / `iter()` |
+| — | `NormalizedArchivePath::strip_prefix` (the one place that still allocates on the root-strip path) | `RelativePath::strip_prefix` (borrowed) — see the caveat below |
+
+**What must stay bespoke.** “Retire every interop helper” is achievable for the read-side
+accessors, but two things cannot be delegated and must keep their own code:
+
+- **The sanitizer rules.** Traversal (`.`/`..`), Windows drive prefixes, per-component whitespace
+trimming and empty → `None` are KCC-derived and security-relevant.
+`RelativePath::normalize()` *keeps* leading `..` and does not drop drive letters or trim, so it
+cannot stand in for `normalize_archive_path`; the sanitizer may only *produce* a `RelativePathBuf`.
+- **`safe_join`'s semantics.** It *drops* `..` on the floor rather than *popping* the previous
+component, so it is deliberately not `RelativePath::to_logical_path` (compare
+`integration_tests::test_safe_join`, where `../../../system32/cmd.exe` becomes
+`<base>/system32/cmd.exe`). Keep it bespoke, or re-express it as “sanitize, then
+`to_logical_path`” — but pin the existing test either way, because output is frozen (§1 rule 4).
+- `image_ops::is_image_file` (E16) operates on a `std::path::Path`, not an archive name, so
+`relative-path` does not apply there.
+
+**Open design question — the borrowed view.** `RelativePath::strip_prefix` returns a borrowed
+`&RelativePath`, but that cannot be turned back into `&NormalizedArchivePath` without `unsafe`
+(the remainder is sanitized only by construction, which the type system cannot see). Two honest
+options: (a) keep the current one-allocation `strip_prefix` on the root-strip path — short names,
+never a pixel buffer; or (b) relax `add_entry_normalized` to take `&RelativePath`, trading the
+“already sanitized” guarantee for a zero-allocation strip. Option (a) is the recommendation;
+(b) weakens D7.
+
+**Alternatives considered.** `camino` and `typed-path` give UTF-8 / typed paths but a
+host-sensitive or otherwise different separator model and no `/`-canonical guarantee;
+`path-clean` and `normpath` *keep* leading `..`, which is precisely the zip-slip case they would
+need to remove; `path-slash` only converts separators (a `.replace`, not worth a dependency);
+`sanitize-filename` works on a single component, not a path. `relative-path` is the only crate
+whose model matches “a relative, `/`-separated path” — the shape every name in this pipeline has.
+
+**Cost / risk.**
+
+- ➕ One well-tested, pure-Rust dependency (no default features needed) replaces a growing pile of
+bespoke string surgery; aligned with the off-the-shelf policy.
+- ➕ Zero runtime cost: `RelativePathBuf` is a `String` wrapper and `&RelativePath` is a fat
+pointer, the same shapes as today's `String`/`&str`. A `#[repr(transparent)]` newtype over it stays
+compiler-erased.
+- ⚠️ **Output is frozen (§1 rule 4).** `relative-path`'s component model and its
+`to_path`/`to_logical_path` must be pinned to our current Windows behaviour before they are allowed
+to reach `safe_join` or the archive writers; the golden tests and `test_safe_join` are the gate.
+- ⚠️ New dependency → a row in [docs/dependencies.md](docs/dependencies.md) and an `[Unreleased]`
+entry.
+
+**Sequencing.** Best done *after Phase 6* (page state machine and name identity), where
+D1/D12/D14/D15 and the `SourceName`/`RelPath`/`PageName`/`ChapterName` newtypes land: introduce
+the crate once, delete the helpers once. It also subsumes the Phase 8 items E5 and G6, so it can
+be scheduled as an optional “Phase 8.5” rather than a re-touch of every phase.
+
+**Gate.** Full suite green — in particular `integration_tests::test_normalize_archive_path`,
+`test_safe_join`, `test_cross_platform_nested_directory_extraction`, `ebook_input_tests` and
+`ebook_robustness_tests` — plus a new cross-check that drives hostile names (`../`, `..\`, a
+leading `/`, `C:\`, an empty name) through the sanitizer and asserts it neutralizes exactly what
+`zip`'s `enclosed_name()` rejects (the `zip` crate is already a dependency, so this needs no new
+code).
+
+---
+
 ## Appendix — findings index
 
 Counts by category: **A** boolean blindness 21 · **B** stringly/magic 16 · **C** type
@@ -847,4 +953,5 @@ memory footguns 4.
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
 archive tag union (1) → typed CLI values (2) → config sum types (3) → geometry newtypes
 (4) → processing enums (5) → page state machine (6) → output types (7) → guard/dedup
-sweep (8) → docs close-out (9).
+sweep (8) → docs close-out (9). The optional
+[crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).

@@ -1,5 +1,5 @@
-use crate::archive::path::parse_entry_info;
-use crate::archive::reader::{ArchiveReader, EntryCallback};
+use crate::archive::path::{parse_entry_info, ArchiveEntry, EntryKind, NormalizedArchivePath};
+use crate::archive::reader::{ArchiveReader, EntryCallback, EntryContent};
 use anyhow::{anyhow, Result};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -32,17 +32,20 @@ impl ArchiveReader for SevenZipReader {
             .for_each_entries(|entry, r| {
                 let is_dir_flag = entry.is_directory()
                     || (entry.has_windows_attributes && (entry.windows_attributes & 0x10) != 0);
-                if let Some((clean_name, is_dir)) = parse_entry_info(entry.name(), is_dir_flag) {
-                    if is_dir {
-                        on_entry(&clean_name, true, &[])
-                            .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
-                    } else {
-                        // Reuse the caller's buffer instead of allocating per entry.
-                        scratch.clear();
-                        r.read_to_end(scratch)
-                            .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
-                        on_entry(&clean_name, false, scratch)
-                            .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
+                if let Some(parsed) = parse_entry_info(entry.name(), is_dir_flag) {
+                    match parsed.kind {
+                        EntryKind::Directory => {
+                            on_entry(&parsed.name, EntryContent::Directory)
+                                .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
+                        }
+                        EntryKind::File => {
+                            // Reuse the caller's buffer instead of allocating per entry.
+                            scratch.clear();
+                            r.read_to_end(scratch)
+                                .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
+                            on_entry(&parsed.name, EntryContent::File(scratch))
+                                .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
+                        }
                     }
                 }
                 Ok(true)
@@ -51,13 +54,13 @@ impl ArchiveReader for SevenZipReader {
         Ok(())
     }
 
-    fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
+    fn list_entries(&mut self) -> Result<Vec<ArchiveEntry>> {
         let mut entries = Vec::new();
         for entry in self.reader.archive().files.iter() {
             let is_dir_flag = entry.is_directory()
                 || (entry.has_windows_attributes && (entry.windows_attributes & 0x10) != 0);
-            if let Some((clean_name, is_dir)) = parse_entry_info(entry.name(), is_dir_flag) {
-                entries.push((clean_name, is_dir));
+            if let Some(parsed) = parse_entry_info(entry.name(), is_dir_flag) {
+                entries.push(parsed);
             }
         }
         Ok(entries)
@@ -85,32 +88,34 @@ impl SevenZipArchiveWriter {
         Ok(Self { writer: sz })
     }
 
-    pub fn add_entry(&mut self, normalized_name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
+    pub fn add_entry(
+        &mut self,
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
+        let name = normalized_name.as_str();
         let mut entry = sevenz_rust2::ArchiveEntry::new();
-        entry.name = normalized_name.to_string();
-        if is_dir {
-            entry.has_stream = false;
-            entry.is_directory = true;
-            entry.has_windows_attributes = true;
-            entry.windows_attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
-            self.writer
-                .push_archive_entry(entry, None::<&[u8]>)
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to add 7z directory entry {}: {:?}",
-                        normalized_name,
-                        e
-                    )
-                })?;
-        } else {
-            entry.has_stream = true;
-            entry.is_directory = false;
-            entry.has_windows_attributes = true;
-            entry.windows_attributes = 0x20; // FILE_ATTRIBUTE_ARCHIVE
-            entry.size = data.len() as u64;
-            self.writer
-                .push_archive_entry(entry, Some(data))
-                .map_err(|e| anyhow!("Failed to add 7z entry {}: {:?}", normalized_name, e))?;
+        entry.name = name.to_string();
+        match content {
+            EntryContent::Directory => {
+                entry.has_stream = false;
+                entry.is_directory = true;
+                entry.has_windows_attributes = true;
+                entry.windows_attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
+                self.writer
+                    .push_archive_entry(entry, None::<&[u8]>)
+                    .map_err(|e| anyhow!("Failed to add 7z directory entry {}: {:?}", name, e))?;
+            }
+            EntryContent::File(data) => {
+                entry.has_stream = true;
+                entry.is_directory = false;
+                entry.has_windows_attributes = true;
+                entry.windows_attributes = 0x20; // FILE_ATTRIBUTE_ARCHIVE
+                entry.size = data.len() as u64;
+                self.writer
+                    .push_archive_entry(entry, Some(data))
+                    .map_err(|e| anyhow!("Failed to add 7z entry {}: {:?}", name, e))?;
+            }
         }
         Ok(())
     }

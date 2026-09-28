@@ -25,11 +25,12 @@ pub use kind::{
 };
 pub use ops::{
     compress_archive, convert_archive, convert_archive_ext, extract_archive,
-    get_images_from_source, list_archive_entry_names, read_archive_entries,
+    get_images_from_source, list_archive_entry_names, read_archive_entries, BaseName, DecodedImage,
+    RootStripPolicy,
 };
 pub use path::{
     copy_dir_all, find_single_root_dir, is_matching_root, is_os_metadata, normalize_archive_path,
-    safe_join,
+    safe_join, ArchiveEntry, EntryKind, NormalizedArchivePath,
 };
-pub use reader::{open_reader, ArchiveReader, EntryCallback};
+pub use reader::{open_reader, ArchiveReader, EntryCallback, EntryContent};
 pub use writer::ArchiveWriter;

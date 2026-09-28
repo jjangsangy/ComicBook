@@ -3,7 +3,8 @@ use super::formats::{
     ZipArchiveWriter,
 };
 use super::kind::ArchiveKind;
-use super::path::normalize_archive_path;
+use super::path::{normalize_archive_path, NormalizedArchivePath};
+use super::reader::EntryContent;
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
@@ -43,40 +44,40 @@ impl ArchiveWriter {
     /// Add an entry (directory or file) to the archive.
     ///
     /// Normalizes path separators and traversal segments before writing. Callers that
-    /// already hold a normalized entry name (for example the reader pipeline, whose names
-    /// have gone through [`crate::archive::path::normalize_archive_path`] once already)
-    /// should use [`ArchiveWriter::add_entry_normalized`] to avoid re-normalizing.
-    pub fn add_entry(&mut self, name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
-        let normalized = normalize_archive_path(name);
-        if normalized.is_empty() {
+    /// already hold a [`NormalizedArchivePath`] (for example the reader pipeline, whose names
+    /// have gone through normalization once already) should use
+    /// [`ArchiveWriter::add_entry_normalized`] to avoid re-normalizing.
+    pub fn add_entry(&mut self, name: &str, content: EntryContent) -> Result<()> {
+        let Some(normalized) = normalize_archive_path(name) else {
             return Ok(());
-        }
-        self.dispatch(&normalized, is_dir, data)
+        };
+        self.dispatch(&normalized, content)
     }
 
     /// Add an entry whose name is already normalized.
     ///
-    /// This skips the per-entry re-normalization that [`ArchiveWriter::add_entry`]
-    /// performs, which is redundant for names produced by the archive readers.
+    /// A [`NormalizedArchivePath`] is non-empty and normalized by construction, so this skips the
+    /// per-entry re-normalization that [`ArchiveWriter::add_entry`] performs and cannot be handed
+    /// a raw name by mistake.
     pub(crate) fn add_entry_normalized(
         &mut self,
-        normalized_name: &str,
-        is_dir: bool,
-        data: &[u8],
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
     ) -> Result<()> {
-        if normalized_name.is_empty() {
-            return Ok(());
-        }
-        self.dispatch(normalized_name, is_dir, data)
+        self.dispatch(normalized_name, content)
     }
 
-    fn dispatch(&mut self, normalized: &str, is_dir: bool, data: &[u8]) -> Result<()> {
+    fn dispatch(
+        &mut self,
+        normalized: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
         match self {
-            ArchiveWriter::Cbz(w) => w.add_entry(normalized, is_dir, data),
-            ArchiveWriter::Cbt(w) => w.add_entry(normalized, is_dir, data),
-            ArchiveWriter::Cb7(w) => w.add_entry(normalized, is_dir, data),
-            ArchiveWriter::Directory(w) => w.add_entry(normalized, is_dir, data),
-            ArchiveWriter::Cbr(w) => w.add_entry(normalized, is_dir, data),
+            ArchiveWriter::Cbz(w) => w.add_entry(normalized, content),
+            ArchiveWriter::Cbt(w) => w.add_entry(normalized, content),
+            ArchiveWriter::Cb7(w) => w.add_entry(normalized, content),
+            ArchiveWriter::Directory(w) => w.add_entry(normalized, content),
+            ArchiveWriter::Cbr(w) => w.add_entry(normalized, content),
         }
     }
 

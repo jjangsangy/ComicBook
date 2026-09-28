@@ -1,5 +1,5 @@
-use crate::archive::path::parse_entry_info;
-use crate::archive::reader::{ArchiveReader, EntryCallback};
+use crate::archive::path::{parse_entry_info, ArchiveEntry, EntryKind, NormalizedArchivePath};
+use crate::archive::reader::{ArchiveReader, EntryCallback, EntryContent};
 use anyhow::{anyhow, Context, Result};
 use rars::rar15_40::{write_streaming_archive_to, StreamingEntry, WriterOptions};
 use rars::{ArchiveVersion, EntrySource, FeatureSet, MemberCoding, WriterResources};
@@ -58,36 +58,38 @@ impl ArchiveReader for RarReader {
                         )
                     })?;
                 }
-                Some((clean_name, true)) => {
-                    archive = header.skip().map_err(|e| {
-                        anyhow!(
-                            "Error skipping RAR directory in {}: {:?}",
-                            self.path.display(),
-                            e
-                        )
-                    })?;
-                    on_entry(&clean_name, true, &[])?;
-                }
-                Some((clean_name, false)) => {
-                    // unrar allocates (and returns) its own Vec for each entry and offers no
-                    // slice-into-buffer API, so we read straight into that allocation rather than
-                    // copying it into `scratch`. This avoids a redundant full-entry memcpy.
-                    let (data, next_archive) = header.read().map_err(|e| {
-                        anyhow!(
-                            "Error reading RAR entry in {}: {:?}",
-                            self.path.display(),
-                            e
-                        )
-                    })?;
-                    archive = next_archive;
-                    on_entry(&clean_name, false, &data)?;
-                }
+                Some(parsed) => match parsed.kind {
+                    EntryKind::Directory => {
+                        archive = header.skip().map_err(|e| {
+                            anyhow!(
+                                "Error skipping RAR directory in {}: {:?}",
+                                self.path.display(),
+                                e
+                            )
+                        })?;
+                        on_entry(&parsed.name, EntryContent::Directory)?;
+                    }
+                    EntryKind::File => {
+                        // unrar allocates (and returns) its own Vec for each entry and offers no
+                        // slice-into-buffer API, so we read straight into that allocation rather than
+                        // copying it into `scratch`. This avoids a redundant full-entry memcpy.
+                        let (data, next_archive) = header.read().map_err(|e| {
+                            anyhow!(
+                                "Error reading RAR entry in {}: {:?}",
+                                self.path.display(),
+                                e
+                            )
+                        })?;
+                        archive = next_archive;
+                        on_entry(&parsed.name, EntryContent::File(&data))?;
+                    }
+                },
             }
         }
         Ok(())
     }
 
-    fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
+    fn list_entries(&mut self) -> Result<Vec<ArchiveEntry>> {
         let mut archive = unrar::Archive::new(&self.path)
             .open_for_processing()
             .map_err(|e| {
@@ -108,8 +110,8 @@ impl ArchiveReader for RarReader {
         })? {
             let raw_name = header.entry().filename.to_string_lossy();
             let is_dir_flag = header.entry().is_directory();
-            if let Some((clean_name, is_dir)) = parse_entry_info(&raw_name, is_dir_flag) {
-                entries.push((clean_name, is_dir));
+            if let Some(parsed) = parse_entry_info(&raw_name, is_dir_flag) {
+                entries.push(parsed);
             }
             archive = header.skip().map_err(|e| {
                 anyhow!(
@@ -140,10 +142,14 @@ impl RarArchiveWriter {
         })
     }
 
-    pub fn add_entry(&mut self, normalized_name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
-        if !is_dir {
+    pub fn add_entry(
+        &mut self,
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
+        if let EntryContent::File(data) = content {
             // RAR 4.0 uses backslash as path separator internally
-            let rar_name = normalized_name.replace('/', "\\");
+            let rar_name = normalized_name.as_str().replace('/', "\\");
             // RAR 1.5-4.0 stores pre-compressed images verbatim; there is no point compressing
             // already-compressed image bytes. `from_bytes` hands rars a reopenable in-memory
             // source, so a stored member is copied straight to the output as the archive is

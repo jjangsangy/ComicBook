@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use std::cmp::Ordering;
 use std::path::Path;
 
-use crate::archive::{is_os_metadata, open_reader, ArchiveKind};
+use crate::archive::{is_os_metadata, open_reader, ArchiveKind, EntryContent};
 
 use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
 
@@ -44,8 +44,12 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
     let mut pages: Vec<LoadedPage> = Vec::new();
     let mut comicinfo: Option<Vec<u8>> = None;
 
-    reader.read_entries(&mut scratch, &mut |name, is_dir, data| {
-        if is_dir || is_os_metadata(name) {
+    reader.read_entries(&mut scratch, &mut |name, content| {
+        let EntryContent::File(data) = content else {
+            return Ok(());
+        };
+        let name = name.as_str();
+        if is_os_metadata(name) {
             return Ok(());
         }
         if is_comicinfo(name) {
@@ -74,7 +78,12 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
 
     // KCC flattens a single top-level folder when extracting an archive, but
     // copies a folder source verbatim. Mirror both.
-    Ok(build_tree(pages, comicinfo, kind != ArchiveKind::Directory))
+    let strip = if kind == ArchiveKind::Directory {
+        RootStrip::Keep
+    } else {
+        RootStrip::Strip
+    };
+    Ok(build_tree(pages, comicinfo, strip))
 }
 
 /// A page decoded from a source entry, before chapter grouping.
@@ -118,17 +127,28 @@ fn image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
         .context("image dimensions could not be read")
 }
 
+/// Whether [`build_tree`] should collapse a single redundant top-level folder.
+///
+/// Mirrors [`crate::archive::RootStripPolicy`] for the in-memory tree build: an archive source
+/// strips its wrapper folder, while a directory source (and the EPUB/PDF adapters that
+/// synthesize a flat page list) keeps its paths as given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootStrip {
+    Strip,
+    Keep,
+}
+
 /// Group decoded pages into naturally ordered chapters and finish a [`ComicTree`].
 ///
 /// `strip_root` mirrors KCC's archive-only flattening of a single redundant
 /// top-level folder (see docs/porting.md); callers that synthesize a flat page list
-/// (EPUB spine, PDF pages) pass `false` because there is nothing to strip.
+/// (EPUB spine, PDF pages) pass [`RootStrip::Keep`] because there is nothing to strip.
 pub(crate) fn build_tree(
     mut pages: Vec<LoadedPage>,
     comicinfo: Option<Vec<u8>>,
-    strip_root: bool,
+    strip_root: RootStrip,
 ) -> ComicTree {
-    if strip_root {
+    if strip_root == RootStrip::Strip {
         strip_common_root(&mut pages);
     }
     ComicTree {

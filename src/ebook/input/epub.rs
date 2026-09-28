@@ -21,11 +21,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::archive::{open_reader, ArchiveKind};
+use crate::archive::{open_reader, ArchiveKind, EntryContent};
 use crate::ebook::model::ComicTree;
 use crate::ebook::options::Options;
 
-use super::archive::{build_tree, load_page, LoadedPage};
+use super::archive::{build_tree, load_page, LoadedPage, RootStrip};
 
 /// The chosen image of each spine page, named `"<i><ext>"`, in spine order.
 ///
@@ -48,7 +48,7 @@ pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
                 .map(|(name, data)| load_page(&name, &data))
                 .collect::<Result<Vec<LoadedPage>>>()?,
             None,
-            false,
+            RootStrip::Keep,
         )),
         // KCC falls back to the raw extracted tree when the spine walk fails.
         None => super::archive::load(source, ArchiveKind::Cbz),
@@ -60,11 +60,11 @@ fn read_container(source: &Path) -> Result<HashMap<String, Arc<[u8]>>> {
     let mut reader = open_reader(ArchiveKind::Cbz, source)?;
     let mut scratch = Vec::new();
     let mut files = HashMap::new();
-    reader.read_entries(&mut scratch, &mut |name, is_dir, data| {
-        if !is_dir {
+    reader.read_entries(&mut scratch, &mut |name, content| {
+        if let EntryContent::File(data) = content {
             // One copy out of the reader's scratch buffer; the spine walk then
             // shares the chosen entries by `Arc` instead of copying them again.
-            files.insert(name.to_string(), Arc::from(data));
+            files.insert(name.as_str().to_string(), Arc::from(data));
         }
         Ok(())
     })?;

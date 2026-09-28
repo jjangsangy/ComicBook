@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::archive::{ArchiveKind, ArchiveWriter};
+use crate::archive::{ArchiveKind, ArchiveWriter, EntryContent};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
@@ -34,18 +34,18 @@ pub fn build_cbz(dest: &Path, book: &ProcessedBook, prepared: &PreparedBook) -> 
 
     if let Some(cover) = &book.cover {
         if book.cover_smart_crop || prepared.cover_override.is_some() {
-            writer.add_entry(COVER_NAME, false, &cover.bytes)?;
+            writer.add_entry(COVER_NAME, EntryContent::File(&cover.bytes))?;
         }
     }
 
     if let Some(xml) = &prepared.metadata.comicinfo_xml {
-        writer.add_entry(COMICINFO_NAME, false, xml)?;
+        writer.add_entry(COMICINFO_NAME, EntryContent::File(xml))?;
     }
 
     for chapter in &book.chapters {
         for page in &chapter.pages {
             writer
-                .add_entry(&page.name, false, &page.bytes)
+                .add_entry(&page.name, EntryContent::File(&page.bytes))
                 .with_context(|| format!("Failed to add {} to the CBZ", page.name))?;
         }
     }

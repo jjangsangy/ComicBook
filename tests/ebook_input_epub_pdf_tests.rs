@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use comic_book::archive::{compress_archive, read_archive_entries, ArchiveKind};
+use comic_book::archive::{compress_archive, read_archive_entries, ArchiveKind, EntryContent};
 use comic_book::cli::Cli;
 use comic_book::ebook::convert_source;
 use comic_book::ebook::input::load_tree;
@@ -228,8 +228,8 @@ fn epub_source_converts_end_to_end() -> Result<()> {
     assert_eq!(written.len(), 1);
 
     let mut images = Vec::new();
-    read_archive_entries(ArchiveKind::Cbz, &written[0], |name, is_dir, _| {
-        if !is_dir {
+    read_archive_entries(ArchiveKind::Cbz, &written[0], |name, content| {
+        if let EntryContent::File(_) = content {
             images.push(name.to_string());
         }
         Ok(())
@@ -390,8 +390,8 @@ fn pdf_source_converts_end_to_end() -> Result<()> {
     assert_eq!(written.len(), 1);
 
     let mut images = 0;
-    read_archive_entries(ArchiveKind::Cbz, &written[0], |_, is_dir, _| {
-        if !is_dir {
+    read_archive_entries(ArchiveKind::Cbz, &written[0], |_, content| {
+        if let EntryContent::File(_) = content {
             images += 1;
         }
         Ok(())

@@ -1,13 +1,76 @@
+use std::fmt;
 use std::fs;
 use std::io;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+
+/// A validated, normalized archive entry path.
+///
+/// The only constructors are [`normalize_archive_path`] and [`parse_entry_info`], so any value
+/// of this type is guaranteed non-empty, forward-slash separated, and free of traversal, `.`/`..`
+/// and Windows-drive segments. Handing one to a writer therefore cannot silently rewrite the
+/// entry name (the failure mode `add_entry_normalized` used to allow by taking a bare `&str`).
+///
+/// `#[repr(transparent)]`: layout-identical to the owned `String` produced by normalization, with
+/// no allocation or copy of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct NormalizedArchivePath(String);
+
+impl NormalizedArchivePath {
+    /// The normalized path as a borrowed string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The remainder after removing `prefix`, which must end on a component boundary (e.g.
+    /// `"Root/"`). The result is already normalized: it is a suffix of a normalized path.
+    pub fn strip_prefix(&self, prefix: &str) -> Option<NormalizedArchivePath> {
+        let rest = self.0.strip_prefix(prefix)?;
+        Some(NormalizedArchivePath(rest.to_string()))
+    }
+}
+
+impl Deref for NormalizedArchivePath {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for NormalizedArchivePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Whether an archive entry is a file or a directory.
+///
+/// Replaces the `bool` that used to travel beside an entry name; the "a directory carries no
+/// data" invariant is now expressed by [`crate::archive::reader::EntryContent`] rather than
+/// re-asserted at every producer and consumer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    File,
+    Directory,
+}
+
+/// A listed archive entry: a normalized name plus its kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveEntry {
+    pub name: NormalizedArchivePath,
+    pub kind: EntryKind,
+}
 
 /// Normalize an archive entry path to a clean, forward-slash-separated relative path.
 ///
 /// Strips leading/trailing slashes, backslashes, Windows drive prefixes (e.g. `C:`),
 /// redundant `./`, and `..` segments to prevent path traversal and ensure uniform cross-platform
-/// compatibility across Windows, Linux, and macOS. Kept bespoke (see docs/dependencies.md).
-pub fn normalize_archive_path(raw: &str) -> String {
+/// compatibility across Windows, Linux, and macOS. Returns `None` when nothing is left, so empty
+/// paths are unrepresentable rather than signalled by a `""` sentinel. Kept bespoke (see
+/// docs/dependencies.md).
+pub fn normalize_archive_path(raw: &str) -> Option<NormalizedArchivePath> {
     // Build the result in place (a single buffer) rather than collecting segments into an
     // intermediate `Vec` and joining them, which avoids an allocation for every entry.
     let mut out = String::with_capacity(raw.len());
@@ -29,7 +92,11 @@ pub fn normalize_archive_path(raw: &str) -> String {
         }
         out.push_str(cleaned);
     }
-    out
+    if out.is_empty() {
+        None
+    } else {
+        Some(NormalizedArchivePath(out))
+    }
 }
 
 /// Safely join an archive entry path onto a destination directory using the host platform's
@@ -84,26 +151,29 @@ pub fn is_os_metadata(name: &str) -> bool {
         || base.eq_ignore_ascii_case("Thumbs.db")
 }
 
-/// Helper to extract normalized entry path and directory flag from raw archive metadata.
+/// Helper to extract a normalized entry (name and kind) from raw archive metadata.
 ///
 /// Returns `None` if the normalized path is empty.
-pub fn parse_entry_info(raw_name: &str, format_is_dir: bool) -> Option<(String, bool)> {
-    let clean = normalize_archive_path(raw_name);
-    if clean.is_empty() {
-        return None;
-    }
-    let is_dir = format_is_dir || raw_name.ends_with('/') || raw_name.ends_with('\\');
-    Some((clean, is_dir))
+pub fn parse_entry_info(raw_name: &str, format_is_dir: bool) -> Option<ArchiveEntry> {
+    let name = normalize_archive_path(raw_name)?;
+    let kind = if format_is_dir || raw_name.ends_with('/') || raw_name.ends_with('\\') {
+        EntryKind::Directory
+    } else {
+        EntryKind::File
+    };
+    Some(ArchiveEntry { name, kind })
 }
 
 /// Check if all entries in an archive belong to a single top-level directory.
 ///
 /// If every non-metadata file and directory resides inside one top-level folder,
 /// returns `Some(root_folder_name)`. Otherwise, returns `None`.
-pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
+pub fn find_single_root_dir(entries: &[ArchiveEntry]) -> Option<String> {
     let mut candidate_root: Option<&str> = None;
 
-    for (name, is_dir) in entries {
+    for entry in entries {
+        let name = entry.name.as_str();
+
         // Ignore metadata or OS junk files when determining if there is a common root
         if is_os_metadata(name) {
             continue;
@@ -120,7 +190,7 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
 
         // If this entry is a file at the root level (no '/' in path),
         // then the archive has files at root, so there is no single root folder!
-        if !*is_dir && segments.next().is_none() {
+        if entry.kind == EntryKind::File && segments.next().is_none() {
             return None;
         }
 
@@ -136,7 +206,11 @@ pub fn find_single_root_dir(entries: &[(String, bool)]) -> Option<String> {
 
 /// Check whether an archive's root folder matches the destination folder or source file
 /// stem (kept bespoke; see docs/dependencies.md).
-pub fn is_matching_root(root: &str, dest_name: &str, src_stem: &str) -> bool {
+///
+/// An absent destination name or source stem is passed as `None` and simply cannot match,
+/// rather than being collapsed into an empty string that is indistinguishable from a real
+/// empty component.
+pub fn is_matching_root(root: &str, dest_name: Option<&str>, src_stem: Option<&str>) -> bool {
     fn normalize(s: &str) -> String {
         s.chars()
             .filter(|c| c.is_alphanumeric())
@@ -145,17 +219,99 @@ pub fn is_matching_root(root: &str, dest_name: &str, src_stem: &str) -> bool {
     }
 
     let norm_root = normalize(root);
-    let norm_dest = normalize(dest_name);
-    let norm_stem = normalize(src_stem);
-
     if norm_root.is_empty() {
         return false;
     }
 
-    norm_root == norm_dest
-        || norm_root == norm_stem
-        || (!norm_dest.is_empty()
-            && (norm_dest.contains(&norm_root) || norm_root.contains(&norm_dest)))
-        || (!norm_stem.is_empty()
-            && (norm_stem.contains(&norm_root) || norm_root.contains(&norm_stem)))
+    [dest_name, src_stem]
+        .into_iter()
+        .flatten()
+        .any(|candidate| {
+            let norm = normalize(candidate);
+            !norm.is_empty() && (norm.contains(&norm_root) || norm_root.contains(&norm))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_paths_are_rejected() {
+        // No `""` sentinel: a path that normalizes to nothing is `None`.
+        assert_eq!(normalize_archive_path(""), None);
+        assert_eq!(normalize_archive_path("///"), None);
+        assert_eq!(normalize_archive_path("./.\\.."), None);
+        assert_eq!(parse_entry_info("", false), None);
+    }
+
+    #[test]
+    fn parse_entry_info_tags_files_and_directories() {
+        // A trailing separator or the format's own directory flag marks a directory; anything
+        // else is a file. The normalized name travels with the kind.
+        assert_eq!(
+            parse_entry_info("Chapter/page.jpg", false).map(|entry| entry.kind),
+            Some(EntryKind::File)
+        );
+        assert_eq!(
+            parse_entry_info("Chapter/", false).map(|entry| entry.kind),
+            Some(EntryKind::Directory)
+        );
+        assert_eq!(
+            parse_entry_info("Chapter", true).map(|entry| entry.kind),
+            Some(EntryKind::Directory)
+        );
+        assert_eq!(
+            parse_entry_info("./Chapter\\page.jpg", false)
+                .map(|entry| entry.name.as_str().to_string()),
+            Some("Chapter/page.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn find_single_root_dir_reads_entry_kinds() {
+        let entries = |paths: &[(&str, EntryKind)]| -> Vec<ArchiveEntry> {
+            paths
+                .iter()
+                .filter_map(|(name, kind)| {
+                    normalize_archive_path(name).map(|name| ArchiveEntry { name, kind: *kind })
+                })
+                .collect()
+        };
+
+        // Everything shares one top-level folder, so it is the wrapper to collapse.
+        assert_eq!(
+            find_single_root_dir(&entries(&[
+                ("Root/a.jpg", EntryKind::File),
+                ("Root/sub", EntryKind::Directory),
+                ("Root/sub/b.jpg", EntryKind::File),
+            ])),
+            Some("Root".to_string())
+        );
+        // A file at the root means there is no wrapper.
+        assert_eq!(
+            find_single_root_dir(&entries(&[
+                ("a.jpg", EntryKind::File),
+                ("Root/b.jpg", EntryKind::File),
+            ])),
+            None
+        );
+        // Two different top-level items mean there is no wrapper.
+        assert_eq!(
+            find_single_root_dir(&entries(&[
+                ("A/1.jpg", EntryKind::File),
+                ("B/2.jpg", EntryKind::File),
+            ])),
+            None
+        );
+    }
+
+    #[test]
+    fn matching_root_treats_absent_names_as_non_matching() {
+        assert!(is_matching_root("Issue 01", Some("Issue_01"), None));
+        assert!(is_matching_root("Issue 01", None, Some("issue-01")));
+        // An absent destination name or source stem cannot match a real root.
+        assert!(!is_matching_root("Issue 01", None, None));
+        assert!(!is_matching_root("Issue 01", Some(""), Some("")));
+    }
 }

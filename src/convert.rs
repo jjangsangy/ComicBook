@@ -1,4 +1,4 @@
-use crate::archive::{detect_archive_kind, parse_target_extension, ArchiveKind};
+use crate::archive::{detect_archive_kind, parse_target_extension, ArchiveKind, RootStripPolicy};
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -262,7 +262,11 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
         Err(_) => ProgressStyle::default_bar(),
     });
 
-    let should_strip = target_kind == ArchiveKind::Directory;
+    let policy = if target_kind == ArchiveKind::Directory {
+        RootStripPolicy::Always
+    } else {
+        RootStripPolicy::Never
+    };
     // One reusable buffer for the whole batch: each archive's entry data is streamed through this
     // same allocation, so converting a directory of files never grows the footprint beyond the
     // largest single entry.
@@ -280,7 +284,7 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
             &task.source_path,
             target_kind,
             &task.dest_path,
-            should_strip,
+            policy,
             &mut scratch,
         ) {
             pb.println(format!("Error processing {}: {}", file_name, e));

@@ -23,7 +23,7 @@ use std::path::Path;
 use crate::ebook::model::{ComicTree, MediaType};
 use crate::ebook::options::Options;
 
-use super::archive::{build_tree, LoadedPage};
+use super::archive::{build_tree, LoadedPage, RootStrip};
 
 /// Load a PDF source into a [`ComicTree`].
 pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
@@ -74,7 +74,7 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
     if pages.is_empty() {
         bail!("Failed to extract images from PDF file.");
     }
-    Ok(build_tree(pages, None, false))
+    Ok(build_tree(pages, None, RootStrip::Keep))
 }
 
 /// The device target size KCC renders PDF pages against, widened to leave room
@@ -159,7 +159,7 @@ fn legacy_extract(source: &Path) -> Result<ComicTree> {
     if pages.is_empty() {
         bail!("Failed to extract images from PDF file.");
     }
-    Ok(build_tree(pages, None, false))
+    Ok(build_tree(pages, None, RootStrip::Keep))
 }
 
 /// Index of the first occurrence of `needle` in `haystack` at or after `from`.

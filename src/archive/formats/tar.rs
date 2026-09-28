@@ -1,5 +1,5 @@
-use crate::archive::path::parse_entry_info;
-use crate::archive::reader::{ArchiveReader, EntryCallback};
+use crate::archive::path::{parse_entry_info, ArchiveEntry, EntryKind, NormalizedArchivePath};
+use crate::archive::reader::{ArchiveReader, EntryCallback, EntryContent};
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{self, Read};
@@ -48,30 +48,33 @@ impl ArchiveReader for TarReader {
             let mut entry = entry?;
             let is_dir_header = entry.header().entry_type().is_dir();
             // Borrow the path rather than allocating an owned `String` per entry.
-            let parsed = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header);
-            if let Some((clean_name, is_dir)) = parsed {
-                if is_dir {
-                    on_entry(&clean_name, true, &[])?;
-                } else {
-                    // Reuse the caller's buffer instead of allocating per entry.
-                    scratch.clear();
-                    entry.read_to_end(scratch)?;
-                    on_entry(&clean_name, false, scratch)?;
+            if let Some(parsed) = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header)
+            {
+                match parsed.kind {
+                    EntryKind::Directory => {
+                        on_entry(&parsed.name, EntryContent::Directory)?;
+                    }
+                    EntryKind::File => {
+                        // Reuse the caller's buffer instead of allocating per entry.
+                        scratch.clear();
+                        entry.read_to_end(scratch)?;
+                        on_entry(&parsed.name, EntryContent::File(scratch))?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    fn list_entries(&mut self) -> Result<Vec<(String, bool)>> {
+    fn list_entries(&mut self) -> Result<Vec<ArchiveEntry>> {
         let mut archive = self.open_archive_seekable()?;
         let mut entries = Vec::new();
         for entry in archive.entries_with_seek()? {
             let entry = entry?;
             let is_dir_header = entry.header().entry_type().is_dir();
-            let parsed = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header);
-            if let Some((clean_name, is_dir)) = parsed {
-                entries.push((clean_name, is_dir));
+            if let Some(parsed) = parse_entry_info(&entry.path()?.to_string_lossy(), is_dir_header)
+            {
+                entries.push(parsed);
             }
         }
         Ok(entries)
@@ -94,23 +97,30 @@ impl TarArchiveWriter {
         Ok(Self { builder })
     }
 
-    pub fn add_entry(&mut self, normalized_name: &str, is_dir: bool, data: &[u8]) -> Result<()> {
+    pub fn add_entry(
+        &mut self,
+        normalized_name: &NormalizedArchivePath,
+        content: EntryContent,
+    ) -> Result<()> {
+        let name = normalized_name.as_str();
         let mut header = tar::Header::new_gnu();
-        if is_dir {
-            header.set_entry_type(tar::EntryType::Directory);
-            header.set_size(0);
-            header.set_mode(0o755);
-            header.set_cksum();
-            let dir_name = format!("{}/", normalized_name);
-            self.builder
-                .append_data(&mut header, dir_name, &mut io::empty())?;
-        } else {
-            header.set_entry_type(tar::EntryType::Regular);
-            header.set_size(data.len() as u64);
-            header.set_mode(0o644);
-            header.set_cksum();
-            self.builder
-                .append_data(&mut header, normalized_name, data)?;
+        match content {
+            EntryContent::Directory => {
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                header.set_mode(0o755);
+                header.set_cksum();
+                let dir_name = format!("{}/", name);
+                self.builder
+                    .append_data(&mut header, dir_name, &mut io::empty())?;
+            }
+            EntryContent::File(data) => {
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                self.builder.append_data(&mut header, name, data)?;
+            }
         }
         Ok(())
     }

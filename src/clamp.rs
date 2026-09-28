@@ -1,4 +1,6 @@
-use crate::archive::{detect_archive_kind, extract_archive, get_images_from_source, ArchiveKind};
+use crate::archive::{
+    detect_archive_kind, extract_archive, get_images_from_source, ArchiveKind, DecodedImage,
+};
 use crate::image_ops::{
     resize_image_by_total_pixels, resize_image_by_width, save_image_as_webp, split_image_iterative,
 };
@@ -193,25 +195,21 @@ fn collect_chapters(input_path: &Path, output_dir: &Path) -> Result<Vec<Chapter>
 }
 
 /// True when no image exceeds the threshold, so the source can be copied verbatim.
-fn is_within_threshold(
-    approach: Approach,
-    images: &[(String, DynamicImage)],
-    threshold: u64,
-) -> bool {
+fn is_within_threshold(approach: Approach, images: &[DecodedImage], threshold: u64) -> bool {
     images
         .iter()
-        .all(|(_, img)| approach.measure(img) < threshold)
+        .all(|decoded| approach.measure(&decoded.image) < threshold)
 }
 
 /// Apply the approach to every image, concatenating the results in reading order.
 fn clamp_images(
     approach: Approach,
-    images: Vec<(String, DynamicImage)>,
+    images: Vec<DecodedImage>,
     threshold: u64,
 ) -> Vec<DynamicImage> {
     images
         .into_iter()
-        .flat_map(|(_, img)| approach.clamp(img, threshold))
+        .flat_map(|decoded| approach.clamp(decoded.image, threshold))
         .collect()
 }
 

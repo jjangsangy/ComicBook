@@ -10,6 +10,21 @@ release when a version tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+
+- Hardened the `archive` public API so that invalid archive states are unrepresentable (the
+  archive/path step of the type-safety refactor tracked in `REFACTOR.md`):
+  - `normalize_archive_path` returns `Option<NormalizedArchivePath>` instead of a `String` with an
+    empty-string sentinel, and `parse_entry_info`/`list_archive_entry_names` return an
+    `ArchiveEntry { name, kind }` whose `EntryKind` is `File` or `Directory` (no positional `bool`).
+  - `read_archive_entries` and `ArchiveReader::read_entries` hand their callback an
+    `EntryContent::{Directory, File(&[u8])}`, so a directory can no longer be spelled as an empty
+    file; `ArchiveWriter::add_entry`/`add_entry_normalized` take the same `EntryContent`.
+  - `convert_archive_ext` takes a `RootStripPolicy` (`Never`/`Always`/`IfMatchingDestination`)
+    instead of a `strip_root: bool`.
+  - `get_images_from_source` returns `Vec<DecodedImage>` (`name: BaseName`, `image`) instead of
+    `Vec<(String, DynamicImage)>`.
+
 ### Fixed
 
 - `scripts/set-version.sh` and `scripts/set-version.ps1` (with `--changelog` / `-Changelog`) now

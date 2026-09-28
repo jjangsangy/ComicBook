@@ -19,7 +19,7 @@ use anyhow::{Context, Result};
 use image::DynamicImage;
 use rayon::prelude::*;
 
-use crate::archive::{ArchiveKind, ArchiveWriter};
+use crate::archive::{ArchiveKind, ArchiveWriter, EntryContent};
 use crate::ebook::input;
 use crate::ebook::model::{MediaType, Page};
 use crate::ebook::options::Options;
@@ -134,11 +134,11 @@ fn write_cbz(dest: &Path, entries: &[(String, Vec<u8>)], comicinfo: Option<&[u8]
     // KCC's light-novel branch never calls `removeNonImages`, so a discovered
     // `ComicInfo.xml` survives into the output.
     if let Some(xml) = comicinfo {
-        writer.add_entry("ComicInfo.xml", false, xml)?;
+        writer.add_entry("ComicInfo.xml", EntryContent::File(xml))?;
     }
     for (name, bytes) in entries {
         writer
-            .add_entry(name, false, bytes)
+            .add_entry(name, EntryContent::File(bytes))
             .with_context(|| format!("Failed to add {name} to the CBZ"))?;
     }
 
