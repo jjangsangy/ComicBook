@@ -162,24 +162,23 @@ pub fn crop_empty_inter_panel(
     kernels::box_blur_1_in_place(&mut gray);
     let bw = binarize_owned(gray, threshold_from_power(INTERPANEL_POWER));
 
-    let horizontal = matches!(direction, Direction::Horizontal | Direction::Both);
-    let vertical = matches!(direction, Direction::Vertical | Direction::Both);
-
-    // Only clone when a direction needs the untouched original; `remove_lines`
-    // already allocates the cropped buffer.
-    if horizontal && vertical {
-        let rows = empty_sections(&bw, keep, true);
-        let columns = empty_sections(&bw, keep, false);
-        let first = remove_lines(image, &rows, true);
-        remove_lines(&first, &columns, false)
-    } else if horizontal {
-        let rows = empty_sections(&bw, keep, true);
-        remove_lines(image, &rows, true)
-    } else if vertical {
-        let columns = empty_sections(&bw, keep, false);
-        remove_lines(image, &columns, false)
-    } else {
-        image.clone()
+    // Rows are collapsed before columns when both are requested; `remove_lines`
+    // allocates the cropped buffer, so no upfront clone is needed.
+    match direction {
+        Direction::Horizontal => {
+            let rows = empty_sections(&bw, keep, true);
+            remove_lines(image, &rows, true)
+        }
+        Direction::Vertical => {
+            let columns = empty_sections(&bw, keep, false);
+            remove_lines(image, &columns, false)
+        }
+        Direction::Both => {
+            let rows = empty_sections(&bw, keep, true);
+            let columns = empty_sections(&bw, keep, false);
+            let first = remove_lines(image, &rows, true);
+            remove_lines(&first, &columns, false)
+        }
     }
 }
 
