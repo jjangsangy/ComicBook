@@ -312,6 +312,8 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 1 — Archive tag union and path identity
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor` in `3bf0919` ("phase 1 complete").
+
 - **Findings:** A1, A2, A3, A4, E1, E2, D7, D8, D9, E4.
 - **Scope:** `src/archive/**` plus the call sites `ebook/input/archive.rs`,
   `ebook/output/cbz.rs`, `ebook/output/lightnovel.rs`.
@@ -323,6 +325,41 @@ landed; explicit dependencies are called out. The finished shape is described in
   union and empty-path rejection.
 - **Why first:** module-local, no config coupling; it establishes the enum/newtype
   conventions every later phase reuses.
+
+**Completed notes.**
+
+- **Delivered as planned:** `EntryKind`, `EntryContent<'a>`, `ArchiveEntry`,
+  `NormalizedArchivePath` (`Option` return), `RootStripPolicy` (`convert_archive_ext`) and
+  `RootStrip` (`build_tree`), and a typed `ArchiveWriter::add_entry`/`add_entry_normalized`. All
+  ten findings (A1, A2, A3, A4, E1, E2, D7, D8, D9, E4) are addressed.
+- **Refinements over the sketch:**
+  - A1's `FnMut(&str, EntryContent)` became `FnMut(&NormalizedArchivePath, EntryContent)`: the
+    reader's names are already normalized, so carrying the typed path end-to-end is what lets
+    `add_entry_normalized` take `&NormalizedArchivePath` (D7) without re-parsing.
+  - `NormalizedArchivePath` also derives `Deref<Target = str>` (not in §2.2's sketch) for call-site
+    ergonomics. It cannot be built from an arbitrary `&str`, so the construction invariant is
+    untouched.
+  - Placement: `EntryKind`/`ArchiveEntry`/`NormalizedArchivePath`/`BaseName` helpers in
+    `archive/path.rs`, `EntryContent` in `archive/reader.rs`, `DecodedImage` in `archive/ops.rs`.
+- **Behaviour notes:**
+  - E2 consumes the parsed `EntryKind` in the directory reader; a Unix file whose *name* ends in a
+    backslash is now classified as a directory, matching how the zip/tar/7z/rar backends already
+    read `parse_entry_info`. No effect on comic images. The reader still skips sockets/fifos so
+    `File::open` cannot block.
+  - E4 keeps `Option<&str>` for the destination name and source stem; `is_matching_root` reduces to
+    the two `contains` checks, and an absent value behaves exactly like the old `""`.
+- **Scope grew slightly** past the three named call sites: `ebook/input/epub.rs` and
+  `ebook/input/pdf.rs` (the other `build_tree` callers), `src/clamp.rs` (`get_images_from_source`,
+  D9), `src/convert.rs` (`convert_archive_ext`, A3), and the two test files
+  (`integration_tests`, `ebook_input_epub_pdf_tests`).
+- **New tests:** four in `archive::path` (empty-path → `None`, file/dir tagging,
+  `find_single_root_dir` kinds, `is_matching_root` optionality) and one in `archive::reader`
+  (directory/file `EntryContent` round-trip).
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **351 passed, 13 skipped** (was 346; +5 new).
+- **Changelog:** `## [Unreleased] → Changed` entry added for the public-surface changes.
+- **Follow-on:** `safe_join` stays bespoke here; the optional [§8.1](#81-back-the-path-newtypes-with-relative-path)
+  side quest proposes backing the path newtypes with `relative-path` after Phase 6.
 
 ### Phase 2 — Typed CLI values
 
@@ -426,7 +463,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 | Phase | Depends on | Blast radius | Risk |
 |:--|:--|:--|:--|
-| 1 Archive | — | `archive/`, 3 call sites | low |
+| 1 Archive ✅ | — | `archive/`, 3 call sites | low |
 | 2 CLI | — | CLI + option fields | low (user-visible) |
 | 3 Config | 2 | `options`/`profiles` + all readers | medium |
 | 4 Geometry | — | processing + output boundaries | medium (broad, mechanical) |
@@ -788,7 +825,7 @@ before merging.
 
 | Phase | Default suites to watch | Ignored tests to run explicitly | New tests to add |
 |:--|:--|:--|:--|
-| 1 Archive | `integration_tests`, `ebook_input_tests`, `ebook_robustness_tests` | — | directory/file round-trip, empty-path → `None`, root-strip policy |
+| 1 Archive ✅ | `integration_tests`, `ebook_input_tests`, `ebook_robustness_tests` | — | directory/file round-trip, empty-path → `None`, root-strip policy |
 | 2 CLI | `cli_tests`, `ebook_tests` | — | numeric aliases still parse; named values parse; border conflict is a clap error |
 | 3 Config | `ebook_tests`, `ebook_epub_tests`, `ebook_kindle_tests` | — | resolution table: each preset/format → expected `OutputEncoding` |
 | 4 Geometry | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_chunk_tests` | (tooling: `alloc_count`/`bench.sh` baseline, §7.7) | coordinate round-trips through the new named types |
@@ -951,7 +988,7 @@ states 12 · **D** newtypes 18 · **E** guards/wildcards 16 · **G** duplication
 memory footguns 4.
 
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
-archive tag union (1) → typed CLI values (2) → config sum types (3) → geometry newtypes
+archive tag union (1 ✅) → typed CLI values (2) → config sum types (3) → geometry newtypes
 (4) → processing enums (5) → page state machine (6) → output types (7) → guard/dedup
 sweep (8) → docs close-out (9). The optional
 [crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).
