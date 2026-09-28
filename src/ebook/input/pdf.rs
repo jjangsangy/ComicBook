@@ -22,6 +22,7 @@ use std::path::Path;
 
 use crate::ebook::model::{ComicTree, MediaType};
 use crate::ebook::options::{Cropping, Options};
+use crate::units::Size;
 
 use super::archive::{build_tree, LoadedPage, RootStrip};
 
@@ -79,6 +80,11 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
 
 /// The device target size KCC renders PDF pages against, widened to leave room
 /// for the margin/page-number crop (`getWorkFolder`'s `cropping` multipliers).
+/// The float device target used by the rasteriser, enlarged by the crop mode.
+///
+/// Deliberately `f32`: PDF rendering scales by a zoom factor, so this is float
+/// render geometry rather than an integer [`Size`]; it is intentionally outside the
+/// `Size`/`Pixels` toolkit (which names the `u32` page dimensions).
 fn render_target(options: &Options) -> (f32, f32) {
     let width = options.device.data.width as f32;
     let height = options.device.data.height as f32;
@@ -111,7 +117,7 @@ fn render_zoom(
 /// dimensions so `--no-processing` emits it untouched and ingest does not pin the
 /// decoded pixels (which the lazy pipeline re-decodes on demand).
 fn pixmap_page(name: String, pixmap: Pixmap) -> Result<LoadedPage> {
-    let dimensions = (pixmap.width, pixmap.height);
+    let dimensions = Size::new(pixmap.width, pixmap.height);
     let raw = pixmap
         .encode_png()
         .map_err(|error| anyhow::anyhow!("Failed to encode PDF page: {error}"))?;

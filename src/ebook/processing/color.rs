@@ -16,10 +16,15 @@ use image::{DynamicImage, GrayImage, RgbImage};
 
 use crate::ebook::options::Options;
 use crate::ebook::processing::crop::trim_histogram_ends;
+use crate::units::{Percent, Range};
 
 /// `(cutoff percent, neutral diff threshold)` pairs, applied in order until one
 /// decides (see docs/processing.md).
-const CASCADE: [(f64, i32); 3] = [(0.0, 22), (0.2, 10), (3.0, 4)];
+const CASCADE: [(Percent, i32); 3] = [
+    (Percent::new(0.0), 22),
+    (Percent::new(0.2), 10),
+    (Percent::new(3.0), 4),
+];
 
 /// Below this chroma spread the page is treated as "not colourful" (KCC's bias
 /// adjustment; do not lower it).
@@ -73,7 +78,7 @@ fn chroma_histograms(image: &RgbImage) -> ([u64; 256], [u64; 256]) {
 fn color_precision(
     cb_hist: &[u64; 256],
     cr_hist: &[u64; 256],
-    cutoff: f64,
+    cutoff: Percent,
     diff_threshold: i32,
     force_color: bool,
 ) -> Option<bool> {
@@ -81,27 +86,24 @@ fn color_precision(
     let mut cr = *cr_hist;
     histograms_cutoff(&mut cb, &mut cr, cutoff);
 
-    let (cb_lo, cb_hi) = nonzero_bounds(&cb)?;
-    let (cr_lo, cr_hi) = nonzero_bounds(&cr)?;
-
-    let cb_spread = cb_hi - cb_lo;
-    let cr_spread = cr_hi - cr_lo;
+    let cb = nonzero_bounds(&cb)?;
+    let cr = nonzero_bounds(&cr)?;
 
     if force_color {
         // With `--force-color` a biased histogram is enough to call it colour.
-        if cb_lo > 128 || cr_lo > 128 || cb_hi < 128 || cr_hi < 128 {
+        if cb.min > 128 || cr.min > 128 || cb.max < 128 || cr.max < 128 {
             return Some(true);
         }
-    } else if cb_spread < SPREAD_THRESHOLD && cr_spread < SPREAD_THRESHOLD {
+    } else if cb.spread() < SPREAD_THRESHOLD && cr.spread() < SPREAD_THRESHOLD {
         return Some(false);
     }
 
     let low = 128 - diff_threshold;
     let high = 128 + diff_threshold;
-    if i32::from(cb_lo) <= low
-        || i32::from(cr_lo) <= low
-        || i32::from(cb_hi) >= high
-        || i32::from(cr_hi) >= high
+    if i32::from(cb.min) <= low
+        || i32::from(cr.min) <= low
+        || i32::from(cb.max) >= high
+        || i32::from(cr.max) >= high
     {
         return Some(true);
     }
@@ -111,22 +113,22 @@ fn color_precision(
 
 /// Remove `cutoff` percent of samples from both ends of each histogram, which
 /// discards JPEG ringing artefacts before the spread is measured.
-fn histograms_cutoff(cb_hist: &mut [u64; 256], cr_hist: &mut [u64; 256], cutoff: f64) {
-    if cutoff == 0.0 {
+fn histograms_cutoff(cb_hist: &mut [u64; 256], cr_hist: &mut [u64; 256], cutoff: Percent) {
+    if cutoff.is_zero() {
         return;
     }
     for hist in [cb_hist, cr_hist] {
         let sample_count: u64 = hist.iter().sum();
-        let cut = ((sample_count as f64 * cutoff) / 100.0).floor() as u64;
+        let cut = ((sample_count as f64 * cutoff.value()) / 100.0).floor() as u64;
         trim_histogram_ends(hist, cut);
     }
 }
 
 /// The first and last non-zero bins of a histogram, or `None` when it is empty.
-fn nonzero_bounds(hist: &[u64; 256]) -> Option<(u8, u8)> {
+fn nonzero_bounds(hist: &[u64; 256]) -> Option<Range> {
     let first = hist.iter().position(|&count| count != 0)?;
     let last = hist.iter().rposition(|&count| count != 0)?;
-    Some((first as u8, last as u8))
+    Some(Range::new(first as u8, last as u8))
 }
 
 /// JFIF full-range RGB → YCbCr, the transform Pillow applies for `YCbCr`.

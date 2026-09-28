@@ -19,6 +19,7 @@ use crate::ebook::processing::crop::{
     CROP_CUTOFF, INTERPANEL_POWER,
 };
 use crate::ebook::processing::kernels;
+use crate::units::Fraction;
 
 /// Which gutters to collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,14 +33,14 @@ pub enum Direction {
 }
 
 /// Split index `value` into `(first, last)` keeping `keep` of the span as margin.
-fn kept_span(start: i64, end: i64, keep: f64) -> (i64, i64) {
+fn kept_span(start: i64, end: i64, keep: Fraction) -> (i64, i64) {
     let span = (end - start) as f64;
-    let margin = keep / 2.0 * span;
+    let margin = keep.value() / 2.0 * span;
     ((start as f64 + margin) as i64, (end as f64 - margin) as i64)
 }
 
 /// The indices of the empty rows/columns that should be removed.
-fn empty_sections(bw: &GrayImage, keep: f64, horizontal: bool) -> BTreeSet<usize> {
+fn empty_sections(bw: &GrayImage, keep: Fraction, horizontal: bool) -> BTreeSet<usize> {
     let (_, height) = bw.dimensions();
 
     let empties: Vec<i64> = if horizontal {
@@ -148,7 +149,7 @@ fn remove_lines(image: &DynamicImage, remove: &BTreeSet<usize>, remove_rows: boo
 pub fn crop_empty_inter_panel(
     image: &DynamicImage,
     direction: Direction,
-    keep: f64,
+    keep: Fraction,
     background: Background,
 ) -> DynamicImage {
     // One owned grayscale buffer, inverted/autocontrasted/blurred in place instead
@@ -189,12 +190,9 @@ mod tests {
 
     /// Two panels stacked vertically with a white gutter between them, matching
     /// the committed `interpanel-white.png` fixture.
-    fn two_panels(width: u32, height: u32, gutter: (u32, u32)) -> DynamicImage {
-        let (gutter_top, gutter_bottom) = gutter;
+    fn two_panels(width: u32, height: u32, gutter: std::ops::Range<u32>) -> DynamicImage {
         DynamicImage::ImageRgb8(RgbImage::from_fn(width, height, |x, y| {
-            let panel = (20..180).contains(&x)
-                && (20..280).contains(&y)
-                && !(gutter_top..gutter_bottom).contains(&y);
+            let panel = (20..180).contains(&x) && (20..280).contains(&y) && !gutter.contains(&y);
             if panel {
                 Rgb([0, 0, 0])
             } else {
@@ -205,30 +203,49 @@ mod tests {
 
     #[test]
     fn horizontal_crop_collapses_the_gutter() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped =
-            crop_empty_inter_panel(&image, Direction::Horizontal, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (200, 285));
     }
 
     #[test]
     fn vertical_crop_collapses_the_side_margins() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped = crop_empty_inter_panel(&image, Direction::Vertical, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Vertical,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (184, 300));
     }
 
     #[test]
     fn both_directions_compose() {
-        let image = two_panels(200, 300, (140, 160));
-        let cropped = crop_empty_inter_panel(&image, Direction::Both, 0.04, Background::White);
+        let image = two_panels(200, 300, 140..160);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Both,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (184, 285));
     }
 
     #[test]
     fn a_solid_page_has_no_gutters_to_crop() {
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(200, 300, Rgb([0, 0, 0])));
-        let cropped = crop_empty_inter_panel(&image, Direction::Both, 0.04, Background::White);
+        let cropped = crop_empty_inter_panel(
+            &image,
+            Direction::Both,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert_eq!(cropped.dimensions(), (200, 300));
     }
 
@@ -239,7 +256,12 @@ mod tests {
                 (20..180).contains(&x) && (20..280).contains(&y) && !(140..160).contains(&y);
             image::Luma([if panel { 0 } else { 255 }])
         }));
-        let cropped = crop_empty_inter_panel(&gray, Direction::Horizontal, 0.04, Background::White);
+        let cropped = crop_empty_inter_panel(
+            &gray,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::White,
+        );
         assert!(matches!(cropped, DynamicImage::ImageLuma8(_)));
         assert_eq!(cropped.dimensions(), (200, 285));
     }
@@ -247,6 +269,6 @@ mod tests {
     #[test]
     fn kept_span_retains_half_the_margin_at_each_end() {
         // A 16-pixel gutter keeps 2 % at each end, so 15 rows are dropped.
-        assert_eq!(kept_span(142, 158, 0.04), (142, 157));
+        assert_eq!(kept_span(142, 158, Fraction::new(0.04)), (142, 157));
     }
 }

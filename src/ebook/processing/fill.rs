@@ -12,6 +12,7 @@ use image::{DynamicImage, GrayImage};
 use crate::ebook::model::Background;
 use crate::ebook::processing::color::luma_view;
 use crate::ebook::processing::kernels;
+use crate::units::BBox;
 
 /// Threshold between black and white; values `>= 128` are white.
 const THRESHOLD: u8 = 128;
@@ -50,10 +51,10 @@ pub fn fill_check(image: &DynamicImage) -> Background {
     }
 }
 
-/// The area of an inclusive pixel bounding box (`(left, top, right, bottom)` with
-/// `right`/`bottom` exclusive, as Pillow's `getbbox` returns them).
-fn box_area((left, top, right, bottom): (u32, u32, u32, u32)) -> u64 {
-    u64::from(right - left) * u64::from(bottom - top)
+/// The area of a half-open pixel bounding box (`right`/`bottom` exclusive, as
+/// Pillow's `getbbox` returns them).
+fn box_area(bbox: BBox<u32>) -> u64 {
+    bbox.area()
 }
 
 /// Sum the border-strip histogram votes (KCC's tie-breaker).

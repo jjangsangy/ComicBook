@@ -69,13 +69,14 @@ pub fn build_pdf(
         let image = PdfImage::encode(page)?;
         // Each page has its own `/Resources`, so a constant XObject name is fine.
         let name = Name(b"Im1");
-        let (width, height) = (page.width as f32, page.height as f32);
+        let size = page.size;
+        let (width, height) = (size.width as f32, size.height as f32);
 
         {
             let mut xobject = pdf.image_xobject(image_id, &image.data);
             xobject.filter(image.filter);
-            xobject.width(page.width as i32);
-            xobject.height(page.height as i32);
+            xobject.width(size.width as i32);
+            xobject.height(size.height as i32);
             if image.gray {
                 xobject.color_space().device_gray();
             } else {

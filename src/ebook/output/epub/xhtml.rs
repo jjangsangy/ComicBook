@@ -18,6 +18,7 @@ use super::templates::{render_lf, PageXhtml, PanelBox};
 use super::PageRef;
 use crate::ebook::model::PageFlags;
 use crate::ebook::options::{Options, PanelView, ReaderFamily};
+use crate::units::Size;
 
 /// Build one page's XHTML (`buildHTML`).
 ///
@@ -30,8 +31,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         image_dir,
         file,
         stem,
-        width,
-        height,
+        size,
         flags,
         below,
         ..
@@ -53,14 +53,14 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
 
     // The viewport spans the stacked page (KCC's `imgsizeframe`), but each `<img>`
     // keeps its own size.
-    let frame_height = height + below.map_or(0, |image| image.height);
+    let frame_height = size.height + below.map_or(0, |image| image.size.height);
     let (viewport_width, viewport_height) = if options.main.hq {
         (
-            (f64::from(width) / 1.5).floor() as u32,
+            (f64::from(size.width) / 1.5).floor() as u32,
             (f64::from(frame_height) / 1.5).floor() as u32,
         )
     } else {
-        (width, frame_height)
+        (size.width, frame_height)
     };
 
     let body_style = if flags.black_background {
@@ -75,18 +75,18 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
             let file = image.name.rsplit('/').next().unwrap_or(image.name.as_str());
             (
                 format!("{}Images/{postfix}{file}", "../".repeat(backref)),
-                image.width,
-                image.height,
+                image.size.width,
+                image.size.height,
             )
         }
         None => (String::new(), 0, 0),
     };
 
     let panel = options.panel_view_enabled();
-    let (boxes, panel_width, panel_height) = if panel {
-        panel_layout(width, height, flags, options)
+    let (boxes, panel_size) = if panel {
+        panel_layout(size, flags, options)
     } else {
-        (Vec::new(), width, height)
+        (Vec::new(), size)
     };
 
     let view = PageXhtml {
@@ -96,8 +96,8 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         viewport_height,
         body_style,
         kindle_spacer: options.device.reader == ReaderFamily::Kindle,
-        img_width: width,
-        img_height: height,
+        img_width: size.width,
+        img_height: size.height,
         image_src: &image_src,
         has_below: below.is_some(),
         below_image_src: &below_src,
@@ -105,8 +105,8 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         below_img_height: below_height,
         panel,
         boxes: &boxes,
-        panel_width,
-        panel_height,
+        panel_width: panel_size.width,
+        panel_height: panel_size.height,
     };
     // askama drops a single trailing newline from every template; KCC's page
     // XHTML is newline terminated (see docs/architecture.md).
@@ -126,32 +126,29 @@ const PANELS_SIDE_BY_SIDE: [&str; 2] = ["PV-L", "PV-R"];
 ///
 /// The panel grid depends on how the page's scaled size compares with the device
 /// screen: a page far smaller than the screen in one axis drops those panels.
-fn panel_layout(
-    width: u32,
-    height: u32,
-    flags: PageFlags,
-    options: &Options,
-) -> (Vec<PanelBox>, u32, u32) {
-    let device = (options.device.data.width, options.device.data.height);
+fn panel_layout(size: Size, flags: PageFlags, options: &Options) -> (Vec<PanelBox>, Size) {
+    let device = options.device_size();
 
     // `--two-panel` scales the page to the device width; `--hq` magnifies by 1.5x.
-    let size = match options.main.panel_view {
+    let scaled = match options.main.panel_view {
         PanelView::Two => {
-            let scale = f64::from(device.0) / f64::from(width);
-            (device.0, (scale * f64::from(height)) as u32)
+            let scale = f64::from(device.width) / f64::from(size.width);
+            Size::new(device.width, (scale * f64::from(size.height)) as u32)
         }
-        PanelView::Hq => (width, height),
-        PanelView::Legacy | PanelView::Off => (
-            (f64::from(width) * 1.5) as u32,
-            (f64::from(height) * 1.5) as u32,
+        PanelView::Hq => size,
+        PanelView::Legacy | PanelView::Off => Size::new(
+            (f64::from(size.width) * 1.5) as u32,
+            (f64::from(size.height) * 1.5) as u32,
         ),
     };
 
-    let no_horizontal = f64::from(size.0) - f64::from(device.0) < f64::from(device.0) * 0.01;
-    let no_vertical = f64::from(size.1) - f64::from(device.1) < f64::from(device.1) * 0.01;
+    let no_horizontal =
+        f64::from(scaled.width) - f64::from(device.width) < f64::from(device.width) * 0.01;
+    let no_vertical =
+        f64::from(scaled.height) - f64::from(device.height) < f64::from(device.height) * 0.01;
 
-    let x = panel_offset(device.0, size.0);
-    let y = panel_offset(device.1, size.1);
+    let x = panel_offset(device.width, scaled.width);
+    let y = panel_offset(device.height, scaled.height);
 
     // The panel grid and its magnification order follow `buildHTML` verbatim: the
     // grid drops an axis the page does not fill, and the order is a permutation of
@@ -180,7 +177,7 @@ fn panel_layout(
         })
         .collect();
 
-    (boxes, size.0, size.1)
+    (boxes, scaled)
 }
 
 /// The `style` attribute of a Panel View region.

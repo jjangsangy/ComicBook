@@ -505,6 +505,8 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 4 — Geometry and unit newtypes
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
+
 - **Findings:** D2, D3, D4, D5, D6, D16, D17.
 - **Scope:** `model.rs`, `processing/{page,crop,kernels,fill,color,cover,webtoon}.rs`,
   `ebook/chunk.rs`, `src/{clamp,image_ops}.rs`, `output/{epub,lightnovel,pdf}`.
@@ -513,6 +515,55 @@ landed; explicit dependencies are called out. The finished shape is described in
 - **Gate:** full suite plus a performance baseline (must be neutral). Kernel value semantics
   are untouched.
 - **Why before Phase 5:** processing enums then read `Size` rather than writing `(u32, u32)`.
+
+**Completed notes.**
+
+- **Delivered as planned:** every listed type. The cross-cutting ones (`Size`, `Percent`,
+  `Fraction`, `Pixels`, `Bytes`, `Megabytes`, `Quality`, `BBox<T>`, `IndexBox`, `Range`) live in a
+  new crate-level [`src/units.rs`](../../src/units.rs); `Palette`/`PaletteIndices` are private to
+  `processing/page.rs` (they only wrap the quantiser's two `Vec`s, and keeping them non-`Clone`
+  local keeps `png::BitDepth` out of the shared module).
+- **Refinements over the sketch:**
+  - `BBox<T>` is generic over the coordinate type, because the same `(left, upper, right, lower)`
+    shape is used with `u32` (Pillow bounding boxes), `usize` (the `kernels::clip` rectangle),
+    `i64` (the padded-crop/edge rectangles) and `f64` (the rounded crop rectangle); a single
+    concrete `BBox` would have needed three near-identical twins. `IndexBox` keeps its
+    axis-grouped order and exposes `dx()`/`dy()` (the raw `x2 - x1` difference the page-number
+    guards use, deliberately *not* `+ 1`).
+  - `Size` is a two-field `Copy` struct (so it cannot be `#[repr(transparent)]`; the §1 rule is
+    about single-field wrappers). It carries `new`/`from_dimensions`/`to_dimensions`.
+  - Every single-field wrapper (`Percent`, `Fraction`, `Pixels`, `Bytes`, `Megabytes`, `Quality`) is
+    `#[repr(transparent)]`, per §1 rule 1. The span accessors (`Range::spread`, `IndexBox::dx`/`dy`,
+    and `BBox`'s `width`/`height`) saturate rather than subtracting unchecked, so a transposed box
+    yields `0` instead of panicking a debug build (or wrapping a release one), per §1 rule 6; `f64`
+    keeps the plain difference.
+  - The raw CLI fields stay primitive (`target_size: Option<u32>`, `preserve_margin: u32`,
+    `cropping_minimum: f32`, `jpeg_quality: Option<u8>`); the typed values are constructed in
+    `Options::resolve`, matching the other args groups and keeping the clap surface — including
+    the `--jpeg-quality 99` rejection — byte-identical. So §6.1's `Option<Quality>` is realised as
+    `ProcessingOptions::jpeg_quality: Quality` rather than a fallible CLI parser.
+  - `Options::device_size()` was added to centralise the `(data.width, data.height)` pair the
+    cover/light-novel/OPF/XHTML builders all read; `profile_size()` now returns a `Size`.
+- **Consumers updated (all mechanical):** `Page::dimensions`/`EncodedPage` use `Size`;
+  `PageRef` carries `size`; the resize/fit/contain/thumbnail/pad helpers take `Size`; the
+  crop/page-number path uses `BBox`/`IndexBox`/`Fraction`/`Percent`; the chunk keeper uses
+  `Bytes`/`Megabytes`; `clamp`/`image_ops` use `Pixels`; and the encoders take `Quality`.
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **364 passed, 13 skipped** (Phase 3's 357 plus seven new `units`
+  tests). The ignored geometry tests (`a_tall_scribe_page_splits_at_1920_into_above_and_below`,
+  `a_super_long_panel_splits_with_overlap`, `wider_devices_use_the_1072_cap_for_the_virtual_height`,
+  `two_panel_and_vertical_4_panel_reshape_the_panel_view`, the cover-crop tests) pass with
+  `--run-ignored all`; the byte-exact goldens pass unchanged. The `alloc_count`/`bench.sh`
+  performance baseline was measured against a `HEAD` (Phase 3) worktree on the 40-page,
+  1600×2400 `target/bench/bench.cbz`: allocations `1 222 972 → 1 222 949`, bytes requested
+  `11023.4 MiB` on both sides, peak live `401.7 → 399.3 MiB`, and `user` CPU time overlapping
+  run-for-run (baseline 25.4–27.1 s, Phase 4 25.5–26.9 s) — neutral within noise, as the
+  transparent newtypes predict.
+- **Changelog:** `## [Unreleased] → Changed` entry added; `docs/architecture.md`'s data-model
+  block updated for the `Size`/`units` change.
+- **Review note.** Only `src/**` unit tests and the integration tests that name a retyped value
+  were edited (mechanical `.to_dimensions()`/`BBox::new(..)`/`Fraction::new(..)` conversions); no
+  golden or memory reference was regenerated.
 
 ### Phase 5 — Processing enums
 
@@ -581,7 +632,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 | 1 Archive ✅ | — | `archive/`, 3 call sites | low |
 | 2 CLI | — | CLI + option fields | low (user-visible) |
 | 3 Config ✅ | 2 | `options`/`profiles` + all readers | medium |
-| 4 Geometry | — | processing + output boundaries | medium (broad, mechanical) |
+| 4 Geometry ✅ | — | processing + output boundaries | medium (broad, mechanical) |
 | 5 Processing | 4 | processing hot paths | medium (perf) |
 | 6 Page state | 4 | `model` + input/processing | **high (memory)** |
 | 7 Output | 2, 3, 6 | `output/**` + templates | high (output bytes) |

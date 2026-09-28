@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use super::cli::EbookArgs;
 use super::profiles::{Profile, ProfileData, PALETTE16};
+use crate::units::{Fraction, Megabytes, Percent, Quality, Size};
 
 /// User-selectable output format (see docs/cli.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -361,7 +362,7 @@ pub struct MainOptions {
     /// `--vertical-4-panel`: an independent axis driving the OPF writing mode.
     pub vertical_4_panel: bool,
     pub file_fusion: bool,
-    pub target_size: Option<u32>,
+    pub target_size: Option<Megabytes>,
 }
 
 impl MainOptions {
@@ -381,14 +382,14 @@ pub struct ProcessingOptions {
     pub color: ColorTuning,
     pub cropping: Cropping,
     pub cropping_power: f32,
-    pub cropping_minimum: f32,
-    pub preserve_margin: u32,
+    pub cropping_minimum: Fraction,
+    pub preserve_margin: Option<Percent>,
     pub inter_panel_crop: InterPanelCrop,
     pub borders: Option<BorderColor>,
     pub png: PngOptions,
     /// Derived: `--webp` and an output that keeps WebP (see `Options::resolve`).
     pub webp_output: bool,
-    pub jpeg_quality: u8,
+    pub jpeg_quality: Quality,
     pub strips: Strips,
     pub sizing: Sizing,
     pub rotation: RotationOptions,
@@ -437,16 +438,22 @@ pub struct Options {
 impl Options {
     /// The resolved page size: the profile geometry enlarged by 1.5x under `--hq`
     /// panel-view mode (KCC's `imgsizeframe`).
-    pub fn profile_size(&self) -> (u32, u32) {
-        let (width, height) = (self.device.data.width, self.device.data.height);
+    pub fn profile_size(&self) -> Size {
+        let size = self.device_size();
         if self.main.hq {
-            (
-                (f64::from(width) * 1.5) as u32,
-                (f64::from(height) * 1.5) as u32,
+            Size::new(
+                (f64::from(size.width) * 1.5) as u32,
+                (f64::from(size.height) * 1.5) as u32,
             )
         } else {
-            (width, height)
+            size
         }
+    }
+
+    /// The raw profile geometry (before the `--hq` enlargement), shared by the
+    /// cover, light-novel and OPF/XHTML builders.
+    pub fn device_size(&self) -> Size {
+        Size::new(self.device.data.width, self.device.data.height)
     }
 
     /// KCC's `kindle_azw3`: a Kindle reader writing an EPUB, MOBI or AZW3.
@@ -619,13 +626,13 @@ impl Options {
             );
         }
 
-        let jpeg_quality = args.processing.jpeg_quality.unwrap_or_else(|| {
+        let jpeg_quality = Quality::new(args.processing.jpeg_quality.unwrap_or_else(|| {
             if profile.is_scribe() || profile == Profile::Kcs {
                 90
             } else {
                 85
             }
-        });
+        }))?;
 
         let kindle_azw3 = reader == ReaderFamily::Kindle
             && matches!(
@@ -730,7 +737,7 @@ impl Options {
                 invert_direction: args.main.invert_direction,
                 vertical_4_panel: args.main.vertical_4_panel,
                 file_fusion: args.main.file_fusion,
-                target_size,
+                target_size: target_size.map(Megabytes::new),
             },
             processing: ProcessingOptions {
                 no_processing: args.processing.no_processing,
@@ -743,8 +750,9 @@ impl Options {
                 },
                 cropping: args.processing.cropping,
                 cropping_power: args.processing.cropping_power,
-                cropping_minimum: args.processing.cropping_minimum,
-                preserve_margin: args.processing.preserve_margin,
+                cropping_minimum: Fraction::new(f64::from(args.processing.cropping_minimum)),
+                preserve_margin: (args.processing.preserve_margin != 0)
+                    .then(|| Percent::new(f64::from(args.processing.preserve_margin))),
                 inter_panel_crop: args.processing.inter_panel_crop,
                 borders,
                 png: PngOptions {

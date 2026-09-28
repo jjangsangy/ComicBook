@@ -34,7 +34,7 @@ fn tree_shape(tree: &ComicTree) -> Vec<ChapterShape> {
                 .pages
                 .iter()
                 .map(|page| {
-                    let (width, height) = page.dimensions();
+                    let (width, height) = page.dimensions().to_dimensions();
                     (page.rel_path.clone(), width, height)
                 })
                 .collect();
@@ -404,8 +404,8 @@ fn ingest_defers_page_decoding() -> Result<()> {
 
     // The dimensions come from the codec header, so they are available without a
     // full decode, and match what the on-demand decode produces.
-    assert_eq!(pages[0].dimensions(), (40, 30));
-    assert_eq!(pages[1].dimensions(), (20, 10));
+    assert_eq!(pages[0].dimensions().to_dimensions(), (40, 30));
+    assert_eq!(pages[1].dimensions().to_dimensions(), (20, 10));
     assert_eq!(pages[0].to_decoded()?.dimensions(), (40, 30));
     Ok(())
 }

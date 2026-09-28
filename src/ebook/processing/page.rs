@@ -34,6 +34,7 @@ use crate::ebook::options::{
 };
 use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
+use crate::units::{Quality, Range, Size};
 
 /// Split a page wider than this multiple of the target aspect ratio (see docs/processing.md).
 const SPLIT_THRESHOLD: f64 = 1.16;
@@ -56,7 +57,7 @@ struct Payload {
 ///
 /// Used by tests and one-off callers; the tree pipeline hands its pixels in
 /// directly through [`process_decoded`] so it never holds two decoded copies.
-pub fn process_page(page: &Page, options: &Options, size: (u32, u32)) -> Result<Vec<EncodedPage>> {
+pub fn process_page(page: &Page, options: &Options, size: Size) -> Result<Vec<EncodedPage>> {
     if options.processing.no_processing {
         return passthrough(page, options);
     }
@@ -77,7 +78,7 @@ pub(crate) fn process_decoded(
     page: &Page,
     image: DynamicImage,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
 ) -> Result<Vec<EncodedPage>> {
     let fill = page_fill(page, options);
     let mut out = Vec::new();
@@ -127,14 +128,12 @@ pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result
 /// Under `--no-processing` KCC never runs `ComicPage`, so the sanitized name keeps
 /// no `-kcc-x` order suffix (see docs/porting.md).
 fn passthrough_page(page: &Page, media_type: MediaType, bytes: Vec<u8>) -> EncodedPage {
-    let (width, height) = page.dimensions();
     EncodedPage {
         name: unsuffixed_name(&page.source_name, media_type),
         order_class: OrderClass::Normal,
         media_type,
         bytes,
-        width,
-        height,
+        size: page.dimensions(),
         flags: PageFlags::default(),
     }
 }
@@ -154,11 +153,10 @@ pub fn page_fill(page: &Page, options: &Options) -> Background {
 /// Takes the decoded image by value so the common path can move it into its
 /// single [`Payload`] rather than cloning; split/rotate paths still read from the
 /// borrowed image to derive their outputs.
-fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<Payload> {
+fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payload> {
     let (width, height) = image.dimensions();
-    let (dst_width, dst_height) = size;
     let right_to_left = options.main.right_to_left();
-    let landscape_mismatch = (width > height) != (dst_width > dst_height);
+    let landscape_mismatch = (width > height) != (size.width > size.height);
 
     if options.processing.strips.maximize {
         return vec![maximize_strips(&image, right_to_left)];
@@ -171,8 +169,8 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
         }];
     }
     if landscape_mismatch
-        && width <= dst_height
-        && height <= dst_width
+        && width <= size.height
+        && height <= size.width
         && options.processing.splitter == Splitter::Rotate
     {
         return vec![rotate_payload(image, options)];
@@ -290,7 +288,7 @@ fn bisect(image: &DynamicImage, right_to_left: bool) -> (DynamicImage, DynamicIm
 fn encode_payload(
     payload: Payload,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
     page: &Page,
     fill: Background,
 ) -> Result<Vec<EncodedPage>> {
@@ -329,14 +327,14 @@ fn encode_payload(
     };
 
     if options.processing.scribe {
-        let (width, height) = image.dimensions();
-        if height > SCRIBE_MAX_DIMENSION {
-            let above = image.crop_imm(0, 0, width, SCRIBE_MAX_DIMENSION);
+        let image_size = Size::from_dimensions(image.dimensions());
+        if image_size.height > SCRIBE_MAX_DIMENSION {
+            let above = image.crop_imm(0, 0, image_size.width, SCRIBE_MAX_DIMENSION);
             let below = image.crop_imm(
                 0,
                 SCRIBE_MAX_DIMENSION,
-                width,
-                height - SCRIBE_MAX_DIMENSION,
+                image_size.width,
+                image_size.height - SCRIBE_MAX_DIMENSION,
             );
             let (above_type, above_bytes) = encode_image(&above, options, color_output)?;
             let (below_type, below_bytes) = encode_image(&below, options, color_output)?;
@@ -346,8 +344,7 @@ fn encode_payload(
                     order_class: payload.order,
                     media_type: above_type,
                     bytes: above_bytes,
-                    width,
-                    height: SCRIBE_MAX_DIMENSION,
+                    size: Size::new(image_size.width, SCRIBE_MAX_DIMENSION),
                     flags: flags(true, false),
                 },
                 EncodedPage {
@@ -355,8 +352,7 @@ fn encode_payload(
                     order_class: payload.order,
                     media_type: below_type,
                     bytes: below_bytes,
-                    width,
-                    height: height - SCRIBE_MAX_DIMENSION,
+                    size: Size::new(image_size.width, image_size.height - SCRIBE_MAX_DIMENSION),
                     flags: flags(false, true),
                 },
             ]);
@@ -368,22 +364,20 @@ fn encode_payload(
             order_class: payload.order,
             media_type,
             bytes,
-            width,
-            height,
+            size: image_size,
             flags: flags(false, false),
         }]);
     }
 
     let (media_type, bytes) = encode_image(&image, options, color_output)?;
-    let (width, height) = image.dimensions();
+    let image_size = Size::from_dimensions(image.dimensions());
 
     Ok(vec![EncodedPage {
         name: output_name(&page.source_name, payload.order, media_type),
         order_class: payload.order,
         media_type,
         bytes,
-        width,
-        height,
+        size: image_size,
         flags: flags(false, false),
     }])
 }
@@ -392,7 +386,7 @@ fn encode_payload(
 fn prepare_image(
     mut image: DynamicImage,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
     order: OrderClass,
     fill: Background,
     color: bool,
@@ -477,8 +471,8 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
     }
 
     // "Extremely low contrast is probably intentional": 255 - 32 * 3.
-    let (min, max) = luma_range(image);
-    if max - min < 255 - 32 * 3 {
+    let range = luma_range(image);
+    if range.spread() < 255 - 32 * 3 {
         return;
     }
 
@@ -487,16 +481,16 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
     }
 
     // Pillow's autocontrast recomputes the range on the current pixels.
-    let (min, max) = luma_range(image);
-    if min >= max {
+    let range = luma_range(image);
+    if range.is_degenerate() {
         return;
     }
-    stretch_contrast(image, min, max);
+    stretch_contrast(image, range);
 }
 
-/// The Rec. 601 luma minimum and maximum of an image.
-fn luma_range(image: &DynamicImage) -> (u8, u8) {
-    kernels::luma_min_max(image).unwrap_or((0, 0))
+/// The Rec. 601 luma range of an image.
+fn luma_range(image: &DynamicImage) -> Range {
+    kernels::luma_min_max(image).unwrap_or(Range::new(0, 0))
 }
 
 /// Pillow's unconditional `ImageOps.autocontrast(preserve_tone=True)`: stretch
@@ -507,21 +501,21 @@ fn luma_range(image: &DynamicImage) -> (u8, u8) {
 /// `--color-autocontrast`. A flat image is left untouched (Pillow's zero-width
 /// range would divide by zero).
 pub(crate) fn autocontrast_preserve_tone(image: &mut DynamicImage) {
-    let (min, max) = luma_range(image);
-    if min >= max {
+    let range = luma_range(image);
+    if range.is_degenerate() {
         return;
     }
-    stretch_contrast(image, min, max);
+    stretch_contrast(image, range);
 }
 
-/// Stretch `[min, max]` to `[0, 255]` in every channel, preserving tone.
+/// Stretch the range to `[0, 255]` in every channel, preserving tone.
 ///
 /// Equivalent to `imageproc::contrast::stretch_contrast` with a 0..255 output
 /// range (its formula depends only on the input value), but precomputed as a LUT
 /// and applied in place so the reference call's extra clone and per-pixel
 /// division both disappear.
-fn stretch_contrast(image: &mut DynamicImage, min: u8, max: u8) {
-    let lut = kernels::stretch_contrast_lut(min, max);
+fn stretch_contrast(image: &mut DynamicImage, range: Range) {
+    let lut = kernels::stretch_contrast_lut(range);
     match image {
         DynamicImage::ImageLuma8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
         DynamicImage::ImageRgb8(buffer) => kernels::apply_lut_in_place(buffer, &lut),
@@ -616,7 +610,7 @@ fn black_point(image: &DynamicImage, color: bool) -> u8 {
 fn resize_image(
     image: &mut DynamicImage,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
     order: OrderClass,
     fill: Background,
 ) -> Result<()> {
@@ -624,7 +618,7 @@ fn resize_image(
     let method = resize_method(image, size);
 
     if options.processing.sizing.stretch {
-        *image = resize_to(image, size.0, size.1, method)?;
+        *image = resize_to(image, size, method)?;
         return Ok(());
     }
     if options.main.layout == Layout::Wallpaper {
@@ -641,11 +635,15 @@ fn resize_image(
         {
             *image = contain(
                 image,
-                (SCRIBE_MAX_DIMENSION, SCRIBE_MAX_DIMENSION),
+                Size::new(SCRIBE_MAX_DIMENSION, SCRIBE_MAX_DIMENSION),
                 Method::Lanczos,
             )?;
-        } else if width > size.0 * 2 || height > size.1 {
-            *image = contain(image, (size.0 * 2, size.1), Method::Lanczos)?;
+        } else if width > size.width * 2 || height > size.height {
+            *image = contain(
+                image,
+                Size::new(size.width * 2, size.height),
+                Method::Lanczos,
+            )?;
         }
         return Ok(());
     }
@@ -654,7 +652,7 @@ fn resize_image(
         return Ok(());
     }
 
-    let ratio_device = f64::from(size.1) / f64::from(size.0);
+    let ratio_device = f64::from(size.height) / f64::from(size.width);
     let ratio_image = f64::from(height) / f64::from(width);
     let white_borders = matches!(options.processing.borders, Some(BorderColor::White));
     let kdx = options.device.profile == Profile::Kdx
@@ -695,9 +693,9 @@ impl Method {
 }
 
 /// Pillow's `resize_method`: BICUBIC when the page fits, LANCZOS otherwise.
-fn resize_method(image: &DynamicImage, size: (u32, u32)) -> Method {
+fn resize_method(image: &DynamicImage, size: Size) -> Method {
     let (width, height) = image.dimensions();
-    if width <= size.0 && height <= size.1 {
+    if width <= size.width && height <= size.height {
         Method::Bicubic
     } else {
         Method::Lanczos
@@ -705,26 +703,21 @@ fn resize_method(image: &DynamicImage, size: (u32, u32)) -> Method {
 }
 
 /// Resize the whole image to an exact size (Pillow's `resize`).
-fn resize_to(
-    image: &DynamicImage,
-    width: u32,
-    height: u32,
-    method: Method,
-) -> Result<DynamicImage> {
+fn resize_to(image: &DynamicImage, size: Size, method: Method) -> Result<DynamicImage> {
     let alg = ResizeAlg::Convolution(method.filter());
     Ok(match image {
         DynamicImage::ImageLuma8(buffer) => {
-            DynamicImage::ImageLuma8(resize_buffer(buffer, width, height, alg, PixelType::U8)?)
+            DynamicImage::ImageLuma8(resize_buffer(buffer, size, alg, PixelType::U8)?)
         }
         DynamicImage::ImageRgb8(buffer) => {
-            DynamicImage::ImageRgb8(resize_buffer(buffer, width, height, alg, PixelType::U8x3)?)
+            DynamicImage::ImageRgb8(resize_buffer(buffer, size, alg, PixelType::U8x3)?)
         }
         DynamicImage::ImageRgba8(buffer) => {
-            DynamicImage::ImageRgba8(resize_buffer(buffer, width, height, alg, PixelType::U8x4)?)
+            DynamicImage::ImageRgba8(resize_buffer(buffer, size, alg, PixelType::U8x4)?)
         }
         other => {
             let rgb = other.to_rgb8();
-            DynamicImage::ImageRgb8(resize_buffer(&rgb, width, height, alg, PixelType::U8x3)?)
+            DynamicImage::ImageRgb8(resize_buffer(&rgb, size, alg, PixelType::U8x3)?)
         }
     })
 }
@@ -732,8 +725,7 @@ fn resize_to(
 /// Resize an 8-bit L8/Rgb8/Rgba8 buffer with `fast_image_resize`, preserving the type.
 fn resize_buffer<P>(
     source: &ImageBuffer<P, Vec<u8>>,
-    width: u32,
-    height: u32,
+    size: Size,
     alg: ResizeAlg,
     pixel_type: PixelType,
 ) -> Result<ImageBuffer<P, Vec<u8>>>
@@ -745,46 +737,42 @@ where
     // `ImageRef` implements `IntoImageView`, so the resizer reads straight from
     // the caller's buffer (no full-image duplicate, see docs/architecture.md).
     let src = fast_image_resize::images::ImageRef::new(src_w, src_h, source.as_raw(), pixel_type)?;
-    let mut dst = FastImage::new(width, height, pixel_type);
+    let mut dst = FastImage::new(size.width, size.height, pixel_type);
     let options = ResizeOptions::new().resize_alg(alg);
     Resizer::new().resize(&src, &mut dst, &options)?;
-    ImageBuffer::from_raw(width, height, dst.into_vec())
+    ImageBuffer::from_raw(size.width, size.height, dst.into_vec())
         .context("resized image buffer has an unexpected length")
 }
 
 /// Pillow's `ImageOps.fit`: crop to the target aspect ratio, then resize exactly
 /// (kept bespoke, see docs/dependencies.md — Pillow's half-to-even rounding is pinned).
-pub(crate) fn fit(image: &DynamicImage, size: (u32, u32), method: Method) -> Result<DynamicImage> {
+pub(crate) fn fit(image: &DynamicImage, size: Size, method: Method) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
     let image_ratio = f64::from(width) / f64::from(height);
-    let box_ratio = f64::from(size.0) / f64::from(size.1);
+    let box_ratio = f64::from(size.width) / f64::from(size.height);
 
     if (box_ratio - image_ratio).abs() < f64::EPSILON {
-        return resize_to(image, size.0, size.1, method);
+        return resize_to(image, size, method);
     }
 
     if box_ratio > image_ratio {
         let cropped_height = (f64::from(width) / box_ratio).round() as u32;
         let top = (height.saturating_sub(cropped_height)) / 2;
         let cropped = image.crop_imm(0, top, width, cropped_height.max(1));
-        resize_to(&cropped, size.0, size.1, method)
+        resize_to(&cropped, size, method)
     } else {
         let cropped_width = (f64::from(height) * box_ratio).round() as u32;
         let left = (width.saturating_sub(cropped_width)) / 2;
         let cropped = image.crop_imm(left, 0, cropped_width.max(1), height);
-        resize_to(&cropped, size.0, size.1, method)
+        resize_to(&cropped, size, method)
     }
 }
 
 /// Pillow's `ImageOps.contain`: scale to fit within `size`, preserving aspect.
-pub(crate) fn contain(
-    image: &DynamicImage,
-    size: (u32, u32),
-    method: Method,
-) -> Result<DynamicImage> {
+pub(crate) fn contain(image: &DynamicImage, size: Size, method: Method) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
-    let (target_w, target_h) = contain_size(width, height, size);
-    resize_to(image, target_w, target_h, method)
+    let target = contain_size(width, height, size);
+    resize_to(image, target, method)
 }
 
 /// Pillow's `Image.thumbnail`: shrink to fit `size`, preserving aspect, never
@@ -792,37 +780,33 @@ pub(crate) fn contain(
 ///
 /// Takes the image by value so a thumbnail that is already small enough can be
 /// returned untouched instead of copied.
-pub(crate) fn thumbnail(
-    image: DynamicImage,
-    size: (u32, u32),
-    method: Method,
-) -> Result<DynamicImage> {
+pub(crate) fn thumbnail(image: DynamicImage, size: Size, method: Method) -> Result<DynamicImage> {
     let (width, height) = image.dimensions();
-    if width <= size.0 && height <= size.1 {
+    if width <= size.width && height <= size.height {
         return Ok(image);
     }
-    let (target_w, target_h) = contain_size(width, height, size);
-    resize_to(&image, target_w, target_h, method)
+    let target = contain_size(width, height, size);
+    resize_to(&image, target, method)
 }
 
 /// Pillow's `ImageOps.contain` size calculation (`get_contain_resolution`; kept
 /// bespoke, see docs/dependencies.md).
-fn contain_size(width: u32, height: u32, size: (u32, u32)) -> (u32, u32) {
+fn contain_size(width: u32, height: u32, size: Size) -> Size {
     let image_ratio = f64::from(width) / f64::from(height);
-    let dest_ratio = f64::from(size.0) / f64::from(size.1);
+    let dest_ratio = f64::from(size.width) / f64::from(size.height);
 
     if image_ratio != dest_ratio {
         if image_ratio > dest_ratio {
             let new_height =
-                (f64::from(height) / f64::from(width) * f64::from(size.0)).round() as u32;
-            if new_height != size.1 {
-                return (size.0, new_height.max(1));
+                (f64::from(height) / f64::from(width) * f64::from(size.width)).round() as u32;
+            if new_height != size.height {
+                return Size::new(size.width, new_height.max(1));
             }
         } else {
             let new_width =
-                (f64::from(width) / f64::from(height) * f64::from(size.1)).round() as u32;
-            if new_width != size.0 {
-                return (new_width.max(1), size.1);
+                (f64::from(width) / f64::from(height) * f64::from(size.height)).round() as u32;
+            if new_width != size.width {
+                return Size::new(new_width.max(1), size.height);
             }
         }
     }
@@ -830,18 +814,13 @@ fn contain_size(width: u32, height: u32, size: (u32, u32)) -> (u32, u32) {
 }
 
 /// Pillow's `ImageOps.pad`: contain, then centre on a fill-coloured canvas.
-fn pad(
-    image: &DynamicImage,
-    size: (u32, u32),
-    method: Method,
-    fill: Background,
-) -> Result<DynamicImage> {
+fn pad(image: &DynamicImage, size: Size, method: Method, fill: Background) -> Result<DynamicImage> {
     let contained = contain(image, size, method)?;
     let (width, height) = contained.dimensions();
-    let mut canvas = filled_like(&contained, size.0, size.1, fill_value(fill));
+    let mut canvas = filled_like(&contained, size, fill_value(fill));
 
-    let x = i64::from((size.0.saturating_sub(width)) / 2);
-    let y = i64::from((size.1.saturating_sub(height)) / 2);
+    let x = i64::from((size.width.saturating_sub(width)) / 2);
+    let y = i64::from((size.height.saturating_sub(height)) / 2);
     match (&mut canvas, &contained) {
         (DynamicImage::ImageLuma8(c), DynamicImage::ImageLuma8(s)) => {
             image::imageops::replace(c, s, x, y);
@@ -866,20 +845,28 @@ fn fill_value(fill: Background) -> u8 {
 }
 
 /// A solid image of the same pixel type as `template`.
-fn filled_like(template: &DynamicImage, width: u32, height: u32, value: u8) -> DynamicImage {
+fn filled_like(template: &DynamicImage, size: Size, value: u8) -> DynamicImage {
     match template {
-        DynamicImage::ImageLuma8(_) => {
-            DynamicImage::ImageLuma8(GrayImage::from_pixel(width, height, Luma([value])))
-        }
-        DynamicImage::ImageRgb8(_) => {
-            DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb([value; 3])))
-        }
+        DynamicImage::ImageLuma8(_) => DynamicImage::ImageLuma8(GrayImage::from_pixel(
+            size.width,
+            size.height,
+            Luma([value]),
+        )),
+        DynamicImage::ImageRgb8(_) => DynamicImage::ImageRgb8(RgbImage::from_pixel(
+            size.width,
+            size.height,
+            Rgb([value; 3]),
+        )),
         DynamicImage::ImageRgba8(_) => DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-            width,
-            height,
+            size.width,
+            size.height,
             image::Rgba([value, value, value, 255]),
         )),
-        _ => DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb([value; 3]))),
+        _ => DynamicImage::ImageRgb8(RgbImage::from_pixel(
+            size.width,
+            size.height,
+            Rgb([value; 3]),
+        )),
     }
 }
 
@@ -893,12 +880,59 @@ enum PreparedPng<'a> {
     Indexed(Quantized),
 }
 
+/// A fixed RGB palette as the quantiser returns it: 8-bit triples, wrapped by move
+/// so the index plane can never be confused with pixel bytes. Never cloned.
+#[derive(Debug)]
+struct Palette(Vec<[u8; 3]>);
+
+impl Palette {
+    fn new(triples: Vec<[u8; 3]>) -> Self {
+        Self(triples)
+    }
+
+    fn as_triples(&self) -> &[[u8; 3]] {
+        &self.0
+    }
+
+    /// Flatten to the byte layout `png::Encoder::set_palette` expects.
+    fn flatten(&self) -> Vec<u8> {
+        self.0
+            .iter()
+            .flat_map(|color| [color[0], color[1], color[2]])
+            .collect()
+    }
+
+    /// The smallest PNG bit depth the palette fits in.
+    fn bit_depth(&self) -> png::BitDepth {
+        match self.0.len() {
+            0..=2 => png::BitDepth::One,
+            3..=4 => png::BitDepth::Two,
+            5..=16 => png::BitDepth::Four,
+            _ => png::BitDepth::Eight,
+        }
+    }
+}
+
+/// One palette index per pixel (an index into a [`Palette`], not a colour).
+#[derive(Debug)]
+struct PaletteIndices(Vec<u8>);
+
+impl PaletteIndices {
+    fn new(indices: Vec<u8>) -> Self {
+        Self(indices)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// A page mapped onto a fixed palette.
 struct Quantized {
     width: u32,
     height: u32,
-    palette: Vec<[u8; 3]>,
-    indices: Vec<u8>,
+    palette: Palette,
+    indices: PaletteIndices,
 }
 
 /// Encode a prepared image, following KCC's `save_with_codec` branch order.
@@ -996,29 +1030,33 @@ fn quantize(image: &RgbImage, palette: &[u8]) -> Result<Quantized> {
     Ok(Quantized {
         width: indexed.width(),
         height: indexed.height(),
-        palette: indexed
-            .palette()
-            .iter()
-            .map(|color| [color.red, color.green, color.blue])
-            .collect(),
-        indices: indexed.indices().to_vec(),
+        palette: Palette::new(
+            indexed
+                .palette()
+                .iter()
+                .map(|color| [color.red, color.green, color.blue])
+                .collect(),
+        ),
+        indices: PaletteIndices::new(indexed.indices().to_vec()),
     })
 }
 
 /// Rebuild a grayscale image from a quantised page (KCC's P→L conversion).
 fn quantized_to_luma(quantized: &Quantized) -> GrayImage {
+    let palette = quantized.palette.as_triples();
+    let indices = quantized.indices.as_slice();
     GrayImage::from_fn(quantized.width, quantized.height, |x, y| {
-        let index = usize::from(quantized.indices[(y * quantized.width + x) as usize]);
-        let color = quantized.palette[index];
+        let index = usize::from(indices[(y * quantized.width + x) as usize]);
+        let color = palette[index];
         Luma([luma601(color[0], color[1], color[2])])
     })
 }
 
-pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
+pub(crate) fn encode_jpeg(image: &DynamicImage, quality: Quality) -> Result<Vec<u8>> {
     let image = encodable(image);
     let image = image.as_ref();
     let mut buffer = Vec::new();
-    let encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
+    let encoder = JpegEncoder::new_with_quality(&mut buffer, quality.get());
     encoder
         .write_image(
             image.as_bytes(),
@@ -1040,18 +1078,14 @@ fn encode_png(raw: &[u8], width: u32, height: u32, color: ExtendedColorType) -> 
 
 /// Write a palette PNG at the smallest bit depth the palette fits in.
 fn encode_png_indexed(quantized: &Quantized) -> Result<Vec<u8>> {
-    let palette: Vec<u8> = quantized
-        .palette
-        .iter()
-        .flat_map(|color| [color[0], color[1], color[2]])
-        .collect();
-    let depth = match quantized.palette.len() {
-        0..=2 => png::BitDepth::One,
-        3..=4 => png::BitDepth::Two,
-        5..=16 => png::BitDepth::Four,
-        _ => png::BitDepth::Eight,
-    };
-    let packed = pack_indices(&quantized.indices, quantized.width, quantized.height, depth);
+    let palette = quantized.palette.flatten();
+    let depth = quantized.palette.bit_depth();
+    let packed = pack_indices(
+        quantized.indices.as_slice(),
+        quantized.width,
+        quantized.height,
+        depth,
+    );
 
     let mut buffer = Vec::new();
     {
@@ -1111,9 +1145,9 @@ fn encode_gif(image: &DynamicImage) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
-fn encode_webp_lossy(image: &RgbImage, quality: u8) -> Vec<u8> {
+fn encode_webp_lossy(image: &RgbImage, quality: Quality) -> Vec<u8> {
     let encoder = webp::Encoder::from_rgb(image.as_raw(), image.width(), image.height());
-    encoder.encode(f32::from(quality)).to_vec()
+    encoder.encode(f32::from(quality.get())).to_vec()
 }
 
 fn encode_webp_lossless(image: &RgbImage) -> Vec<u8> {
@@ -1126,7 +1160,7 @@ fn encode_webp_lossless(image: &RgbImage) -> Vec<u8> {
 pub(crate) fn encode_dynamic(
     image: &DynamicImage,
     media_type: MediaType,
-    quality: u8,
+    quality: Quality,
 ) -> Result<Vec<u8>> {
     match media_type {
         MediaType::Jpeg => encode_jpeg(image, quality),
@@ -1227,6 +1261,7 @@ fn named_page(
 mod tests {
     use super::*;
     use crate::ebook::options::Options;
+    use crate::units::Size;
     use clap::Parser;
 
     /// Resolve options from a `comic-book ebook` command line.
@@ -1250,7 +1285,7 @@ mod tests {
                 height,
                 Rgb(color),
             ))),
-            dimensions: (width, height),
+            dimensions: Size::new(width, height),
             background: Background::White,
             flags: PageFlags::default(),
             raw: None,
@@ -1265,7 +1300,7 @@ mod tests {
     #[test]
     fn normal_page_is_passed_through() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(100, 150));
-        let payloads = split_check(image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
         Ok(())
     }
@@ -1275,7 +1310,7 @@ mod tests {
         // 1.5:1 landscape against a portrait profile sits between the split and
         // bisect thresholds, so it is bisected rather than rotated.
         let image = DynamicImage::ImageRgb8(RgbImage::new(300, 200));
-        let payloads = split_check(image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, Size::new(1072, 1448));
         assert_eq!(
             order_of(&payloads),
             vec![OrderClass::SplitLeft, OrderClass::SplitRight]
@@ -1290,7 +1325,7 @@ mod tests {
     fn wide_spread_at_bisect_is_rotated() -> Result<()> {
         // 2.5:1 exceeds BISECT_THRESHOLD, so the spread only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(image, &options(&[])?, (1072, 1448));
+        let payloads = split_check(image, &options(&[])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(payloads[0].rotated);
         // Rotated 90°: dimensions swap.
@@ -1302,7 +1337,7 @@ mod tests {
     fn rotate_first_puts_the_rotated_spread_first() -> Result<()> {
         // 2.5:1 exceeds the bisect threshold, so it only rotates.
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(image, &options(&["--rotate-first"])?, (1072, 1448));
+        let payloads = split_check(image, &options(&["--rotate-first"])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateFirst]);
         Ok(())
     }
@@ -1310,7 +1345,7 @@ mod tests {
     #[test]
     fn no_rotate_keeps_the_spread_upright() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(500, 200));
-        let payloads = split_check(image, &options(&["--no-rotate"])?, (1072, 1448));
+        let payloads = split_check(image, &options(&["--no-rotate"])?, Size::new(1072, 1448));
         assert_eq!(order_of(&payloads), vec![OrderClass::RotateLast]);
         assert!(!payloads[0].rotated);
         assert_eq!(payloads[0].image.dimensions(), (500, 200));
@@ -1326,8 +1361,8 @@ mod tests {
                 Rgb([255, 0, 0])
             }
         }));
-        let ltr = split_check(image.clone(), &options(&[])?, (1072, 1448));
-        let rtl = split_check(image, &options(&["--manga"])?, (1072, 1448));
+        let ltr = split_check(image.clone(), &options(&[])?, Size::new(1072, 1448));
+        let rtl = split_check(image, &options(&["--manga"])?, Size::new(1072, 1448));
         // Left-to-right reads left half first; right-to-left reads right half.
         assert_eq!(ltr[0].image.get_pixel(0, 0)[0], 0);
         assert_eq!(rtl[0].image.get_pixel(0, 0)[0], 255);
@@ -1337,7 +1372,11 @@ mod tests {
     #[test]
     fn maximize_strips_stacks_the_halves() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(400, 100));
-        let payloads = split_check(image, &options(&["--maximize-strips"])?, (1072, 1448));
+        let payloads = split_check(
+            image,
+            &options(&["--maximize-strips"])?,
+            Size::new(1072, 1448),
+        );
         assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
         assert_eq!(payloads[0].image.dimensions(), (200, 200));
         Ok(())
@@ -1346,7 +1385,7 @@ mod tests {
     #[test]
     fn contains_scales_down_to_fit() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(2000, 1000));
-        let contained = contain(&image, (1000, 1000), Method::Lanczos)?;
+        let contained = contain(&image, Size::new(1000, 1000), Method::Lanczos)?;
         assert_eq!(contained.dimensions(), (1000, 500));
         Ok(())
     }
@@ -1354,7 +1393,12 @@ mod tests {
     #[test]
     fn pad_fills_to_the_exact_profile_size() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(2000, 1000));
-        let padded = pad(&image, (1000, 1000), Method::Lanczos, Background::White)?;
+        let padded = pad(
+            &image,
+            Size::new(1000, 1000),
+            Method::Lanczos,
+            Background::White,
+        )?;
         assert_eq!(padded.dimensions(), (1000, 1000));
         // The letterbox is white.
         assert_eq!(padded.to_rgb8().get_pixel(500, 0)[0], 255);
@@ -1364,7 +1408,7 @@ mod tests {
     #[test]
     fn fit_crops_then_scales() -> Result<()> {
         let image = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
-        let fitted = fit(&image, (500, 1000), Method::Lanczos)?;
+        let fitted = fit(&image, Size::new(500, 1000), Method::Lanczos)?;
         assert_eq!(fitted.dimensions(), (500, 1000));
         Ok(())
     }
@@ -1377,7 +1421,7 @@ mod tests {
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
         assert_eq!(encoded[0].name, "page-kcc-x.jpg");
-        assert_eq!((encoded[0].width, encoded[0].height), (40, 40));
+        assert_eq!(encoded[0].size, Size::new(40, 40));
         Ok(())
     }
 
@@ -1579,11 +1623,8 @@ mod tests {
         assert_eq!(encoded.len(), 2);
         assert_eq!(encoded[0].name, "page-kcc-x-above.jpg");
         assert_eq!(encoded[1].name, "page-kcc-x-below.jpg");
-        assert_eq!(
-            (encoded[0].width, encoded[0].height),
-            (1653, SCRIBE_MAX_DIMENSION)
-        );
-        assert_eq!((encoded[1].width, encoded[1].height), (1653, 560));
+        assert_eq!(encoded[0].size, Size::new(1653, SCRIBE_MAX_DIMENSION));
+        assert_eq!(encoded[1].size, Size::new(1653, 560));
         assert!(encoded[0].flags.above && !encoded[0].flags.below);
         assert!(!encoded[1].flags.above && encoded[1].flags.below);
         Ok(())

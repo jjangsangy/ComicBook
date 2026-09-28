@@ -26,6 +26,7 @@ use crate::ebook::model::{EncodedPage, MediaType, PageFlags};
 use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
+use crate::units::Size;
 
 /// One page as the EPUB builders see it (see docs/output.md).
 #[derive(Debug, Clone, Copy)]
@@ -36,8 +37,7 @@ pub(crate) struct PageRef<'a> {
     pub file: &'a str,
     /// File name without its extension (`kcc-0001-kcc-x`).
     pub stem: &'a str,
-    pub width: u32,
-    pub height: u32,
+    pub size: Size,
     pub flags: PageFlags,
     pub media_type: MediaType,
     /// The `-below` companion of a Kindle Scribe `-above` page, if any.
@@ -111,8 +111,7 @@ pub(crate) fn build_entries<'a>(
                 image_dir: dir,
                 file,
                 stem: stem_of(file),
-                width: page.width,
-                height: page.height,
+                size: page.size,
                 flags: page.flags,
                 media_type: page.media_type,
                 below,

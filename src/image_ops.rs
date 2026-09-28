@@ -6,6 +6,8 @@ use image::{DynamicImage, GenericImageView, RgbImage};
 use std::fs;
 use std::path::Path;
 
+use crate::units::{Pixels, Size};
+
 pub const IMG_EXTENSIONS: &[&str] = &[
     "jpeg", "jpg", "png", "tiff", "tif", "bmp", "webp", "gif", "pgm",
 ];
@@ -38,7 +40,7 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
 /// The internal `fast_image_resize` steps only fail on a buffer/dimension
 /// mismatch that the dimensions taken from the source make impossible; fall back
 /// to the original image on that error rather than panicking.
-pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicImage {
+pub fn resize_lanczos3(img: &DynamicImage, size: Size) -> DynamicImage {
     // Borrow the samples when the source is already RGB8 instead of cloning them
     // into an owned `RgbImage`; only other pixel types pay for the conversion.
     let owned;
@@ -53,7 +55,7 @@ pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicIma
     let Ok(src_image) = ImageRef::new(w, h, rgb.as_raw(), PixelType::U8x3) else {
         return img.clone();
     };
-    let mut dst_image = FastImage::new(new_w, new_h, PixelType::U8x3);
+    let mut dst_image = FastImage::new(size.width, size.height, PixelType::U8x3);
 
     let mut resizer = Resizer::new();
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
@@ -64,7 +66,7 @@ pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicIma
         return img.clone();
     }
 
-    match RgbImage::from_raw(new_w, new_h, dst_image.into_vec()) {
+    match RgbImage::from_raw(size.width, size.height, dst_image.into_vec()) {
         Some(buffer) => DynamicImage::ImageRgb8(buffer),
         None => img.clone(),
     }
@@ -72,13 +74,13 @@ pub fn resize_lanczos3(img: &DynamicImage, new_w: u32, new_h: u32) -> DynamicIma
 
 /// Iteratively split an image horizontally until all segments have total pixels < size_threshold.
 /// Keeps top-to-bottom reading order.
-pub fn split_image_iterative(img: DynamicImage, size_threshold: u64) -> Vec<DynamicImage> {
+pub fn split_image_iterative(img: DynamicImage, size_threshold: Pixels) -> Vec<DynamicImage> {
     let mut result_images = Vec::new();
     let mut stack = vec![img];
 
     while let Some(current) = stack.pop() {
         let (w, h) = current.dimensions();
-        let total_pixels = (w as u64) * (h as u64);
+        let total_pixels = Pixels::new((w as u64) * (h as u64));
         if total_pixels < size_threshold || h <= 1 {
             result_images.push(current);
         } else {
@@ -95,27 +97,28 @@ pub fn split_image_iterative(img: DynamicImage, size_threshold: u64) -> Vec<Dyna
 }
 
 /// Proportional resize so total pixels <= size_threshold.
-pub fn resize_image_by_total_pixels(img: DynamicImage, size_threshold: u64) -> DynamicImage {
+pub fn resize_image_by_total_pixels(img: DynamicImage, size_threshold: Pixels) -> DynamicImage {
     let (w, h) = img.dimensions();
-    let total_pixels = (w as u64) * (h as u64);
+    let total_pixels = Pixels::new((w as u64) * (h as u64));
     if total_pixels <= size_threshold {
         return img;
     }
-    let scale_factor = ((size_threshold as f64) / (total_pixels as f64)).sqrt();
+    let scale_factor = ((size_threshold.raw() as f64) / (total_pixels.raw() as f64)).sqrt();
     let new_w = ((w as f64 * scale_factor).round() as u32).max(1);
     let new_h = ((h as f64 * scale_factor).round() as u32).max(1);
-    resize_lanczos3(&img, new_w, new_h)
+    resize_lanczos3(&img, Size::new(new_w, new_h))
 }
 
 /// Proportional resize so width <= max_width.
-pub fn resize_image_by_width(img: DynamicImage, max_width: u32) -> DynamicImage {
+pub fn resize_image_by_width(img: DynamicImage, max_width: Pixels) -> DynamicImage {
     let (w, h) = img.dimensions();
-    if w <= max_width {
+    if Pixels::new(u64::from(w)) <= max_width {
         return img;
     }
+    let max_width = max_width.raw() as u32;
     let scale_factor = (max_width as f64) / (w as f64);
     let new_h = ((h as f64 * scale_factor).round() as u32).max(1);
-    resize_lanczos3(&img, max_width, new_h)
+    resize_lanczos3(&img, Size::new(max_width, new_h))
 }
 
 /// Encode and save image as WebP (RGB, quality 90).

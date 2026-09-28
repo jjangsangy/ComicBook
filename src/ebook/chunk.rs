@@ -24,12 +24,12 @@ use crate::ebook::model::EncodedPage;
 use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
 use crate::ebook::processing::cover;
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
+use crate::units::Bytes;
 
 /// KCC's default cap when neither `--target-size` nor webtoon mode applies (400 MB).
-const DEFAULT_TARGET_SIZE: u64 = 419_430_400;
+const DEFAULT_TARGET_SIZE: Bytes = Bytes::new(419_430_400);
 /// KCC's webtoon cap when no `--target-size` is given (100 MB).
-const WEBTOON_TARGET_SIZE: u64 = 104_857_600;
-const MEGABYTE: u64 = 1_048_576;
+const WEBTOON_TARGET_SIZE: Bytes = Bytes::new(104_857_600);
 
 /// Split a processed book into output tomes.
 ///
@@ -127,9 +127,9 @@ fn flatten(book: &mut ProcessedBook) {
 }
 
 /// The size a webtoon/target-size run splits against (`chunk_process`).
-fn target_size(options: &MainOptions) -> u64 {
+fn target_size(options: &MainOptions) -> Bytes {
     match options.target_size {
-        Some(megabytes) => u64::from(megabytes) * MEGABYTE,
+        Some(megabytes) => megabytes.to_bytes(),
         None if options.webtoon => WEBTOON_TARGET_SIZE,
         None => DEFAULT_TARGET_SIZE,
     }
@@ -137,7 +137,7 @@ fn target_size(options: &MainOptions) -> u64 {
 
 /// Whether any single chapter is larger than the cap (`chunk_process`'s
 /// `--batch-split 1` pre-check).
-fn chapters_exceed_target(book: &ProcessedBook, target: u64) -> bool {
+fn chapters_exceed_target(book: &ProcessedBook, target: Bytes) -> bool {
     book.chapters
         .iter()
         .filter(|chapter| !chapter.pages.is_empty())
@@ -145,17 +145,17 @@ fn chapters_exceed_target(book: &ProcessedBook, target: u64) -> bool {
 }
 
 /// The on-disk size of a chapter's pages (`getDirectorySize`).
-fn chapter_size(chapter: &ProcessedChapter) -> u64 {
+fn chapter_size(chapter: &ProcessedChapter) -> Bytes {
     chapter
         .pages
         .iter()
-        .map(|page| page.bytes.len() as u64)
+        .map(|page| Bytes::new(page.bytes.len() as u64))
         .sum()
 }
 
 /// Split a flat tree's pages by size, keeping Scribe `-above`/`-below` pairs
 /// together.
-fn split_pages(chapters: Vec<ProcessedChapter>, target: u64) -> Vec<Vec<ProcessedChapter>> {
+fn split_pages(chapters: Vec<ProcessedChapter>, target: Bytes) -> Vec<Vec<ProcessedChapter>> {
     let name = chapters
         .iter()
         .find(|chapter| !chapter.pages.is_empty())
@@ -193,17 +193,20 @@ fn page_units(pages: impl IntoIterator<Item = EncodedPage>) -> Vec<Vec<EncodedPa
 }
 
 /// Pack page units into tomes no larger than `target`.
-fn pack_units(units: Vec<Vec<EncodedPage>>, target: u64) -> Vec<Vec<EncodedPage>> {
+fn pack_units(units: Vec<Vec<EncodedPage>>, target: Bytes) -> Vec<Vec<EncodedPage>> {
     let mut tomes: Vec<Vec<EncodedPage>> = Vec::new();
     let mut current: Vec<EncodedPage> = Vec::new();
-    let mut current_size = 0u64;
+    let mut current_size = Bytes::ZERO;
     for unit in units {
-        let size: u64 = unit.iter().map(|page| page.bytes.len() as u64).sum();
+        let size: Bytes = unit
+            .iter()
+            .map(|page| Bytes::new(page.bytes.len() as u64))
+            .sum();
         if !current.is_empty() && current_size + size > target {
             tomes.push(std::mem::take(&mut current));
-            current_size = 0;
+            current_size = Bytes::ZERO;
         }
-        current_size += size;
+        current_size = current_size + size;
         current.extend(unit);
     }
     if !current.is_empty() || tomes.is_empty() {
@@ -213,10 +216,10 @@ fn pack_units(units: Vec<Vec<EncodedPage>>, target: u64) -> Vec<Vec<EncodedPage>
 }
 
 /// Split a one-level tree by whole chapters, packed under `target`.
-fn split_chapters(chapters: Vec<ProcessedChapter>, target: u64) -> Vec<Vec<ProcessedChapter>> {
+fn split_chapters(chapters: Vec<ProcessedChapter>, target: Bytes) -> Vec<Vec<ProcessedChapter>> {
     let mut tomes: Vec<Vec<ProcessedChapter>> = Vec::new();
     let mut current: Vec<ProcessedChapter> = Vec::new();
-    let mut current_size = 0u64;
+    let mut current_size = Bytes::ZERO;
     for chapter in chapters
         .into_iter()
         .filter(|chapter| !chapter.pages.is_empty())
@@ -224,9 +227,9 @@ fn split_chapters(chapters: Vec<ProcessedChapter>, target: u64) -> Vec<Vec<Proce
         let size = chapter_size(&chapter);
         if !current.is_empty() && current_size + size > target {
             tomes.push(std::mem::take(&mut current));
-            current_size = 0;
+            current_size = Bytes::ZERO;
         }
-        current_size += size;
+        current_size = current_size + size;
         current.push(chapter);
     }
     if !current.is_empty() || tomes.is_empty() {
@@ -300,6 +303,7 @@ fn basename(path: &str) -> &str {
 mod tests {
     use super::*;
     use crate::ebook::model::{MediaType, OrderClass, PageFlags};
+    use crate::units::Size;
 
     fn page(name: &str, len: usize) -> EncodedPage {
         EncodedPage {
@@ -307,8 +311,7 @@ mod tests {
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: vec![0; len],
-            width: 1,
-            height: 1,
+            size: Size::new(1, 1),
             flags: PageFlags::default(),
         }
     }
@@ -342,7 +345,7 @@ mod tests {
             vec![page("3.jpg", 30)],
         ];
         // 60 then 60+60 > 100, so the second starts a new tome.
-        let tomes = pack_units(units, 100);
+        let tomes = pack_units(units, Bytes::new(100));
         assert_eq!(tomes.len(), 2);
         assert_eq!(tomes[0].len(), 1);
         assert_eq!(tomes[1].len(), 2);
@@ -351,7 +354,7 @@ mod tests {
     #[test]
     fn an_oversized_unit_is_its_own_tome_without_an_empty_leading_tome() {
         let units = vec![vec![page("big.jpg", 500)], vec![page("small.jpg", 10)]];
-        let tomes = pack_units(units, 100);
+        let tomes = pack_units(units, Bytes::new(100));
         assert_eq!(
             tomes.len(),
             2,

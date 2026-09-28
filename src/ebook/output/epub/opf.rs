@@ -46,7 +46,7 @@ pub(crate) fn build_opf(
     modified: &str,
     options: &Options,
 ) -> Result<String> {
-    let device = (options.device.data.width, options.device.data.height);
+    let device = options.device_size();
 
     // `--vertical-4-panel` writes top-to-bottom; `--invert-direction` swaps the
     // two suffixes relative to the normal rule.
@@ -129,8 +129,8 @@ pub(crate) fn build_opf(
         has_cover,
         kindle_layout: options.device.reader == ReaderFamily::Kindle
             && !matches!(options.device.geometry, Geometry::Custom { .. }),
-        device_width: device.0,
-        device_height: device.1,
+        device_width: device.width,
+        device_height: device.height,
         writing_mode: &writing_mode,
         region_mag: if matches!(options.output.encoding, OutputEncoding::Epub { kfx: true }) {
             "false"
@@ -289,6 +289,7 @@ fn page_spread_property(property: &str, options: &Options) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::Size;
 
     /// Run the spread algorithm over file stems.
     fn spread(entries: &[&str], right_to_left: bool, initial: &'static str) -> Vec<&'static str> {
@@ -353,8 +354,7 @@ mod tests {
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: Vec::new(),
-            width: 100,
-            height: 50,
+            size: Size::new(100, 50),
             flags: PageFlags {
                 order_class: OrderClass::Normal,
                 rotated: false,
@@ -367,8 +367,7 @@ mod tests {
             image_dir: "Chapter 1",
             file: "kcc-0001-kcc-x-above.jpg",
             stem: "kcc-0001-kcc-x-above",
-            width: 100,
-            height: 150,
+            size: Size::new(100, 150),
             flags: PageFlags {
                 order_class: OrderClass::Normal,
                 rotated: false,

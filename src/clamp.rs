@@ -4,6 +4,7 @@ use crate::archive::{
 use crate::image_ops::{
     resize_image_by_total_pixels, resize_image_by_width, save_image_as_webp, split_image_iterative,
 };
+use crate::units::Pixels;
 use anyhow::{anyhow, Context, Result};
 use clap::ValueEnum;
 use image::DynamicImage;
@@ -35,10 +36,10 @@ pub enum Approach {
 /// exactly once instead of duplicating it per approach, where the copies could drift.
 impl Approach {
     /// Smallest `size_threshold` this approach can make progress with.
-    fn min_threshold(self) -> u64 {
+    fn min_threshold(self) -> Pixels {
         match self {
-            Approach::Split | Approach::Resize => 500_000,
-            Approach::MaxWidth => 400,
+            Approach::Split | Approach::Resize => Pixels::new(500_000),
+            Approach::MaxWidth => Pixels::new(400),
         }
     }
 
@@ -52,29 +53,29 @@ impl Approach {
     }
 
     /// How large an image is under this approach: total pixels, or just the width.
-    fn measure(self, img: &DynamicImage) -> u64 {
+    fn measure(self, img: &DynamicImage) -> Pixels {
         match self {
             Approach::Split | Approach::Resize => total_pixels(img),
-            Approach::MaxWidth => u64::from(img.width()),
+            Approach::MaxWidth => Pixels::new(u64::from(img.width())),
         }
     }
 
     /// Rewrite an image that exceeds the threshold into one or more replacements.
-    fn clamp(self, img: DynamicImage, threshold: u64) -> Vec<DynamicImage> {
+    fn clamp(self, img: DynamicImage, threshold: Pixels) -> Vec<DynamicImage> {
         match self {
             Approach::Split => split_image_iterative(img, threshold),
             Approach::Resize => vec![resize_image_by_total_pixels(img, threshold)],
-            Approach::MaxWidth => vec![resize_image_by_width(img, threshold as u32)],
+            Approach::MaxWidth => vec![resize_image_by_width(img, threshold)],
         }
     }
 
     /// Reject thresholds too small for this approach to make progress with.
-    fn validate_threshold(self, size_threshold: u64) -> Result<()> {
+    fn validate_threshold(self, size_threshold: Pixels) -> Result<()> {
         if size_threshold <= self.min_threshold() {
             return Err(anyhow!(
                 "For {} approach, size_threshold must be > {} pixels",
                 self.rule_label(),
-                group_thousands(self.min_threshold())
+                group_thousands(self.min_threshold().raw())
             ));
         }
         Ok(())
@@ -96,8 +97,8 @@ fn group_thousands(value: u64) -> String {
 }
 
 /// Total pixel count of an image.
-fn total_pixels(img: &DynamicImage) -> u64 {
-    u64::from(img.width()) * u64::from(img.height())
+fn total_pixels(img: &DynamicImage) -> Pixels {
+    Pixels::new(u64::from(img.width()) * u64::from(img.height()))
 }
 
 /// A single comic to clamp, together with the archive kind used to read it.
@@ -195,7 +196,7 @@ fn collect_chapters(input_path: &Path, output_dir: &Path) -> Result<Vec<Chapter>
 }
 
 /// True when no image exceeds the threshold, so the source can be copied verbatim.
-fn is_within_threshold(approach: Approach, images: &[DecodedImage], threshold: u64) -> bool {
+fn is_within_threshold(approach: Approach, images: &[DecodedImage], threshold: Pixels) -> bool {
     images
         .iter()
         .all(|decoded| approach.measure(&decoded.image) < threshold)
@@ -205,7 +206,7 @@ fn is_within_threshold(approach: Approach, images: &[DecodedImage], threshold: u
 fn clamp_images(
     approach: Approach,
     images: Vec<DecodedImage>,
-    threshold: u64,
+    threshold: Pixels,
 ) -> Vec<DynamicImage> {
     images
         .into_iter()
@@ -235,7 +236,7 @@ fn process_chapter(
     chapter: &Chapter,
     output_dir: &Path,
     approach: Approach,
-    threshold: u64,
+    threshold: Pixels,
     progress: &MultiProgress,
     overall_bar: &ProgressBar,
 ) -> Result<()> {
@@ -296,7 +297,7 @@ fn progress_style(template: &str, chars: &str) -> ProgressStyle {
 pub fn run_clamp(
     input_path: &Path,
     output_dir: &Path,
-    size_threshold: u64,
+    size_threshold: Pixels,
     approach: Approach,
     num_workers: usize,
 ) -> Result<()> {

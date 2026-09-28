@@ -26,6 +26,7 @@ use crate::ebook::options::{Options, ReaderFamily};
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::page::{self, Method};
 use crate::ebook::{naming, progress};
+use crate::units::Size;
 
 /// KCC caps both light-novel dimensions at 1920 for Kindle profiles.
 const KINDLE_MAX_DIMENSION: u32 = 1920;
@@ -86,13 +87,13 @@ pub fn convert_with(
 /// KCC reads the profile table here (which `checkOptions` replaces with the
 /// `Custom` entry when `--custom-width`/`--custom-height` were given), so
 /// `device.data` is the right source.
-fn resize_bounds(options: &Options) -> (u32, u32) {
-    let (mut width, mut height) = (options.device.data.width, options.device.data.height);
+fn resize_bounds(options: &Options) -> Size {
+    let mut size = options.device_size();
     if options.device.reader == ReaderFamily::Kindle {
-        width = width.min(KINDLE_MAX_DIMENSION);
-        height = height.min(KINDLE_MAX_DIMENSION);
+        size.width = size.width.min(KINDLE_MAX_DIMENSION);
+        size.height = size.height.min(KINDLE_MAX_DIMENSION);
     }
-    (width, height)
+    size
 }
 
 /// Resize one page if it exceeds the bounds, returning the bytes to archive.
@@ -100,9 +101,9 @@ fn resize_bounds(options: &Options) -> (u32, u32) {
 /// A page that already fits is emitted untouched (KCC only calls `img.save` inside
 /// its size check, so the file on disk is left as it was); such a page is never
 /// decoded.
-fn resize_page(page: &mut Page, bounds: (u32, u32), options: &Options) -> Result<Vec<u8>> {
-    let (width, height) = page.dimensions();
-    if width <= bounds.0 && height <= bounds.1 {
+fn resize_page(page: &mut Page, bounds: Size, options: &Options) -> Result<Vec<u8>> {
+    let size = page.dimensions();
+    if size.width <= bounds.width && size.height <= bounds.height {
         // The tree is dropped once every page has been archived, so the source
         // bytes can be *moved* into the output instead of cloned.
         if let Some(raw) = page.raw.take() {

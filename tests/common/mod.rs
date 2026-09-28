@@ -16,6 +16,7 @@ use anyhow::{anyhow, Result};
 use clap::ValueEnum;
 use comic_book::archive::ArchiveFormat;
 use comic_book::clamp::Approach;
+use comic_book::units::Pixels;
 
 /// Discards everything written directly to stderr for the rest of the process.
 ///
@@ -63,7 +64,7 @@ pub fn run_clamp(
     comic_book::clamp::run_clamp(
         input_path,
         output_dir,
-        size_threshold,
+        Pixels::new(size_threshold),
         approach,
         num_workers,
     )

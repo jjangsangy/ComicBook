@@ -10,6 +10,7 @@ use comic_book::ebook::options::{
     MetadataTitle, Options, OutputEncoding, PanelView, ReaderFamily, Splitter,
 };
 use comic_book::ebook::profiles::{DeviceKind, Profile, ALL_PROFILES, PROFILE_TABLE};
+use comic_book::units::Megabytes;
 
 /// Parse `comic-book ebook <args>` and resolve it.
 fn resolve(args: &[&str]) -> Result<Options> {
@@ -346,7 +347,7 @@ fn defaults_resolve_to_kindle_mobi() -> Result<()> {
         options.output.encoding,
         OutputEncoding::Mobi { keep_epub: false }
     );
-    assert_eq!(options.processing.jpeg_quality, 85);
+    assert_eq!(options.processing.jpeg_quality.get(), 85);
     assert_eq!(options.main.target_size, None);
     assert_eq!(
         options.output.batch_split,
@@ -418,7 +419,7 @@ fn auto_resolves_by_profile() -> Result<()> {
 #[test]
 fn remarkable_gets_a_default_target_size() -> Result<()> {
     let options = resolve(&["book.cbz", "-p", "Rmk2"])?;
-    assert_eq!(options.main.target_size, Some(95));
+    assert_eq!(options.main.target_size, Some(Megabytes::new(95)));
     Ok(())
 }
 
@@ -450,19 +451,19 @@ fn mobi_epub_keeps_the_intermediate_epub() -> Result<()> {
 fn two_hundred_megabyte_presets_expand() -> Result<()> {
     let epub = resolve(&["book.cbz", "-f", "epub-200mb"])?;
     assert_eq!(epub.output.encoding, OutputEncoding::Epub { kfx: false });
-    assert_eq!(epub.main.target_size, Some(195));
+    assert_eq!(epub.main.target_size, Some(Megabytes::new(195)));
     assert_eq!(epub.output.batch_split, BatchSplit::Auto);
 
     let pdf = resolve(&["book.cbz", "-f", "pdf-200mb"])?;
     assert_eq!(pdf.output.encoding, OutputEncoding::Pdf);
-    assert_eq!(pdf.main.target_size, Some(195));
+    assert_eq!(pdf.main.target_size, Some(Megabytes::new(195)));
 
     let mobi = resolve(&["book.cbz", "-f", "mobi+epub-200mb"])?;
     assert_eq!(
         mobi.output.encoding,
         OutputEncoding::Mobi { keep_epub: true }
     );
-    assert_eq!(mobi.main.target_size, Some(195));
+    assert_eq!(mobi.main.target_size, Some(Megabytes::new(195)));
     Ok(())
 }
 
@@ -470,7 +471,7 @@ fn two_hundred_megabyte_presets_expand() -> Result<()> {
 fn kfx_is_an_epub_preset_with_disabled_panel_view() -> Result<()> {
     let options = resolve(&["book.cbz", "-f", "kfx"])?;
     assert_eq!(options.output.encoding, OutputEncoding::Epub { kfx: true });
-    assert_eq!(options.main.target_size, Some(195));
+    assert_eq!(options.main.target_size, Some(Megabytes::new(195)));
     assert_eq!(options.main.panel_view, PanelView::Off);
     Ok(())
 }
@@ -478,21 +479,31 @@ fn kfx_is_an_epub_preset_with_disabled_panel_view() -> Result<()> {
 #[test]
 fn jpeg_quality_defaults_by_device_and_honours_overrides() -> Result<()> {
     assert_eq!(
-        resolve(&["book.cbz", "-p", "KV"])?.processing.jpeg_quality,
+        resolve(&["book.cbz", "-p", "KV"])?
+            .processing
+            .jpeg_quality
+            .get(),
         85
     );
     assert_eq!(
-        resolve(&["book.cbz", "-p", "KS"])?.processing.jpeg_quality,
+        resolve(&["book.cbz", "-p", "KS"])?
+            .processing
+            .jpeg_quality
+            .get(),
         90
     );
     assert_eq!(
-        resolve(&["book.cbz", "-p", "KCS"])?.processing.jpeg_quality,
+        resolve(&["book.cbz", "-p", "KCS"])?
+            .processing
+            .jpeg_quality
+            .get(),
         90
     );
     assert_eq!(
         resolve(&["book.cbz", "-p", "KV", "--jpeg-quality", "70"])?
             .processing
-            .jpeg_quality,
+            .jpeg_quality
+            .get(),
         70
     );
     assert!(

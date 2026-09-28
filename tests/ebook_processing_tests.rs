@@ -39,8 +39,8 @@ fn summary(page: &EncodedPage) -> (OrderClass, MediaType, u32, u32, bool) {
     (
         page.order_class,
         page.media_type,
-        page.width,
-        page.height,
+        page.size.width,
+        page.size.height,
         page.flags.black_background,
     )
 }
@@ -108,7 +108,7 @@ fn fixture_book_snapshot() -> Result<()> {
     for page in &pages {
         let decoded = image::load_from_memory(&page.bytes)
             .with_context(|| format!("{} is not decodable", page.name))?;
-        assert_eq!(decoded.dimensions(), (page.width, page.height));
+        assert_eq!(decoded.dimensions(), (page.size.width, page.size.height));
     }
     Ok(())
 }

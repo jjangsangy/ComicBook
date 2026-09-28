@@ -69,6 +69,7 @@ Observable behaviours the port preserves:
 src/
   lib.rs, cli.rs               # root Cli; `ebook` subcommand dispatch
   archive/                     # archive reader/writer (reused)
+  units.rs                     # zero-cost geometry/unit newtypes (Size, BBox, IndexBox, Range, ...)
   ebook/
     mod.rs                     # run_ebook(); orchestration (makeBook equivalent)
     cli.rs                     # clap structs for every option group
@@ -100,7 +101,7 @@ struct Page {
     source_name: String,         // book-relative source path (redundant root dir stripped)
     rel_path: String,            // chapter-relative file name
     image: Option<DynamicImage>, // decoded pixels, present only while processing
-    dimensions: (u32, u32),      // header dimensions, available without decoding
+    dimensions: Size,            // header dimensions, available without decoding
     background: Background,      // White | Black
     flags: PageFlags,            // Rotated, BlackBackground, Above/Below, OrderClass
     raw: Option<Vec<u8>>,        // original encoded bytes (lazy decode source, --no-processing)
@@ -115,11 +116,16 @@ struct EncodedPage {            // one processed/encoded page (a spread can yiel
     order_class: OrderClass,
     media_type: MediaType,
     bytes: Vec<u8>,
-    width: u32,
-    height: u32,
+    size: Size,
     flags: PageFlags,
 }
 ```
+
+- `Size` and the other geometry/unit newtypes (`BBox`, `IndexBox`, `Range`, `Percent`, `Fraction`,
+  `Pixels`, `Bytes`, `Megabytes`, `Quality`) live in [`units`](../../src/units.rs). They are `Copy`
+  wrappers (`#[repr(transparent)]` where they wrap a single field), so a width can no longer be
+  passed where a height is expected, and a byte cap can no longer be compared against a pixel
+  count.
 
 - `Chapter::name` is the directory path relative to the image root (`""`, `"Chapter 1"`,
   `"Chapter 1/Sub"`, …); each path component is slugified on output.

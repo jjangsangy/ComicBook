@@ -29,6 +29,7 @@ use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::kernels;
 use crate::ebook::processing::page::{self, Method};
+use crate::units::{Pixels, Size};
 
 /// The reference caps the virtual page width at 1072 px (`max_width`), regardless of
 /// how wide the device is.
@@ -44,7 +45,7 @@ const MIN_STRIP_WIDTH: u32 = 300;
 /// A white/black run becomes an "edge" when the Laplacian exceeds this (KCC's `p > 6`).
 const EDGE_THRESHOLD: u8 = 6;
 /// The reference aborts when a merged strip would exceed `131072 * 4` pixels tall.
-const MAX_MERGED_HEIGHT: u64 = 131_072 * 4;
+const MAX_MERGED_HEIGHT: Pixels = Pixels::new(131_072 * 4);
 
 /// A detected panel as `(top, bottom, height)`, matching KCC's tuple.
 type Panel = (u32, u32, u32);
@@ -76,8 +77,8 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
 /// blitted, so only the source bytes plus the growing canvas are retained.
 fn merge_chapter(pages: &mut [Page]) -> Result<DynamicImage> {
     let target_width = most_common_width(pages);
-    let target_height: u32 = pages.iter().map(|page| page.dimensions().1).sum();
-    if u64::from(target_height) > MAX_MERGED_HEIGHT {
+    let target_height: u32 = pages.iter().map(|page| page.dimensions().height).sum();
+    if Pixels::new(u64::from(target_height)) > MAX_MERGED_HEIGHT {
         bail!(
             "Webtoon strip is too tall at {target_height} px ({target_width} px wide); \
              try separate chapter folders or --file-fusion"
@@ -101,7 +102,7 @@ fn merge_chapter(pages: &mut [Page]) -> Result<DynamicImage> {
                 as u32;
             page::fit(
                 &DynamicImage::ImageRgb8(rgb),
-                (target_width, height),
+                Size::new(target_width, height),
                 Method::Bicubic,
             )?
         } else {
@@ -124,16 +125,16 @@ fn most_common_width(pages: &[Page]) -> u32 {
     let mut best = 0;
     let mut best_count = 0;
     for (index, page) in pages.iter().enumerate() {
-        let width = page.dimensions().0;
+        let width = page.dimensions().width;
         if pages[..index]
             .iter()
-            .any(|earlier| earlier.dimensions().0 == width)
+            .any(|earlier| earlier.dimensions().width == width)
         {
             continue;
         }
         let count = pages
             .iter()
-            .filter(|candidate| candidate.dimensions().0 == width)
+            .filter(|candidate| candidate.dimensions().width == width)
             .count();
         if count > best_count {
             best_count = count;
@@ -204,7 +205,7 @@ fn page_from(image: DynamicImage, source_name: String) -> Page {
     let rel_path = source_name
         .rsplit_once('/')
         .map_or_else(|| source_name.clone(), |(_, file)| file.to_string());
-    let dimensions = image.dimensions();
+    let dimensions = Size::from_dimensions(image.dimensions());
     Page {
         source_name,
         rel_path,
@@ -422,7 +423,7 @@ mod tests {
     }
 
     fn strip_page(name: &str, image: DynamicImage) -> Page {
-        let dimensions = image.dimensions();
+        let dimensions = Size::from_dimensions(image.dimensions());
         Page {
             source_name: name.to_string(),
             rel_path: name.to_string(),
@@ -436,7 +437,10 @@ mod tests {
     }
 
     fn split_sizes(pages: &[Page]) -> Vec<(u32, u32)> {
-        pages.iter().map(|page| page.dimensions()).collect()
+        pages
+            .iter()
+            .map(|page| page.dimensions().to_dimensions())
+            .collect()
     }
 
     /// The three-panel fixture: pages pack into two virtual pages (KCC: 780 + 525).

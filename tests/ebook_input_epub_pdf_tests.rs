@@ -116,9 +116,9 @@ fn epub_loads_spine_in_order_and_picks_the_largest_image() -> Result<()> {
     assert_eq!(tree.chapters.len(), 1);
     assert_eq!(tree.chapters[0].name, "");
     let pages = &tree.chapters[0].pages;
-    assert_eq!(pages[0].dimensions(), (60, 70));
+    assert_eq!(pages[0].dimensions().to_dimensions(), (60, 70));
     assert_eq!(pages[0].rel_path, "0.png");
-    assert_eq!(pages[1].dimensions(), (40, 50));
+    assert_eq!(pages[1].dimensions().to_dimensions(), (40, 50));
     assert_eq!(pages[1].rel_path, "1.png");
 
     // The chosen image keeps its original bytes (see docs/porting.md).
@@ -198,7 +198,10 @@ fn epub_ignores_a_referenced_non_image() -> Result<()> {
 
     let tree = load_tree(&epub, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
-    assert_eq!(tree.chapters[0].pages[0].dimensions(), (6, 6));
+    assert_eq!(
+        tree.chapters[0].pages[0].dimensions().to_dimensions(),
+        (6, 6)
+    );
     Ok(())
 }
 
@@ -324,7 +327,7 @@ fn pdf_with_one_image_extracts_it_at_native_size() -> Result<()> {
     let tree = load_tree(&pdf, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
     let page = &tree.chapters[0].pages[0];
-    assert_eq!(page.dimensions(), (40, 30));
+    assert_eq!(page.dimensions().to_dimensions(), (40, 30));
     assert_eq!(page.rel_path, "p-0.png");
     assert_eq!(
         page.source_media_type,
@@ -343,7 +346,7 @@ fn vector_pdf_pages_are_rasterised_to_the_device_target() -> Result<()> {
     let tree = load_tree(&pdf, &options(&[])?)?;
     assert_eq!(tree.page_count(), 1);
     let page = &tree.chapters[0].pages[0];
-    let (width, height) = page.dimensions();
+    let (width, height) = page.dimensions().to_dimensions();
     assert_eq!(height, 1810, "target height");
 
     // The rendered page carries the drawn black fill, not a blank white page.
@@ -372,7 +375,10 @@ fn legacy_extract_scans_embedded_jpegs() -> Result<()> {
 
     let tree = load_tree(&pdf, &options(&["--legacy-extract"])?)?;
     assert_eq!(tree.page_count(), 1);
-    assert_eq!(tree.chapters[0].pages[0].dimensions(), (200, 150));
+    assert_eq!(
+        tree.chapters[0].pages[0].dimensions().to_dimensions(),
+        (200, 150)
+    );
 
     // Without the flag the stub is not a parseable PDF.
     assert!(load_tree(&pdf, &options(&[])?).is_err());

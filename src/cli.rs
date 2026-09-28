@@ -7,6 +7,7 @@ use crate::archive::ArchiveFormat;
 use crate::clamp::{self, Approach};
 use crate::convert;
 use crate::ebook::{self, EbookArgs};
+use crate::units::Pixels;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -114,7 +115,13 @@ pub fn run(cli: Cli) -> Result<()> {
             size_threshold,
             approach,
             workers,
-        } => clamp::run_clamp(&input_dir, &output_dir, size_threshold, approach, workers),
+        } => clamp::run_clamp(
+            &input_dir,
+            &output_dir,
+            Pixels::new(size_threshold),
+            approach,
+            workers,
+        ),
         Commands::Ebook(args) => ebook::run_ebook(args),
         Commands::Completions { shell, shell_flag } => run_completions(shell, shell_flag),
     }

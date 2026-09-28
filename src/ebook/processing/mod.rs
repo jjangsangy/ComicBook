@@ -24,9 +24,10 @@ use rayon::prelude::*;
 use crate::ebook::model::{ComicTree, EncodedPage, Page};
 use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
+use crate::units::{Fraction, Size};
 
 /// Fraction of each inter-panel gutter KCC retains after cropping.
-const INTER_PANEL_KEEP: f64 = 0.04;
+const INTER_PANEL_KEEP: Fraction = Fraction::new(0.04);
 
 /// The encoded pages of one chapter, in reading order.
 #[derive(Debug, Clone)]
@@ -119,7 +120,7 @@ pub fn process_tree_with(
 fn process_page_owned(
     page: &mut Page,
     options: &Options,
-    size: (u32, u32),
+    size: Size,
     is_first_page: bool,
 ) -> Result<Vec<crate::ebook::model::EncodedPage>> {
     prepare_page(page, options, is_first_page)?;
@@ -151,7 +152,7 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Resu
     }
 
     let power = f64::from(options.processing.cropping_power);
-    let minimum = f64::from(options.processing.cropping_minimum);
+    let minimum = options.processing.cropping_minimum;
     if !options.main.webtoon {
         match options.processing.cropping {
             Cropping::PageNumbers => crop::crop_page_number(
@@ -225,9 +226,9 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
             if !already_processed && file_stem(&page.rel_path).contains("-kcc") {
                 already_processed = true;
             }
-            let (width, height) = page.dimensions();
+            let size = page.dimensions();
             image_number += 1;
-            if options.device.data.width > width && options.device.data.height > height {
+            if options.device.data.width > size.width && options.device.data.height > size.height {
                 image_smaller += 1;
             }
         }

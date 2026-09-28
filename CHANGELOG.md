@@ -56,6 +56,26 @@ release when a version tag is pushed.
   - `assemble` now takes a `TitleOrigin` (`Derived`/`Fusion`) instead of the covarying
     `default_title` + `fusion` pair, and `naming::slugify` takes a `NameStyle` (`Slug`/`Cbz`)
     rather than the whole request `Format`.
+- Replaced the geometry and measurement primitives with named, compiler-checked newtypes (the
+  geometry/unit step of the type-safety refactor tracked in `REFACTOR.md`), collected in the new
+  `units` module:
+  - `Size { width, height }` replaces the bare `(u32, u32)`/adjacent `u32` size pairs: a page's
+    header `dimensions`, an `EncodedPage`'s `width`/`height`, the profile/cover/light-novel page
+    size, and the `fit`/`contain`/`thumbnail`/`pad`/`resize` targets.
+  - `BBox<T>` (Pillow's `left`/`upper`/`right`/`lower` order) and `IndexBox` (`x1`/`x2`/`y1`/`y2`,
+    KCC's axis-grouped inclusive order) replace the interchangeable positional 4-tuples in the
+    crop/kernel bounding-box code, and `Range { min, max }` replaces the `(u8, u8)` luma/chroma
+    pairs.
+  - `Percent`/`Fraction` replace bare `f64` percentages and fractions (`--preserve-margin` is now
+    `Option<Percent>`, `--cropping-minimum` a `Fraction`); `Pixels`/`Bytes`/`Megabytes` replace the
+    `u64`/`u32` pixel counts, byte caps and MB options (a pixel threshold can no longer be compared
+    against an encoded-size cap); the resolved `--jpeg-quality` is a validated `Quality`; and the
+    quantiser's palette and index plane are `Palette`/`PaletteIndices`.
+  - The public helpers `clamp::run_clamp`, `image_ops::split_image_iterative`,
+    `image_ops::resize_image_by_total_pixels` and `image_ops::resize_image_by_width` now take the
+    typed `Pixels` (and `resize_lanczos3` a `Size`) instead of bare `u64`/`u32` — a signature-level
+    change for library callers. The `BBox`/`Range`/`IndexBox` span accessors saturate rather than
+    subtracting unchecked, so a transposed box can no longer panic a debug build.
 - Updated the `docs/cli.md` and `docs/processing.md` reference tables to describe the typed mode
   values and the consolidated `--borders` flag introduced by the CLI step above.
 

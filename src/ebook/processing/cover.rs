@@ -15,7 +15,7 @@
 //! match the reference while the exact glyph shapes do not (see docs/porting.md).
 
 use anyhow::{Context, Result};
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use std::path::Path;
 
 use crate::ebook::model::{ComicTree, EncodedPage, MediaType, OrderClass, PageFlags};
@@ -23,6 +23,7 @@ use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::crop;
 use crate::ebook::processing::page::{self, Method};
+use crate::units::{BBox, Quality, Size};
 
 /// The processed cover plus whether `--smart-cover-crop` actually cropped it
 /// (KCC's `Cover.smartcover`, which CBZ/PDF output tests before writing a cover).
@@ -75,7 +76,7 @@ pub fn process(
 
     // The OPF advertises the cover as `image/jpeg`, so it is always JPEG whatever
     // the source page's format was.
-    let (width, height) = (image.width(), image.height());
+    let page_size = Size::from_dimensions(image.dimensions());
     let bytes = page::encode_jpeg(&image, options.processing.jpeg_quality)?;
 
     Ok(Some(Cover {
@@ -84,8 +85,7 @@ pub fn process(
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes,
-            width,
-            height,
+            size: page_size,
             flags: PageFlags::default(),
         },
         smart_cropped,
@@ -94,15 +94,15 @@ pub fn process(
 
 /// The cover's target size: the profile, with both dimensions capped at 1920 for
 /// Kindle Scribe KF8 output (`Cover.process`).
-fn cover_size(options: &Options) -> (u32, u32) {
-    let (width, height) = (options.device.data.width, options.device.data.height);
+fn cover_size(options: &Options) -> Size {
+    let size = options.device_size();
     if options.processing.scribe {
-        (
-            width.min(page::SCRIBE_MAX_DIMENSION),
-            height.min(page::SCRIBE_MAX_DIMENSION),
+        Size::new(
+            size.width.min(page::SCRIBE_MAX_DIMENSION),
+            size.height.min(page::SCRIBE_MAX_DIMENSION),
         )
     } else {
-        (width, height)
+        size
     }
 }
 
@@ -116,7 +116,7 @@ pub fn labelled(
     cover: &EncodedPage,
     tome: usize,
     total: usize,
-    quality: u8,
+    quality: Quality,
 ) -> Result<EncodedPage> {
     // KCC's `tomeid == 0` branch saves the cover unlabelled; its caller only
     // increments `tomeid` once a book splits into more than one tome.
@@ -133,7 +133,7 @@ pub fn labelled(
         DynamicImage::ImageRgb8(decoded.into_rgb8())
     };
     draw_label(&mut image, &format!("{tome}/{total}"));
-    let (width, height) = (image.width(), image.height());
+    let page_size = Size::from_dimensions(image.dimensions());
     let bytes = page::encode_jpeg(&image, quality)?;
 
     Ok(EncodedPage {
@@ -141,8 +141,7 @@ pub fn labelled(
         order_class: cover.order_class,
         media_type: MediaType::Jpeg,
         bytes,
-        width,
-        height,
+        size: page_size,
         flags: cover.flags,
     })
 }
@@ -235,41 +234,41 @@ fn crop_main_cover(image: &mut DynamicImage, right_to_left: bool) -> bool {
     let (w, h) = (f64::from(width), f64::from(height));
     let ratio = w / h;
 
-    let (left, upper, right, lower) = if ratio > 2.0 {
+    let bbox = if ratio > 2.0 {
         if right_to_left {
-            (w / 6.0, 0.0, w / 2.0 - w * 0.02, h)
+            BBox::new(w / 6.0, 0.0, w / 2.0 - w * 0.02, h)
         } else {
-            (w / 2.0 + w * 0.02, 0.0, 5.0 / 6.0 * w, h)
+            BBox::new(w / 2.0 + w * 0.02, 0.0, 5.0 / 6.0 * w, h)
         }
     } else if ratio > 1.83 {
         if right_to_left {
-            (w * 0.19, 0.0, w * 0.575, h)
+            BBox::new(w * 0.19, 0.0, w * 0.575, h)
         } else {
-            (w * 0.425, 0.0, 0.81 * w, h)
+            BBox::new(w * 0.425, 0.0, 0.81 * w, h)
         }
     } else if ratio > 1.7 {
         if right_to_left {
-            (w * 0.2, 0.0, w * 0.583, h)
+            BBox::new(w * 0.2, 0.0, w * 0.583, h)
         } else {
-            (w * 0.417, 0.0, 0.8 * w, h)
+            BBox::new(w * 0.417, 0.0, 0.8 * w, h)
         }
     } else if ratio > 1.34 {
         if right_to_left {
-            (0.0, 0.0, w / 2.0 - w * 0.03, h)
+            BBox::new(0.0, 0.0, w / 2.0 - w * 0.03, h)
         } else {
-            (w / 2.0 + w * 0.03, 0.0, w, h)
+            BBox::new(w / 2.0 + w * 0.03, 0.0, w, h)
         }
     } else if ratio > 1.0 {
         if right_to_left {
-            (w * 0.36, 0.0, w, h)
+            BBox::new(w * 0.36, 0.0, w, h)
         } else {
-            (0.0, 0.0, 0.64 * w, h)
+            BBox::new(0.0, 0.0, 0.64 * w, h)
         }
     } else {
         return false;
     };
 
-    *image = crop::crop_rounded(image, left, upper, right, lower);
+    *image = crop::crop_rounded(image, bbox);
     true
 }
 
@@ -312,7 +311,7 @@ mod tests {
             source_name: "kcc-0001.png".to_string(),
             rel_path: "kcc-0001.png".to_string(),
             image: Some(image),
-            dimensions: (width, height),
+            dimensions: Size::new(width, height),
             background: crate::ebook::model::Background::White,
             flags: PageFlags::default(),
             raw: None,
@@ -336,7 +335,7 @@ mod tests {
         assert_eq!(cover.page.name, "cover.jpg");
         assert_eq!(cover.page.media_type, MediaType::Jpeg);
         // The Kobo Elipsa is 1404x1872, so the 2000x3000 page is thumbnailed to fit.
-        assert!(cover.page.width <= 1404 && cover.page.height <= 1872);
+        assert!(cover.page.size.width <= 1404 && cover.page.size.height <= 1872);
         assert!(!cover.smart_cropped);
         Ok(())
     }
@@ -353,7 +352,7 @@ mod tests {
         assert!(cover.smart_cropped);
         // A 2:1 spread (> 1.83 ratio) keeps the right 42.5%–81% band, so the
         // cropped source is 770x1000 before the 1404x1872 thumbnail.
-        assert!(cover.page.width < cover.page.height);
+        assert!(cover.page.size.width < cover.page.size.height);
         Ok(())
     }
 
@@ -381,7 +380,7 @@ mod tests {
             &options(&["-f", "epub", "-p", "KoE", "--cover-fill"])?,
         )?
         .context("a cover is produced")?;
-        assert_eq!((cover.page.width, cover.page.height), (1404, 1872));
+        assert_eq!(cover.page.size, Size::new(1404, 1872));
         Ok(())
     }
 
@@ -407,11 +406,11 @@ mod tests {
             .context("a cover is produced")?
             .page;
 
-        let plain = labelled(&cover, 0, 1, 85)?;
+        let plain = labelled(&cover, 0, 1, Quality::new(85)?)?;
         assert_eq!(plain.bytes, cover.bytes, "a single tome is left untouched");
 
-        let first = labelled(&cover, 1, 3, 85)?;
-        let second = labelled(&cover, 2, 3, 85)?;
+        let first = labelled(&cover, 1, 3, Quality::new(85)?)?;
+        let second = labelled(&cover, 2, 3, Quality::new(85)?)?;
         assert_ne!(first.bytes, cover.bytes, "the label re-encodes the cover");
         assert_ne!(first.bytes, second.bytes, "each tome gets its own number");
         assert!(matches!(

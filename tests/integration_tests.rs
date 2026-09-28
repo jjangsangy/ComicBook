@@ -9,6 +9,7 @@ use comic_book::image_ops::{
     is_image_extension, is_image_file, resize_image_by_total_pixels, resize_image_by_width,
     save_image_as_webp, split_image_iterative,
 };
+use comic_book::units::Pixels;
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,7 +37,7 @@ fn test_image_split_even() -> anyhow::Result<()> {
     // Threshold 6,000:
     // Split 1: two 100x100 (10,000 pixels each) -> both > 6,000
     // Split 2: each splits into two 100x50 (5,000 pixels each) -> all 4 < 6,000
-    let pieces = split_image_iterative(img, 6000);
+    let pieces = split_image_iterative(img, Pixels::new(6000));
     assert_eq!(pieces.len(), 4);
     for piece in &pieces {
         let (w, h) = piece.dimensions();
@@ -56,7 +57,7 @@ fn test_image_split_odd_height_and_ordering() -> anyhow::Result<()> {
     buf.put_pixel(0, 200, Rgb([0, 0, 255]));
     let img = DynamicImage::ImageRgb8(buf);
 
-    let pieces = split_image_iterative(img, 15_000);
+    let pieces = split_image_iterative(img, Pixels::new(15_000));
     assert_eq!(pieces.len(), 2);
 
     let (w1, h1) = pieces[0].dimensions();
@@ -74,7 +75,7 @@ fn test_image_split_odd_height_and_ordering() -> anyhow::Result<()> {
 #[test]
 fn test_image_split_already_under_threshold() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(50, 50));
-    let pieces = split_image_iterative(img, 5000);
+    let pieces = split_image_iterative(img, Pixels::new(5000));
     assert_eq!(pieces.len(), 1);
     assert_eq!(pieces[0].dimensions(), (50, 50));
     Ok(())
@@ -83,7 +84,7 @@ fn test_image_split_already_under_threshold() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
-    let resized = resize_image_by_total_pixels(img, 250_000);
+    let resized = resize_image_by_total_pixels(img, Pixels::new(250_000));
     let (w, h) = resized.dimensions();
     assert!((w as u64) * (h as u64) <= 250_000);
     assert_eq!(w, 500);
@@ -94,7 +95,7 @@ fn test_image_resize_total_pixels() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(200, 300));
-    let resized = resize_image_by_total_pixels(img, 100_000);
+    let resized = resize_image_by_total_pixels(img, Pixels::new(100_000));
     assert_eq!(resized.dimensions(), (200, 300));
     Ok(())
 }
@@ -102,7 +103,7 @@ fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1200, 800));
-    let resized = resize_image_by_width(img, 600);
+    let resized = resize_image_by_width(img, Pixels::new(600));
     let (w, h) = resized.dimensions();
     assert_eq!(w, 600);
     assert_eq!(h, 400);
@@ -112,7 +113,7 @@ fn test_image_resize_max_width() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(400, 800));
-    let resized = resize_image_by_width(img, 600);
+    let resized = resize_image_by_width(img, Pixels::new(600));
     assert_eq!(resized.dimensions(), (400, 800));
     Ok(())
 }

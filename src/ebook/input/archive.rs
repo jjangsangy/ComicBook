@@ -23,6 +23,7 @@ use std::path::Path;
 use crate::archive::{is_os_metadata, open_reader, ArchiveKind, EntryContent};
 
 use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
+use crate::units::Size;
 
 /// Image extensions accepted as comic pages.
 ///
@@ -97,7 +98,7 @@ pub(crate) struct LoadedPage {
     /// Encoded source bytes, retained for the lazy decode and `--no-processing`.
     pub(crate) raw: Vec<u8>,
     /// Dimensions read from the codec header, without a full decode.
-    pub(crate) dimensions: (u32, u32),
+    pub(crate) dimensions: Size,
 }
 
 /// Read one encoded image entry into a [`LoadedPage`].
@@ -118,13 +119,14 @@ pub(crate) fn load_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
 }
 
 /// The `(width, height)` of an encoded image, read from its header.
-fn image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
+fn image_dimensions(data: &[u8]) -> Result<Size> {
     let reader = image::ImageReader::new(std::io::Cursor::new(data))
         .with_guessed_format()
         .context("image format could not be detected")?;
-    reader
+    let dimensions = reader
         .into_dimensions()
-        .context("image dimensions could not be read")
+        .context("image dimensions could not be read")?;
+    Ok(Size::from_dimensions(dimensions))
 }
 
 /// Whether [`build_tree`] should collapse a single redundant top-level folder.

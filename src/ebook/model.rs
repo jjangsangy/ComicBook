@@ -15,6 +15,8 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
 use std::path::PathBuf;
 
+use crate::units::Size;
+
 /// Detected page background, used for fill/crop decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Background {
@@ -133,7 +135,7 @@ pub struct Page {
     pub image: Option<DynamicImage>,
     /// The source image's dimensions, read from the codec header at ingest so an
     /// undersized-page check does not need to decode the whole image.
-    pub dimensions: (u32, u32),
+    pub dimensions: Size,
     pub background: Background,
     pub flags: PageFlags,
     /// The source's original encoded bytes.
@@ -150,7 +152,7 @@ pub struct Page {
 
 impl Page {
     /// The source image's dimensions, available without decoding.
-    pub fn dimensions(&self) -> (u32, u32) {
+    pub fn dimensions(&self) -> Size {
         self.dimensions
     }
 
@@ -171,7 +173,7 @@ impl Page {
                 .as_deref()
                 .context("page holds neither decoded pixels nor source bytes")?;
             let decoded = image::load_from_memory(raw).context("image could not be decoded")?;
-            self.dimensions = decoded.dimensions();
+            self.dimensions = Size::from_dimensions(decoded.dimensions());
             self.image = Some(decoded);
         }
         self.image.as_ref().context("page has no decoded image")
@@ -222,8 +224,7 @@ pub struct EncodedPage {
     pub order_class: OrderClass,
     pub media_type: MediaType,
     pub bytes: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    pub size: Size,
     pub flags: PageFlags,
 }
 

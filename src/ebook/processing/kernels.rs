@@ -16,6 +16,7 @@ use image::{DynamicImage, GrayImage};
 use wide::{i16x8, u16x8, u8x16};
 
 use crate::ebook::processing::color::luma601;
+use crate::units::{BBox, Range};
 
 /// A 16-byte SIMD block loaded from `src` at `at`.
 #[inline(always)]
@@ -36,7 +37,7 @@ fn store16(dst: &mut [u8], at: usize, value: u8x16) {
 /// The minimum and maximum samples of a byte slice, or `None` when it is empty.
 ///
 /// Replaces `imageproc::stats::min_max` for the single-channel case.
-pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
+pub(crate) fn min_max(data: &[u8]) -> Option<Range> {
     if data.is_empty() {
         return None;
     }
@@ -54,7 +55,7 @@ pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
         lo = lo.min(value);
         hi = hi.max(value);
     }
-    Some((lo, hi))
+    Some(Range::new(lo, hi))
 }
 
 /// The Rec.601 luma minimum and maximum of an image, without materialising a
@@ -62,7 +63,7 @@ pub(crate) fn min_max(data: &[u8]) -> Option<(u8, u8)> {
 ///
 /// This is `min_max(to_luma601(image))` with the same per-pixel weighting, so
 /// the detected contrast range is unchanged.
-pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<(u8, u8)> {
+pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<Range> {
     if let Some(gray) = image.as_luma8() {
         return min_max(gray.as_raw());
     }
@@ -78,7 +79,7 @@ pub(crate) fn luma_min_max(image: &DynamicImage) -> Option<(u8, u8)> {
             lo = lo.min(value);
             hi = hi.max(value);
         }
-        return Some((lo, hi));
+        return Some(Range::new(lo, hi));
     }
     luma_min_max(&DynamicImage::ImageRgb8(image.to_rgb8()))
 }
@@ -134,16 +135,16 @@ pub(crate) fn threshold_in_place(data: &mut [u8], threshold: u8, inverted: bool)
 /// computes per pixel, precomputed once).
 ///
 /// `min < max` is required by the reference; callers guard it.
-pub(crate) fn stretch_contrast_lut(min: u8, max: u8) -> [u8; 256] {
-    let input_width = u16::from(max) - u16::from(min);
+pub(crate) fn stretch_contrast_lut(range: Range) -> [u8; 256] {
+    let input_width = u16::from(range.max) - u16::from(range.min);
     std::array::from_fn(|index| {
         let value = index as u16;
-        if value <= u16::from(min) {
+        if value <= u16::from(range.min) {
             0
-        } else if value >= u16::from(max) {
+        } else if value >= u16::from(range.max) {
             255
         } else {
-            (((value - u16::from(min)) * 255) / input_width) as u8
+            (((value - u16::from(range.min)) * 255) / input_width) as u8
         }
     })
 }
@@ -279,13 +280,7 @@ pub(crate) fn box_blur_1_in_place(image: &mut GrayImage) {
 // --- rectangle reductions -------------------------------------------------------
 
 /// A clipped `(left, top, right, bottom)` rectangle within an image.
-fn clip(
-    image: &GrayImage,
-    left: i64,
-    top: i64,
-    right: i64,
-    bottom: i64,
-) -> Option<(usize, usize, usize, usize)> {
+fn clip(image: &GrayImage, left: i64, top: i64, right: i64, bottom: i64) -> Option<BBox<usize>> {
     let width = i64::from(image.width());
     let height = i64::from(image.height());
     let left = left.max(0);
@@ -295,7 +290,12 @@ fn clip(
     if left >= right || top >= bottom {
         return None;
     }
-    Some((left as usize, top as usize, right as usize, bottom as usize))
+    Some(BBox::new(
+        left as usize,
+        top as usize,
+        right as usize,
+        bottom as usize,
+    ))
 }
 
 /// Count the samples of `[left, right) x [top, bottom)` for which `vector` (or
@@ -309,9 +309,10 @@ fn count_where(
     vector: impl Fn(u8x16) -> u8x16,
     scalar: impl Fn(u8) -> bool,
 ) -> u64 {
-    let Some((left, top, right, bottom)) = clip(image, left, top, right, bottom) else {
+    let Some(rect) = clip(image, left, top, right, bottom) else {
         return 0;
     };
+    let (left, top, right, bottom) = (rect.left, rect.upper, rect.right, rect.lower);
     let stride = image.width() as usize;
     let raw = image.as_raw();
     let mut count = 0u64;
@@ -378,7 +379,7 @@ fn bbox_where(
     image: &GrayImage,
     vector: impl Fn(u8x16) -> u8x16,
     scalar: impl Fn(u8) -> bool,
-) -> Option<(u32, u32, u32, u32)> {
+) -> Option<BBox<u32>> {
     let width = image.width() as usize;
     let height = image.height() as usize;
     if width == 0 || height == 0 {
@@ -421,11 +422,11 @@ fn bbox_where(
         }
     }
 
-    (min_x != u32::MAX).then_some((min_x, min_y, max_x + 1, max_y + 1))
+    (min_x != u32::MAX).then_some(BBox::new(min_x, min_y, max_x + 1, max_y + 1))
 }
 
 /// Bounding box of samples `>= threshold`.
-pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_ge(u8x16::splat(threshold)),
@@ -434,7 +435,7 @@ pub(crate) fn bbox_ge(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32
 }
 
 /// Bounding box of samples `< threshold`.
-pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_lt(u8x16::splat(threshold)),
@@ -443,7 +444,7 @@ pub(crate) fn bbox_lt(image: &GrayImage, threshold: u8) -> Option<(u32, u32, u32
 }
 
 /// Bounding box of non-zero samples.
-pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn bbox_nonzero(image: &GrayImage) -> Option<BBox<u32>> {
     bbox_where(
         image,
         |block| block.simd_ne(u8x16::splat(0)),
@@ -624,9 +625,9 @@ mod tests {
     fn min_max_matches_the_scalar_extremes() {
         assert_eq!(min_max(&[]), None);
         let data: Vec<u8> = (0..=255).collect();
-        assert_eq!(min_max(&data), Some((0, 255)));
-        assert_eq!(min_max(&[7]), Some((7, 7)));
-        assert_eq!(min_max(&[200, 1, 3, 99, 42]), Some((1, 200)));
+        assert_eq!(min_max(&data), Some(Range::new(0, 255)));
+        assert_eq!(min_max(&[7]), Some(Range::new(7, 7)));
+        assert_eq!(min_max(&[200, 1, 3, 99, 42]), Some(Range::new(1, 200)));
     }
 
     #[test]
@@ -661,9 +662,9 @@ mod tests {
                 Luma([10])
             }
         });
-        assert_eq!(bbox_ge(&image, 100), Some((10, 5, 20, 15)));
-        assert_eq!(bbox_lt(&image, 100), Some((0, 0, 40, 23)));
-        assert_eq!(bbox_nonzero(&image), Some((0, 0, 40, 23)));
+        assert_eq!(bbox_ge(&image, 100), Some(BBox::new(10, 5, 20, 15)));
+        assert_eq!(bbox_lt(&image, 100), Some(BBox::new(0, 0, 40, 23)));
+        assert_eq!(bbox_nonzero(&image), Some(BBox::new(0, 0, 40, 23)));
         let blank = GrayImage::new(8, 8);
         assert_eq!(bbox_nonzero(&blank), None);
     }
