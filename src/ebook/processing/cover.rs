@@ -147,7 +147,7 @@ pub fn labelled(
 /// `Cover.process` result) or RGB (`--force-color`).
 ///
 /// Carrying the concrete buffer makes `DynamicImage`'s other variants unrepresentable
-/// here, so the drawing helpers need no wildcard arm (REFACTOR.md E9).
+/// here, so the drawing helpers need no wildcard arm (docs/refactor.md E9).
 enum CoverPixels {
     Luma(GrayImage),
     Rgb(RgbImage),
@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn an_rgb_cover_is_labelled_and_stays_rgb() -> Result<()> {
         // `--force-color` leaves the cover RGB, so this drives the `CoverPixels::Rgb`
-        // branch of the label drawing (REFACTOR.md E9).
+        // branch of the label drawing (docs/refactor.md E9).
         let tree = tree_with_page(600, 900, [200, 30, 30]);
         let cover = process(
             &tree,

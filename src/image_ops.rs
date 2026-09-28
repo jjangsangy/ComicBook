@@ -18,7 +18,7 @@ pub fn is_image_extension(ext: &str) -> bool {
 }
 
 /// The extension of a path's final component (no leading dot), if it has a non-empty
-/// stem before it (REFACTOR.md E16).
+/// stem before it (docs/refactor.md E16).
 ///
 /// A leading dot is not an extension (`.png` has none). This is `std::path`'s own
 /// `Path::extension` (the path is a host filesystem path, not an archive-relative
@@ -36,7 +36,7 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
 /// The internal `fast_image_resize` steps only fail on a buffer/dimension mismatch
 /// that the dimensions taken from the source make impossible; that state is reported
 /// as an error rather than silently returning a full copy of the original image
-/// (REFACTOR.md E15).
+/// (docs/refactor.md E15).
 pub fn resize_lanczos3(img: &DynamicImage, size: Size) -> Result<DynamicImage> {
     // Borrow the samples when the source is already RGB8 instead of cloning them
     // into an owned `RgbImage`; only other pixel types pay for the conversion.

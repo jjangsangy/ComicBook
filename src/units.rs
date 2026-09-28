@@ -1,10 +1,11 @@
-//! Zero-cost geometry and unit newtypes (Phase 4 of the type-safety refactor).
+//! Zero-cost geometry and unit newtypes (Phase 4 of the type-safety refactor; see
+//! `docs/refactor.md`).
 //!
 //! These wrap bare `u32`/`u64`/`f64`/`u8` values whose *meaning* — a pixel size, a
 //! percentage, a byte count, a JPEG quality — was previously carried only by the
 //! parameter name, so a swapped or mis-scaled pair still compiled. Every type here
 //! is `Copy` and compiler-erased; none allocates or clones, and none is used inside
-//! a per-pixel loop (see `REFACTOR.md` §1.1 and §4).
+//! a per-pixel loop (see `docs/refactor.md` §1 rule 1 and §4).
 
 use anyhow::{bail, Result};
 
@@ -192,7 +193,7 @@ impl<T: Copy> BBox<T> {
 // `width`/`height` are the span between two edges. They saturate at `0` for the
 // integer coordinate types rather than subtracting unchecked: a box whose edges are
 // transposed would otherwise panic in a debug build (and wrap in a release one),
-// and the crate forbids both (see `REFACTOR.md` §1 rule 6). `f64` has no saturating
+// and the crate forbids both (see `docs/refactor.md` §1 rule 6). `f64` has no saturating
 // form and cannot panic, so it keeps the plain difference.
 macro_rules! bbox_extent {
     ($type:ty) => {

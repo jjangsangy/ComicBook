@@ -13,7 +13,7 @@ release when a version tag is pushed.
 ### Changed
 
 - Hardened the `archive` public API so that invalid archive states are unrepresentable (the
-  archive/path step of the type-safety refactor tracked in `REFACTOR.md`):
+  archive/path step of the type-safety refactor tracked in `docs/refactor.md`):
   - `normalize_archive_path` returns `Option<NormalizedArchivePath>` instead of a `String` with an
     empty-string sentinel, and `parse_entry_info`/`list_archive_entry_names` return an
     `ArchiveEntry { name, kind }` whose `EntryKind` is `File` or `Directory` (no positional `bool`).
@@ -26,7 +26,7 @@ release when a version tag is pushed.
     `Vec<(String, DynamicImage)>`.
 - Typed the `comic-book` command-line values so invalid modes are rejected by `clap` instead of
   being re-interpreted from bare integers (the CLI step of the type-safety refactor tracked in
-  `REFACTOR.md`):
+  `docs/refactor.md`):
   - `ebook --splitter`, `--cropping`, `--inter-panel-crop`, `--metadata-title` and `--batch-split`
     now accept named values (`--splitter split`, `--cropping pages`, `--inter-panel-crop both`,
     `--metadata-title combine`, `--batch-split per-subdir`) as well as their previous `0`/`1`/`2`
@@ -38,7 +38,7 @@ release when a version tag is pushed.
     `tar`, `dir`), so an unsupported target is rejected while parsing.
 - Split the resolved `ebook` run configuration into cohesive groups and replaced the derived
   boolean flags with enums (the configuration step of the type-safety refactor tracked in
-  `REFACTOR.md`):
+  `docs/refactor.md`):
   - `ebook::options::Options` is now a thin aggregate of `DeviceOptions`/`MainOptions`/
     `ProcessingOptions`/`OutputOptions`/`SessionOptions` (plus `inputs`). `metadata::resolve_with`
     takes `&OutputOptions`, and the `chunk`/`kindle` helpers take the single group they read.
@@ -57,7 +57,7 @@ release when a version tag is pushed.
     `default_title` + `fusion` pair, and `naming::slugify` takes a `NameStyle` (`Slug`/`Cbz`)
     rather than the whole request `Format`.
 - Replaced the geometry and measurement primitives with named, compiler-checked newtypes (the
-  geometry/unit step of the type-safety refactor tracked in `REFACTOR.md`), collected in the new
+  geometry/unit step of the type-safety refactor tracked in `docs/refactor.md`), collected in the new
   `units` module:
   - `Size { width, height }` replaces the bare `(u32, u32)`/adjacent `u32` size pairs: a page's
     header `dimensions`, an `EncodedPage`'s `width`/`height`, the profile/cover/light-novel page
@@ -80,7 +80,7 @@ release when a version tag is pushed.
   values and the consolidated `--borders` flag introduced by the CLI step above.
 - Replaced the boolean-blind flags, magic tri-states and stringly page parts in the
   image-processing pipeline with fieldless enums (the processing step of the type-safety refactor
-  tracked in `REFACTOR.md`). Behaviour and emitted bytes are unchanged:
+  tracked in `docs/refactor.md`). Behaviour and emitted bytes are unchanged:
   - `PageFlags` carries `orientation: Orientation` (`Upright`/`Rotated`), `background: ResolvedFill`
     (the resolved `--borders` fill, distinct from the detected `Page::background`) and `half:
     ScribeHalf` (`NotSplit`/`Above`/`Below`) instead of the `rotated`/`black_background` bools and the
@@ -100,7 +100,7 @@ release when a version tag is pushed.
     fit choice is a `FitPreference` (`Height`/`WidthForPortrait`); and the Scribe page-part suffix is
     a `PagePart` (`Above`/`Below`/`Whole`) rather than a bare `"above"`/`"below"`/`"whole"` literal.
 - Hardened the processing-step types so their invariants are compiler-checked rather than merely
-  documented (the `REFACTOR.md` Phase 5 follow-up). `OutputColor` is now an opaque newtype built only
+  documented (the `docs/refactor.md` Phase 5 follow-up). `OutputColor` is now an opaque newtype built only
   by `OutputColor::from_detection`, with `is_color`/`is_gray` accessors in place of `==` against its
   variants; the resolved `--borders` fill is the distinct `ResolvedFill` newtype rather than a bare
   `Background`, so it cannot be confused with the detected `Page::background`; and the `Detected`
@@ -108,7 +108,7 @@ release when a version tag is pushed.
   pipeline use exhaustive `match`es instead of `if … == variant` comparisons or a `bool` re-collapse.
 - Made the page payload a move-only state machine and gave the page/chapter names distinct
   compiler-checked identities (the page-state step of the type-safety refactor tracked in
-  `REFACTOR.md`). Emitted bytes are unchanged:
+  `docs/refactor.md`). Emitted bytes are unchanged:
   - `Page` replaces its `image: Option<DynamicImage>`/`raw: Option<Vec<u8>>`/`source_media_type:
     Option<MediaType>` trio with one `PageData` (`Encoded(Source)`/`EncodedDecoded(Source,
     DynamicImage)`/`Pixels(MediaType, DynamicImage)`/`Consumed`). The `(None, None)` page that four
@@ -130,7 +130,7 @@ release when a version tag is pushed.
     order_class` is the single owner), and replaced the silent `media_type().unwrap_or(Jpeg)` and
     the `--splitter` equality checks with explicit, exhaustive handling.
 - Gave the EPUB output pipeline compiler-checked identities instead of bare strings and booleans
-  (the output step of the type-safety refactor tracked in `REFACTOR.md`). Emitted bytes are
+  (the output step of the type-safety refactor tracked in `docs/refactor.md`). Emitted bytes are
   unchanged:
   - `PageRef`'s three confusable `&str` fields are `ImageDir`/`FileName`/`Stem` newtypes, the
     manifest/spine/navigation values are `ManifestId`/`Idref`/`Href`/`SpineAttr`/`NavId`/`NavTitle`
@@ -150,7 +150,7 @@ release when a version tag is pushed.
     `gray: bool` and `jpeg_components() -> Option<u8>` are a `ColorSpace` enum; and the threaded
     `drop_bookmarks: bool` is a `Tomes` (`Single`/`Split`) enum.
 - Removed the remaining runtime guards, `_` wildcards and duplicated helpers across the codebase
-  (the sweep step of the type-safety refactor tracked in `REFACTOR.md`). Emitted bytes are
+  (the sweep step of the type-safety refactor tracked in `docs/refactor.md`). Emitted bytes are
   unchanged:
   - `archive::ops` collapses a wrapper folder through one `RootStrip { name, prefix }` value (its
     `RootStripPolicy` match is exhaustive again, with no guarded `_` arm), and the repeated
@@ -188,7 +188,7 @@ release when a version tag is pushed.
   `PageName`, `ChapterName`) with the `relative-path` crate's `RelativePathBuf` instead of `String`,
   and removed the private hand-rolled separator helpers in favour of `RelativePath`'s
   `file_name`/`parent`/`file_stem`/`extension`/`components`/`strip_prefix` operations (the optional
-  path-layer side quest in `REFACTOR.md`). The newtypes gained an `as_relative()` accessor; their
+  path-layer side quest in `docs/refactor.md`). The newtypes gained an `as_relative()` accessor; their
   `as_str()`/`Deref`/`Display`/comparison surface and every emitted archive/EPUB byte is unchanged.
   `std::path` remains the host-filesystem type (`safe_join`'s `PathBuf` and
   `image_ops::path_extension`), and `is_os_metadata` keeps its backslash-aware split because it also
@@ -202,11 +202,15 @@ release when a version tag is pushed.
 
 ### Docs
 
-- Corrected the lint command in `AGENTS.md`, `REFACTOR.md`, `docs/development.md` and
+- Moved the type-safety refactor record to [`docs/refactor.md`](docs/refactor.md), distilled to the
+  binding rules, the completed phases and their behaviour-visible deviations, the resulting option
+  and enum shapes, and the test/lint guardrails. The former root-level `REFACTOR.md` is removed and
+  every reference repointed.
+- Corrected the lint command in `AGENTS.md`, `docs/refactor.md`, `docs/development.md` and
   `docs/porting.md` to `cargo clippy --all-targets --all-features -- -D warnings` (the missing `--`
   made cargo reject `-D warnings` as an unexpected argument).
 - Required piping `cargo nextest` through `tail` (`cargo nextest run 2>&1 | tail -n 20`) in
-  `AGENTS.md`, `REFACTOR.md`, `docs/development.md`, `CONTRIBUTING.md`, `README.md` and the pull
+  `AGENTS.md`, `docs/refactor.md`, `docs/development.md`, `CONTRIBUTING.md`, `README.md` and the pull
   request template: only the pass/fail summary and the names of the failing cases matter, so the
   full run output is not echoed. CI keeps the unfiltered `cargo nextest run --no-fail-fast`.
 - Noted in `AGENTS.md` that the `cargo nextest`-through-`tail` rule overrides the built-in

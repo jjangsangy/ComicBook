@@ -62,7 +62,7 @@ impl Panel {
     /// The panel's height in pixels.
     ///
     /// Saturating so an inverted span yields `0` rather than panicking (see the
-    /// refactor's panic-free rule).
+    /// type-safety refactor's panic-free rule, `docs/refactor.md` §1 rule 6).
     fn height(&self) -> u32 {
         self.bottom.saturating_sub(self.top)
     }
@@ -261,7 +261,7 @@ fn virtual_height(strip_width: u32, options: &Options) -> u32 {
 /// The scan advances [`StripWidth::step`] rows per iteration; a strip narrow enough
 /// for that step to round to zero would spin forever. Building the width once, through
 /// [`StripWidth::new`], makes that state unrepresentable instead of re-guarding it at
-/// the loop (REFACTOR.md C11).
+/// the loop (docs/refactor.md C11).
 #[derive(Clone, Copy)]
 struct StripWidth(u32);
 
@@ -317,7 +317,7 @@ fn detect_panels(image: &DynamicImage, strip_width: StripWidth) -> Vec<Panel> {
     let mut y_work = 0u32;
     // The open panel's top, or `None` between panels. One `Option` replaces the old
     // `panel_detected`/`panel_top` pair, which had to be mutated in lockstep and could
-    // drift (REFACTOR.md C11).
+    // drift (docs/refactor.md C11).
     let mut open_panel: Option<u32> = None;
     let step = strip_width.step();
 
@@ -679,7 +679,7 @@ mod tests {
     fn strip_width_rejects_too_narrow_strips_and_keeps_the_step_non_zero() {
         // `new` is the gate: below `MIN_STRIP_WIDTH` it yields `None`, and at the
         // boundary the scan step is guaranteed non-zero so the loop always advances
-        // (REFACTOR.md C11).
+        // (docs/refactor.md C11).
         assert!(StripWidth::new(MIN_STRIP_WIDTH - 1).is_none());
         assert!(StripWidth::new(MIN_STRIP_WIDTH).is_some_and(|width| width.step() > 0));
     }

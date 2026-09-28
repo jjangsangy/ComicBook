@@ -1,5 +1,5 @@
 //! Shared `indicatif` bar/spinner styles (Phase 8 of the type-safety refactor,
-//! finding G5).
+//! finding G5; see `docs/refactor.md`).
 //!
 //! `ProgressStyle::default_bar().template(..)` with a constant-template fallback was
 //! copied across `convert`, `clamp` and `ebook`. The templates themselves differ per

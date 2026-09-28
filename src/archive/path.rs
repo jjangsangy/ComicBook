@@ -13,7 +13,7 @@ use relative_path::{Component, RelativePath, RelativePathBuf};
 /// and Windows-drive segments. Handing one to a writer therefore cannot silently rewrite the
 /// entry name (the failure mode `add_entry_normalized` used to allow by taking a bare `&str`).
 ///
-/// Backed by a [`RelativePathBuf`] (REFACTOR.md §8.1): the crate's model is exactly this type's
+/// Backed by a [`RelativePathBuf`] (docs/refactor.md §8.1): the crate's model is exactly this type's
 /// invariant — a relative, `/`-separated path — so its `file_name`/`parent`/`extension`/`strip_prefix`
 /// operations replace the hand-rolled separator ladders. The sanitizer invariant on top (non-empty,
 /// zip-slip-safe, no drive prefixes) is *not* something `RelativePathBuf` guarantees, which is why
@@ -33,7 +33,7 @@ impl NormalizedArchivePath {
 
     /// The normalized path as a borrowed, `/`-separated [`RelativePath`].
     ///
-    /// This is the entry point for cross-platform path operations (see REFACTOR.md §8.1):
+    /// This is the entry point for cross-platform path operations (see docs/refactor.md §8.1):
     /// callers use `as_relative().file_name()`/`parent()`/`extension()`/`components()`
     /// instead of splitting the string on separators themselves.
     pub fn as_relative(&self) -> &RelativePath {
@@ -129,7 +129,7 @@ pub fn normalize_archive_path(raw: &str) -> Option<NormalizedArchivePath> {
 /// This is deliberately "sanitize, then [`RelativePath::to_path`]": the same traversal/`.`/`..`
 /// and drive-prefix rules as [`normalize_archive_path`] are applied, so `..` is *dropped* rather
 /// than *popped* (it is not `to_logical_path`); see `integration_tests::test_safe_join`. Reusing
-/// the sanitizer removes the previous second copy of the separator ladder (REFACTOR.md §3.6).
+/// the sanitizer removes the previous second copy of the separator ladder (docs/refactor.md §3.6).
 pub fn safe_join<P: AsRef<Path>>(base: P, relative: &str) -> PathBuf {
     match normalize_archive_path(relative) {
         Some(normalized) => normalized.as_relative().to_path(base),
@@ -163,7 +163,7 @@ pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Resul
 /// This deliberately keeps its own backslash-aware split rather than using
 /// [`RelativePath`]: it also classifies raw host paths (e.g. a `\`-separated Windows
 /// name), which the normalised, forward-slash-only `RelativePath` model never sees
-/// (REFACTOR.md E5 / §8.1).
+/// (docs/refactor.md E5 / §8.1).
 pub fn is_os_metadata(name: &str) -> bool {
     if name.split(['/', '\\']).any(|part| part == "__MACOSX") {
         return true;
@@ -203,7 +203,7 @@ pub fn find_single_root_dir(entries: &[ArchiveEntry]) -> Option<String> {
         }
 
         // Normalized names are `/`-separated and traversal-free, so the component
-        // iterator yields the first segment without allocating (REFACTOR.md §8.1).
+        // iterator yields the first segment without allocating (docs/refactor.md §8.1).
         let mut components = entry.name.as_relative().components();
         let first = match components.next() {
             Some(Component::Normal(segment)) => segment,
@@ -280,7 +280,7 @@ mod tests {
             Some(EntryKind::Directory)
         );
         // A raw name ending in a backslash is a directory too, matching how the zip/tar/7z/rar
-        // backends read `parse_entry_info` (see the Phase 1 note in REFACTOR.md).
+        // backends read `parse_entry_info` (see the Phase 1 note in docs/refactor.md).
         assert_eq!(
             parse_entry_info("weird\\", false).map(|entry| entry.kind),
             Some(EntryKind::Directory)
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn is_os_metadata_classifies_raw_host_paths() {
         // The classifier keeps its own split because it also sees raw host paths, where
-        // the separator may be a backslash (REFACTOR.md E5 / §8.1).
+        // the separator may be a backslash (docs/refactor.md E5 / §8.1).
         assert!(is_os_metadata("__MACOSX\\Chapter\\page.jpg"));
         assert!(is_os_metadata("Chapter\\._page.jpg"));
         assert!(is_os_metadata("Chapter\\Thumbs.db"));

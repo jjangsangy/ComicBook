@@ -1608,7 +1608,7 @@ fn sanitizer_neutralizes_hostile_names() -> anyhow::Result<()> {
     // Hostile entry names: traversal (`../`, `..\`), a nested traversal, an absolute
     // POSIX path, a Windows drive prefix, and an empty name. The cross-check packs them
     // verbatim with the `zip` crate and reads them back, so hostility is judged by the
-    // same crate that extracts archives (REFACTOR.md §8.1) rather than by a re-stated
+    // same crate that extracts archives (docs/refactor.md §8.1) rather than by a re-stated
     // rule, and the sanitizer is required to agree with that verdict.
     use std::io::{Cursor, Write};
 

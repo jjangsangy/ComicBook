@@ -151,7 +151,7 @@ transitive crates than they shrink our source; `bitvec` was already transitive, 
 adds no weight. Irreproducible KCC/Pillow behaviour (crop grouping/merging, spread/rotate
 decisions, archive-format wrappers) stays hand-rolled by design.
 
-## Crate-backed path layer (REFACTOR.md §8.1)
+## Crate-backed path layer (refactor.md §8.1)
 
 The archive/page name newtypes (`NormalizedArchivePath`, `SourceName`, `RelPath`, `PageName`,
 `ChapterName`) are now backed by `relative-path`'s `RelativePathBuf` instead of `String`, and the

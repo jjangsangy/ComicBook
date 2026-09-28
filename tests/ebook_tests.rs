@@ -109,7 +109,7 @@ fn every_documented_format_parses() -> Result<()> {
 
 #[test]
 fn resolved_output_encoding_matches_every_format_and_preset() -> Result<()> {
-    // Every concrete `--format` resolves to its encoding on a Kindle profile. (REFACTOR.md
+    // Every concrete `--format` resolves to its encoding on a Kindle profile. (docs/refactor.md
     // §7.6 Phase 3: the resolution table for presets/formats -> `OutputEncoding`.)
     for (value, expected) in [
         ("epub", OutputEncoding::Epub { kfx: false }),

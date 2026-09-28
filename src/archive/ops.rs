@@ -45,7 +45,7 @@ pub enum RootStripPolicy {
 ///
 /// The two were previously separate `Option`s (`root_to_strip` and a derived
 /// `root_prefix`) whose mixed `(Some, None)` state could not occur but was still
-/// representable in the type (REFACTOR.md E3).
+/// representable in the type (docs/refactor.md E3).
 struct RootStrip {
     name: String,
     prefix: String,

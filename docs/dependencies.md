@@ -53,7 +53,7 @@ external binary. Avoid crates that pull platform binaries (e.g. `pdfium-render`/
 | `pdf-writer` | PDF document skeleton | MIT OR Apache-2.0 |
 | `flate2` | zlib for non-JPEG PDF samples / EPUB | MIT OR Apache-2.0 |
 | `pdfboss-render`, `pdfboss-core` | PDF rasterise + embedded-image extraction | MIT OR Apache-2.0 |
-| `relative-path` | internal archive/page name model (`RelativePath`/`RelativePathBuf`; backs the path newtypes, REFACTOR.md §8.1) | MIT OR Apache-2.0 |
+| `relative-path` | internal archive/page name model (`RelativePath`/`RelativePathBuf`; backs the path newtypes, refactor.md §8.1) | MIT OR Apache-2.0 |
 
 `relative-path` supplies the in-archive name model: a relative, always-`/`-separated,
 platform-independent path, which is the shape of every archive entry and page name the pipeline

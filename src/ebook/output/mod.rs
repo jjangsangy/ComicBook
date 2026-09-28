@@ -22,7 +22,7 @@ use crate::ebook::PreparedBook;
 
 /// Whether a book was written as one file or split into several tomes.
 ///
-/// Replaces KCC's `ischunked` boolean (REFACTOR.md A17): a split book drops its
+/// Replaces KCC's `ischunked` boolean (docs/refactor.md A17): a split book drops its
 /// global `ComicInfo.xml` bookmarks because their page indices do not survive
 /// chunking (see docs/output.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -51,6 +51,7 @@ thumbnail upload (`kindle.py` device paths), anything requiring `kindlegen`/`7-Z
 | [convert.md](convert.md) | `convert`: formats, directory expansion, output naming, mechanics |
 | [clamp.md](clamp.md) | `clamp`: approaches, thresholds, output layout |
 | [architecture.md](architecture.md) | `ebook` pipeline, module map, data model, design principles, performance |
+| [refactor.md](refactor.md) | Type-safety refactor: the completed `make impossible states unrepresentable` pass |
 | [cli.md](cli.md) | `ebook` options, formats and device profiles |
 | [processing.md](processing.md) | `ebook` image-processing algorithms and fidelity rules |
 | [output.md](output.md) | `ebook` EPUB/KePub/CBZ/PDF/light-novel/Kindle document specs, chunking, fusion |

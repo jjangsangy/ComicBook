@@ -536,7 +536,7 @@ impl Profile {
     /// The discriminant indexes [`PROFILE_TABLE`] directly (O(1), no fallback row and
     /// no per-variant match); the `PROFILE_ROWS` check above proves every row sits at
     /// its own variant's discriminant, so the index is in range by construction
-    /// (REFACTOR.md E11).
+    /// (docs/refactor.md E11).
     pub fn entry(self) -> &'static ProfileEntry {
         &PROFILE_TABLE[self as usize]
     }

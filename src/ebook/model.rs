@@ -163,7 +163,7 @@ pub struct PageFlags {
 /// distinct identity, so two confusable names cannot be swapped at a call site.
 ///
 /// The backing store is the `relative-path` crate's relative, `/`-separated path
-/// (REFACTOR.md §8.1), which is the shape of every name in this pipeline; the newtype
+/// (docs/refactor.md §8.1), which is the shape of every name in this pipeline; the newtype
 /// still carries the pipeline-specific meaning on top. `as_relative()` hands out the
 /// borrowed [`RelativePath`] so callers use `file_name`/`parent`/`file_stem`/`extension`
 /// instead of splitting strings. Each newtype is layout-identical to `RelativePathBuf`

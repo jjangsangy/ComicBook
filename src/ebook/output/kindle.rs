@@ -78,7 +78,7 @@ pub fn build_kindle(
 }
 
 /// The `kindling` MOBI builder switches, named so the single positional call
-/// cannot transpose them (REFACTOR.md A15).
+/// cannot transpose them (docs/refactor.md A15).
 ///
 /// Stack-only and `Copy`; no allocation and no dynamic dispatch. The `srcs_data`
 /// and `doc_type` parameters are kept out of the struct: they are `Option`s of

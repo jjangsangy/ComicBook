@@ -126,7 +126,7 @@ struct PdfImage<'a> {
     color_space: ColorSpace,
 }
 
-/// The colour space a PDF image XObject is written in (REFACTOR.md A16).
+/// The colour space a PDF image XObject is written in (docs/refactor.md A16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorSpace {
     Gray,

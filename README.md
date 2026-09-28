@@ -38,6 +38,7 @@ The reference documentation lives in [`docs/`](docs/):
 | [docs/clamp.md](docs/clamp.md) | `clamp`: approaches, thresholds, output layout |
 | [docs/cli.md](docs/cli.md) | `ebook`: options, formats and device profiles |
 | [docs/architecture.md](docs/architecture.md) | `ebook`: pipeline, module map, data model, design principles |
+| [docs/refactor.md](docs/refactor.md) | Type-safety refactor: the completed `make impossible states unrepresentable` pass |
 | [docs/processing.md](docs/processing.md) | `ebook`: image-processing algorithms and fidelity rules |
 | [docs/output.md](docs/output.md) | `ebook`: EPUB/KePub/CBZ/PDF/Kindle document specs, chunking, fusion |
 | [docs/dependencies.md](docs/dependencies.md) | Off-the-shelf policy, crates, licences, clean-room rules |

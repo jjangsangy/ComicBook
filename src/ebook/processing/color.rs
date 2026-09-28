@@ -240,7 +240,7 @@ pub(crate) fn luma_view(image: &DynamicImage) -> Cow<'_, GrayImage> {
 /// Iterates the source's raw triplets and the destination's pixels together, so there
 /// is no per-pixel bounds check, and constructs the output buffer infallibly — no
 /// `from_raw(..).unwrap_or_else(..)` blank-image fallback for a length that is
-/// `width * height` by construction (REFACTOR.md E10).
+/// `width * height` by construction (docs/refactor.md E10).
 fn rgb_to_luma(rgb: &RgbImage) -> GrayImage {
     let (width, height) = rgb.dimensions();
     let mut out = GrayImage::new(width, height);

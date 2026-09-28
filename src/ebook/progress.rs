@@ -99,7 +99,7 @@ fn bar_style() -> ProgressStyle {
 ///
 /// Modelled as one enum so the half-set `(Some(multi), None)`/`(None, Some(overall))`
 /// pair is unrepresentable; every accessor is an exhaustive `match` over the two
-/// states (REFACTOR.md C6).
+/// states (docs/refactor.md C6).
 enum Mode {
     Batch {
         multi: MultiProgress,

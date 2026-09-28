@@ -121,7 +121,7 @@ const PANELS_SIDE_BY_SIDE: [PanelId; 2] = [PanelId::L, PanelId::R];
 /// Modelling the shape as an enum (rather than a `(no_horizontal, no_vertical)`
 /// `bool` pair) makes the four reachable shapes exhaustive, and keys both the
 /// region list and its magnification order off one value, so the two can never
-/// disagree (REFACTOR.md §2.1/§2.5).
+/// disagree (docs/refactor.md §2.1/§2.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanelGrid {
     /// The page fills the screen in both axes: no panels.

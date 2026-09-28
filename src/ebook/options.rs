@@ -278,7 +278,7 @@ impl OutputEncoding {
 }
 
 /// The concrete encoding a request [`Format`] resolves to once preset expansion and the
-/// `auto` profile rule have stripped away every preset variant (B5).
+/// `auto` profile rule have stripped away every preset variant (docs/refactor.md B5).
 ///
 /// [`Options::resolve`] derives this once, so building the [`OutputEncoding`] is an
 /// exhaustive `match` and no "unresolved format" guard can exist.
@@ -465,7 +465,8 @@ impl Options {
     }
 
     /// Whether Kindle Panel View markup is emitted (KCC's `panelview`): a Kindle reader with
-    /// a panel mode selected. Derived once so the OPF and page builders stay in sync (G2).
+    /// a panel mode selected. Derived once so the OPF and page builders stay in sync
+    /// (docs/refactor.md G2).
     pub fn panel_view_enabled(&self) -> bool {
         matches!(self.device.reader, ReaderFamily::Kindle) && self.main.panel_view != PanelView::Off
     }
@@ -499,7 +500,7 @@ impl Options {
 
         // The request `Format` is consumed here: preset expansion and the `auto` profile
         // rule turn it into one of the five concrete encodings plus their side effects, so
-        // no later stage can observe a preset variant (B5).
+        // no later stage can observe a preset variant (docs/refactor.md B5).
         let mut target_size = args.main.target_size;
         let mut batch_split = args.output.batch_split;
         let mut keep_epub = false;

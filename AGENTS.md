@@ -11,6 +11,7 @@ The design and specifications live in [`docs/`](docs/):
 | [docs/convert.md](docs/convert.md) | `convert`: formats, directory expansion, output naming, mechanics |
 | [docs/clamp.md](docs/clamp.md) | `clamp`: approaches, thresholds, output layout |
 | [docs/architecture.md](docs/architecture.md) | `ebook` pipeline, module map, data model, design principles, performance |
+| [docs/refactor.md](docs/refactor.md) | Type-safety refactor: the completed `make impossible states unrepresentable` pass |
 | [docs/cli.md](docs/cli.md) | `ebook` options, formats, device profiles |
 | [docs/processing.md](docs/processing.md) | `ebook` image-processing algorithms and fidelity rules |
 | [docs/output.md](docs/output.md) | `ebook` EPUB/KePub/CBZ/PDF/light-novel/Kindle document specs, chunking, fusion |

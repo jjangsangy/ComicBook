@@ -18,8 +18,8 @@
 //!
 //! The small enums and newtypes below give the formatted values a compiler-checked
 //! identity: a page side, a writing mode, a `<manifest>` id or a Panel View region
-//! can no longer be confused with a neighbouring `&'static str` (see REFACTOR.md
-//! B7/B8/B9/B10/D13). They are all `Copy`/`#[repr(transparent)]` and compiler-erased,
+//! can no longer be confused with a neighbouring `&'static str` (see
+//! docs/refactor.md B7/B8/B9/B10/D13). They are all `Copy`/`#[repr(transparent)]` and compiler-erased,
 //! and they render through [`fmt::Display`] exactly as the strings they replaced.
 
 use std::borrow::Cow;
@@ -63,7 +63,7 @@ fn normalize_lf(mut out: String) -> String {
 ///
 /// `Center` is a distinct state (a `-kcc-a`/`-kcc-d` spread special or a
 /// `--one-page-landscape` page), not an "unset" value, so the three-way choice is
-/// exhaustive and `other()` has no impossible input (REFACTOR.md B7).
+/// exhaustive and `other()` has no impossible input (docs/refactor.md B7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PageSide {
     Left,
@@ -98,7 +98,7 @@ impl fmt::Display for PageSide {
 }
 
 /// The spine's `page-progression-direction` (KCC's `(invert_direction,
-/// right_to_left)` XOR, computed once — REFACTOR.md B8/G1).
+/// right_to_left)` XOR, computed once — docs/refactor.md B8/G1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
     Ltr,
@@ -137,7 +137,7 @@ impl fmt::Display for Direction {
 }
 
 /// The `primary-writing-mode` meta: KCC's four exact spellings of the
-/// (orientation × direction) pair (REFACTOR.md B8).
+/// (orientation × direction) pair (docs/refactor.md B8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WritingMode {
     HorizontalLr,
@@ -177,7 +177,7 @@ impl fmt::Display for WritingMode {
 ///
 /// The `ncx`/`nav`/`cover`/`css` items are static in `templates/content.opf`, so
 /// only the two variants an [`OpfItem`] actually holds are represented
-/// (REFACTOR.md B10).
+/// (docs/refactor.md B10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ManifestMediaType {
     Xhtml,
@@ -201,7 +201,7 @@ impl fmt::Display for ManifestMediaType {
 
 /// An OPF manifest `<item id>`; centralises the `page_`/`img_`/`-below`
 /// conventions so they cannot drift between the manifest and the spine
-/// (REFACTOR.md D13).
+/// (docs/refactor.md D13).
 #[repr(transparent)]
 #[derive(Debug)]
 pub(crate) struct ManifestId(String);
@@ -356,7 +356,7 @@ impl fmt::Display for NavTitle {
 }
 
 /// The non-Kindle `belongs-to-collection` metadata: a series name and its
-/// optional `group-position` (REFACTOR.md C9). `group` is only meaningful when the
+/// optional `group-position` (docs/refactor.md C9). `group` is only meaningful when the
 /// series is present, which the nested `Option` models directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Series<'a> {
@@ -394,7 +394,7 @@ pub(crate) struct PageXhtml<'a> {
 /// The Kindle Scribe `-below` companion image of an `-above` page: its reference
 /// and size (`top: 1920px` under the first image). Replaces the old
 /// `has_below`/`below_image_src`/`below_img_width`/`below_img_height` group, whose
-/// members had to agree by hand (REFACTOR.md C8).
+/// members had to agree by hand (docs/refactor.md C8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BelowImage<'a> {
     pub src: &'a str,
@@ -405,7 +405,7 @@ pub(crate) struct BelowImage<'a> {
 ///
 /// Fieldless, so the grid tables, the element id and the `style` can never
 /// disagree and adding a region is a compile error rather than a silently-empty
-/// `style` (REFACTOR.md B9/E7). The ids match `templates/style.css`.
+/// `style` (docs/refactor.md B9/E7). The ids match `templates/style.css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PanelId {
     /// Top-left quadrant.
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn a_series_with_a_group_renders_both_meta_lines() -> anyhow::Result<()> {
         // The `belongs-to-collection`/`group-position` path is not reached by any
-        // golden (they are Kindle or series-less), so pin it here (REFACTOR.md C9).
+        // golden (they are Kindle or series-less), so pin it here (docs/refactor.md C9).
         let view = Opf {
             title: "Title",
             language: "en",

@@ -53,7 +53,7 @@ pub(crate) fn build_opf(
     let device = options.device_size();
 
     // The reading direction is the `(invert_direction, right_to_left)` XOR,
-    // computed once (REFACTOR.md B8/G1) and shared by the writing mode, the spine
+    // computed once (docs/refactor.md B8/G1) and shared by the writing mode, the spine
     // progression and the initial page side.
     let direction =
         Direction::from_flags(options.main.invert_direction, options.main.right_to_left());
@@ -171,7 +171,7 @@ pub(crate) fn style_css(options: &Options) -> Result<String> {
 /// physical side. The backward pass then walks from the end, anchoring the tail so
 /// the last pages line up with the book's opening side. The pass is driven by the
 /// [`OrderClass`] variants rather than by re-parsing the `-kcc-*` name suffix, so it
-/// is exhaustive over the classes and a new one is a compile error (REFACTOR.md B7).
+/// is exhaustive over the classes and a new one is a compile error (docs/refactor.md B7).
 fn spread_properties(
     order: &[OrderClass],
     right_to_left: bool,

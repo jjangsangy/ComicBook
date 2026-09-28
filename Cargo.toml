@@ -35,7 +35,7 @@ infer = "0.22.0"
 # `/`-separated and platform-independent, which is exactly the shape of every
 # archive-relative name the pipeline carries. They back the path newtypes instead of
 # `String`, so cross-platform name surgery is delegated rather than hand-rolled
-# (REFACTOR.md §8.1). `std::path::Path` stays the OS-boundary type (real files,
+# (docs/refactor.md §8.1). `std::path::Path` stays the OS-boundary type (real files,
 # `safe_join`'s result); this crate is the in-archive model. MIT OR Apache-2.0, pure
 # Rust. `std` is needed so `safe_join` can reuse the sanitizer via `to_path`, and
 # `alloc` for `RelativePathBuf` (this crate's `std` does *not* imply `alloc`).

@@ -44,7 +44,7 @@ impl ZipPath {
 /// `data` is normally `Cow::Borrowed` from an
 /// [`EncodedPage`](crate::ebook::model::EncodedPage), so the entry list does not
 /// duplicate the encoded book. Deliberately **not** `Clone` and with no `to_vec`
-/// (REFACTOR.md §4 non-goal 2): cloning would duplicate the borrowed payload.
+/// (docs/refactor.md §4 non-goal 2): cloning would duplicate the borrowed payload.
 #[derive(Debug)]
 pub(crate) struct ZipEntry<'a> {
     pub(crate) path: ZipPath,

@@ -24,7 +24,7 @@ use crate::ebook::options::{MetadataTitle, OutputEncoding, OutputOptions};
 ///
 /// The spelling of each name lives in one place ([`Field::name`]), with
 /// [`Field::from_name`] as its inverse, so the parse, capture and removal passes can
-/// no longer spell the nine names differently (REFACTOR.md B16).
+/// no longer spell the nine names differently (docs/refactor.md B16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Field {
     Series,
@@ -150,7 +150,7 @@ impl ComicInfo {
         }
 
         // Drain every field through one exhaustive `match`, so a field added to the
-        // enum above cannot be silently dropped here (REFACTOR.md B16).
+        // enum above cannot be silently dropped here (docs/refactor.md B16).
         for (field, value) in found {
             match field {
                 Field::Series => info.series = value,
@@ -361,7 +361,7 @@ fn split_people(value: String) -> Vec<String> {
 ///
 /// A name that is not valid UTF-8 makes the whole document an error, so `parse`
 /// applies its "discard malformed ComicInfo" rule instead of silently failing every
-/// comparison for that element (REFACTOR.md E14).
+/// comparison for that element (docs/refactor.md E14).
 fn local_name(name: &[u8]) -> Result<&str> {
     let name = match name.iter().rposition(|byte| *byte == b':') {
         Some(index) => &name[index + 1..],
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn an_invalid_utf8_element_name_discards_the_document() {
         // XML forbids this, but a malformed document must be discarded outright
-        // rather than silently ignoring the affected element (REFACTOR.md E14).
+        // rather than silently ignoring the affected element (docs/refactor.md E14).
         assert!(ComicInfo::parse(b"<ComicInfo><\xff/></ComicInfo>").is_err());
     }
 

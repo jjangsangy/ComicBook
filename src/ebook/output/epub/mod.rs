@@ -35,7 +35,7 @@ use crate::units::Size;
 ///
 /// `#[repr(transparent)]` over `&str`: layout-identical to the old bare field, no
 /// allocation, still `Copy`. Distinct from [`FileName`]/[`Stem`] so the three
-/// `PageRef` strings can no longer be swapped (REFACTOR.md D12).
+/// `PageRef` strings can no longer be swapped (docs/refactor.md D12).
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ImageDir<'a>(&'a str);
@@ -306,7 +306,7 @@ pub(crate) fn build_entries<'a>(
 ///
 /// The format is a compile-time constant (`format_description!`), so formatting can
 /// only fail on an allocation failure; that is surfaced as an error rather than hidden
-/// behind an epoch-literal fallback (REFACTOR.md E12).
+/// behind an epoch-literal fallback (docs/refactor.md E12).
 fn modified_timestamp() -> Result<String> {
     format_modified(OffsetDateTime::now_utc())
 }
