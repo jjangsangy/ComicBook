@@ -263,7 +263,7 @@ pub fn get_images_from_source<P: AsRef<Path>>(
             if is_image_file(name.as_str()) {
                 let image = image::load_from_memory(data)
                     .with_context(|| format!("Failed to decode image {name}"))?;
-                let basename = crate::path_text::file_name(name.as_str()).to_string();
+                let basename = name.as_relative().file_name().unwrap_or("").to_string();
                 images.push(DecodedImage {
                     name: BaseName(basename),
                     image,

@@ -24,6 +24,7 @@ use image::{
 };
 use quantette::deps::palette::Srgb;
 use quantette::{dither::FloydSteinberg, ImageRef, PaletteSize, Pipeline, QuantizeMethod};
+use relative_path::RelativePath;
 use std::array;
 use std::borrow::Cow;
 
@@ -39,7 +40,6 @@ use crate::ebook::options::{
 };
 use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
-use crate::path_text;
 use crate::units::{Quality, Range, Size};
 
 /// Split a page wider than this multiple of the target aspect ratio (see docs/processing.md).
@@ -1307,8 +1307,8 @@ fn named_page(
     order: Option<OrderClass>,
     part: Option<&str>,
 ) -> String {
-    let (directory, file_name) = path_text::split_dir_file(source_name);
-    let stem = path_text::stem(file_name);
+    let path = RelativePath::new(source_name);
+    let stem = path.file_stem().unwrap_or(source_name);
     let mut name = stem.to_string();
     if let Some(order) = order {
         name.push_str(&format!("-kcc-{}", order.suffix()));
@@ -1319,11 +1319,8 @@ fn named_page(
     }
     name.push('.');
     name.push_str(media_type.extension());
-    if directory.is_empty() {
-        name
-    } else {
-        format!("{directory}/{name}")
-    }
+    // Re-attach the original directory (if any); `with_file_name` keeps the parent.
+    path.with_file_name(name).as_str().to_string()
 }
 
 #[cfg(test)]

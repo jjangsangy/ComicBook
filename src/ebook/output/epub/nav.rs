@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use relative_path::RelativePath;
 
 use super::html_escape;
 use super::templates::{render_lf, Href, Nav, NavEntry, NavId, NavTitle, Ncx};
@@ -31,7 +32,7 @@ fn entry_title<'a>(
             .unwrap_or(book_title);
     }
     let folder = text_dir(entry.image_dir);
-    let basename = crate::path_text::file_name(&folder);
+    let basename = RelativePath::new(&folder).file_name().unwrap_or("");
     if basename != "Text" {
         if let Some(title) = chapter_titles.get(basename) {
             return title;

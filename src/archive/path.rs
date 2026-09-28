@@ -4,6 +4,8 @@ use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
+use relative_path::{Component, RelativePath, RelativePathBuf};
+
 /// A validated, normalized archive entry path.
 ///
 /// The only constructors are [`normalize_archive_path`] and [`parse_entry_info`], so any value
@@ -11,23 +13,45 @@ use std::path::{Path, PathBuf};
 /// and Windows-drive segments. Handing one to a writer therefore cannot silently rewrite the
 /// entry name (the failure mode `add_entry_normalized` used to allow by taking a bare `&str`).
 ///
-/// `#[repr(transparent)]`: layout-identical to the owned `String` produced by normalization, with
-/// no allocation or copy of its own.
+/// Backed by a [`RelativePathBuf`] (REFACTOR.md §8.1): the crate's model is exactly this type's
+/// invariant — a relative, `/`-separated path — so its `file_name`/`parent`/`extension`/`strip_prefix`
+/// operations replace the hand-rolled separator ladders. The sanitizer invariant on top (non-empty,
+/// zip-slip-safe, no drive prefixes) is *not* something `RelativePathBuf` guarantees, which is why
+/// the outer newtype stays and the crate type is never exposed directly.
+///
+/// `#[repr(transparent)]`: layout-identical to the owned `RelativePathBuf` produced by
+/// normalization, with no allocation or copy of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct NormalizedArchivePath(String);
+pub struct NormalizedArchivePath(RelativePathBuf);
 
 impl NormalizedArchivePath {
     /// The normalized path as a borrowed string.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
+    }
+
+    /// The normalized path as a borrowed, `/`-separated [`RelativePath`].
+    ///
+    /// This is the entry point for cross-platform path operations (see REFACTOR.md §8.1):
+    /// callers use `as_relative().file_name()`/`parent()`/`extension()`/`components()`
+    /// instead of splitting the string on separators themselves.
+    pub fn as_relative(&self) -> &RelativePath {
+        self.0.as_relative_path()
     }
 
     /// The remainder after removing `prefix`, which must end on a component boundary (e.g.
     /// `"Root/"`). The result is already normalized: it is a suffix of a normalized path.
+    ///
+    /// Returns `None` when `prefix` is not a whole-component prefix of `self`, and also when
+    /// it consumes `self` entirely (`"Root"` against `"Root/"`): the empty remainder would
+    /// break this type's non-empty invariant, and callers treat "nothing left" as no match.
     pub fn strip_prefix(&self, prefix: &str) -> Option<NormalizedArchivePath> {
-        let rest = self.0.strip_prefix(prefix)?;
-        Some(NormalizedArchivePath(rest.to_string()))
+        let rest = self.as_relative().strip_prefix(prefix).ok()?;
+        if rest.as_str().is_empty() {
+            return None;
+        }
+        Some(NormalizedArchivePath(rest.to_relative_path_buf()))
     }
 }
 
@@ -35,13 +59,13 @@ impl Deref for NormalizedArchivePath {
     type Target = str;
 
     fn deref(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl fmt::Display for NormalizedArchivePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.0.as_str())
     }
 }
 
@@ -95,28 +119,22 @@ pub fn normalize_archive_path(raw: &str) -> Option<NormalizedArchivePath> {
     if out.is_empty() {
         None
     } else {
-        Some(NormalizedArchivePath(out))
+        Some(NormalizedArchivePath(RelativePathBuf::from(out)))
     }
 }
 
 /// Safely join an archive entry path onto a destination directory using the host platform's
 /// native path separators, while preventing path traversal or escaping the target directory.
+///
+/// This is deliberately "sanitize, then [`RelativePath::to_path`]": the same traversal/`.`/`..`
+/// and drive-prefix rules as [`normalize_archive_path`] are applied, so `..` is *dropped* rather
+/// than *popped* (it is not `to_logical_path`); see `integration_tests::test_safe_join`. Reusing
+/// the sanitizer removes the previous second copy of the separator ladder (REFACTOR.md §3.6).
 pub fn safe_join<P: AsRef<Path>>(base: P, relative: &str) -> PathBuf {
-    let mut target = base.as_ref().to_path_buf();
-    for part in relative.split(['/', '\\']) {
-        let trimmed = part.trim();
-        if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
-            continue;
-        }
-        if trimmed.len() == 2 && trimmed.ends_with(':') {
-            continue;
-        }
-        let cleaned = trimmed.trim_end_matches(':');
-        if !cleaned.is_empty() {
-            target.push(cleaned);
-        }
+    match normalize_archive_path(relative) {
+        Some(normalized) => normalized.as_relative().to_path(base),
+        None => base.as_ref().to_path_buf(),
     }
-    target
 }
 
 /// Recursively copy an entire directory tree from `src` to `dst` (kept bespoke; see
@@ -142,10 +160,10 @@ pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Resul
 /// `__MACOSX` is matched per path component and the dot-files by base name, so a
 /// nested `Chapter/._page.jpg` is caught as well as a root-level one.
 ///
-/// Unlike the [`crate::path_text`] helpers, this deliberately keeps its own
-/// backslash-aware split: it also classifies raw host paths (e.g. a `\`-separated
-/// Windows name), which the normalised, forward-slash-only `path_text` layer never
-/// sees (REFACTOR.md E5).
+/// This deliberately keeps its own backslash-aware split rather than using
+/// [`RelativePath`]: it also classifies raw host paths (e.g. a `\`-separated Windows
+/// name), which the normalised, forward-slash-only `RelativePath` model never sees
+/// (REFACTOR.md E5 / §8.1).
 pub fn is_os_metadata(name: &str) -> bool {
     if name.split(['/', '\\']).any(|part| part == "__MACOSX") {
         return true;
@@ -184,18 +202,17 @@ pub fn find_single_root_dir(entries: &[ArchiveEntry]) -> Option<String> {
             continue;
         }
 
-        // Normalized names never carry leading/trailing separators, so stepping the
-        // split iterator is enough to get the first segment and detect whether any
-        // more follow. This avoids allocating a `Vec` of segments for every entry.
-        let mut segments = name.split('/');
-        let first = match segments.next() {
-            Some(seg) if !seg.is_empty() => seg,
+        // Normalized names are `/`-separated and traversal-free, so the component
+        // iterator yields the first segment without allocating (REFACTOR.md §8.1).
+        let mut components = entry.name.as_relative().components();
+        let first = match components.next() {
+            Some(Component::Normal(segment)) => segment,
             _ => continue,
         };
 
-        // If this entry is a file at the root level (no '/' in path),
-        // then the archive has files at root, so there is no single root folder!
-        if entry.kind == EntryKind::File && segments.next().is_none() {
+        // If this entry is a file at the root level (a single component), then the
+        // archive has files at root, so there is no single root folder!
+        if entry.kind == EntryKind::File && components.next().is_none() {
             return None;
         }
 
@@ -315,6 +332,36 @@ mod tests {
             ])),
             None
         );
+    }
+
+    #[test]
+    fn strip_prefix_is_component_wise_and_never_empty() {
+        assert_eq!(
+            normalize_archive_path("Root/Chapter/page.jpg")
+                .and_then(|path| path.strip_prefix("Root/"))
+                .map(|path| path.as_str().to_string()),
+            Some("Chapter/page.jpg".to_string())
+        );
+        // A byte prefix that is not a whole component does not match.
+        assert_eq!(
+            normalize_archive_path("RootX/page.jpg").and_then(|path| path.strip_prefix("Root/")),
+            None
+        );
+        // Consuming the whole path leaves no empty remainder.
+        assert_eq!(
+            normalize_archive_path("Root").and_then(|path| path.strip_prefix("Root/")),
+            None
+        );
+    }
+
+    #[test]
+    fn is_os_metadata_classifies_raw_host_paths() {
+        // The classifier keeps its own split because it also sees raw host paths, where
+        // the separator may be a backslash (REFACTOR.md E5 / §8.1).
+        assert!(is_os_metadata("__MACOSX\\Chapter\\page.jpg"));
+        assert!(is_os_metadata("Chapter\\._page.jpg"));
+        assert!(is_os_metadata("Chapter\\Thumbs.db"));
+        assert!(!is_os_metadata("Chapter\\page.jpg"));
     }
 
     #[test]

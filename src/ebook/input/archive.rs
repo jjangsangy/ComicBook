@@ -17,6 +17,7 @@
 //! straight into the in-memory tree.
 
 use anyhow::{bail, Context, Result};
+use relative_path::{Component, RelativePath, RelativePathBuf};
 use std::cmp::Ordering;
 use std::path::Path;
 
@@ -25,7 +26,6 @@ use crate::archive::{is_os_metadata, open_reader, ArchiveKind, EntryContent};
 use crate::ebook::model::{
     Chapter, ChapterName, ComicTree, MediaType, Page, PageData, RelPath, Source, SourceName,
 };
-use crate::path_text;
 use crate::units::Size;
 
 /// Image extensions accepted as comic pages.
@@ -170,7 +170,9 @@ pub(crate) fn build_tree(
 
 /// The extension of `name` (after the final `.`), lower-cased, if any.
 fn image_extension(name: &str) -> Option<String> {
-    path_text::extension(name).map(str::to_ascii_lowercase)
+    RelativePath::new(name)
+        .extension()
+        .map(str::to_ascii_lowercase)
 }
 
 /// Whether `name` looks like an image KCC would keep (`shared.IMAGE_TYPES`).
@@ -182,7 +184,7 @@ pub(crate) fn is_ebook_image(name: &str) -> bool {
 
 /// Whether `name` is a `ComicInfo.xml` (at any depth).
 fn is_comicinfo(name: &str) -> bool {
-    path_text::file_name(name) == "ComicInfo.xml"
+    RelativePath::new(name).file_name() == Some("ComicInfo.xml")
 }
 
 /// Strip a single common top-level directory from every page path.
@@ -195,13 +197,13 @@ fn is_comicinfo(name: &str) -> bool {
 fn strip_common_root(pages: &mut [LoadedPage]) {
     let mut root: Option<&str> = None;
     for page in pages.iter() {
-        // `split_once` is `None` exactly when the name has no `/`, i.e. the file sits
-        // directly at the root, so there is no wrapper folder.
-        let Some((first, _)) = page.name.as_str().split_once('/') else {
+        let mut components = page.name.as_relative().components();
+        // A path with no second component (or none at all) sits at the root, so
+        // there is no wrapper folder to strip.
+        let Some(Component::Normal(first)) = components.next() else {
             return;
         };
-        // A leading `/` means the path is already at the root.
-        if first.is_empty() {
+        if components.next().is_none() {
             return;
         }
         match root {
@@ -211,12 +213,17 @@ fn strip_common_root(pages: &mut [LoadedPage]) {
         }
     }
 
-    if let Some(root) = root {
-        // Safe to slice: `root` ends on a char boundary and is followed by '/'.
-        let prefix_len = root.len() + 1;
+    // The scan above returns early unless every page shares `root` as its first
+    // component, so the strip is exactly "drop that first component"; the remainder of a
+    // normalized path is itself normalized and non-empty. Dropping by component avoids a
+    // fallible `strip_prefix` whose impossible failure the old unconditional slice masked.
+    if root.is_some() {
         for page in pages.iter_mut() {
-            let stripped = page.name.as_str()[prefix_len..].to_string();
-            page.name = SourceName::new(stripped);
+            let mut rest = RelativePathBuf::new();
+            for component in page.name.as_relative().components().skip(1) {
+                rest.push(component);
+            }
+            page.name = SourceName::new(rest);
         }
     }
 }
@@ -224,14 +231,14 @@ fn strip_common_root(pages: &mut [LoadedPage]) {
 /// Group pages (already book-relative) into naturally ordered chapters.
 fn group_into_chapters(mut pages: Vec<LoadedPage>) -> Vec<Chapter> {
     pages.sort_by(|a, b| {
-        let (dir_a, file_a) = path_text::split_dir_file(a.name.as_str());
-        let (dir_b, file_b) = path_text::split_dir_file(b.name.as_str());
+        let (dir_a, file_a) = split(a.name.as_relative());
+        let (dir_b, file_b) = split(b.name.as_relative());
         compare_dir_paths(dir_a, dir_b).then_with(|| natord::compare_ignore_case(file_a, file_b))
     });
 
     let mut chapters: Vec<Chapter> = Vec::new();
     for loaded in pages {
-        let (dir, file) = path_text::split_dir_file(loaded.name.as_str());
+        let (dir, file) = split(loaded.name.as_relative());
         let chapter_name = ChapterName::new(dir);
         let rel_path = RelPath::new(file);
         let page = Page {
@@ -252,23 +259,31 @@ fn group_into_chapters(mut pages: Vec<LoadedPage>) -> Vec<Chapter> {
     chapters
 }
 
+/// Split a page path into `(directory, file_name)`; the root directory is `""`.
+fn split(path: &RelativePath) -> (&RelativePath, &str) {
+    (
+        path.parent().unwrap_or(RelativePath::new("")),
+        path.file_name().unwrap_or(""),
+    )
+}
+
 /// Compare two directory paths in KCC's pre-order walk order.
 ///
 /// `os.walk` visits the root before its children and siblings before deeper
 /// nests; comparing component-wise (naturally, case-insensitively) and treating
 /// a prefix as "less" reproduces that ordering: `"" < "A" < "A/B" < "B"`.
-fn compare_dir_paths(a: &str, b: &str) -> Ordering {
+fn compare_dir_paths(a: &RelativePath, b: &RelativePath) -> Ordering {
     if a == b {
         return Ordering::Equal;
     }
-    if a.is_empty() {
+    if a.as_str().is_empty() {
         return Ordering::Less;
     }
-    if b.is_empty() {
+    if b.as_str().is_empty() {
         return Ordering::Greater;
     }
-    let mut left = a.split('/');
-    let mut right = b.split('/');
+    let mut left = a.iter();
+    let mut right = b.iter();
     loop {
         match (left.next(), right.next()) {
             (None, None) => return Ordering::Equal,

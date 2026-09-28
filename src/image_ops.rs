@@ -6,7 +6,6 @@ use image::{DynamicImage, GenericImageView, RgbImage};
 use std::fs;
 use std::path::Path;
 
-use crate::path_text;
 use crate::units::{Pixels, Size};
 
 pub const IMG_EXTENSIONS: &[&str] = &[
@@ -21,12 +20,11 @@ pub fn is_image_extension(ext: &str) -> bool {
 /// The extension of a path's final component (no leading dot), if it has a non-empty
 /// stem before it (REFACTOR.md E16).
 ///
-/// A leading dot is not an extension (`.png` has none). This only inspects the path's
-/// own `file_name`, so a non-UTF-8 name is treated as having no extension, and it
-/// shares the one extension rule with the archive side ([`path_text::extension`])
-/// rather than re-spelling it.
+/// A leading dot is not an extension (`.png` has none). This is `std::path`'s own
+/// `Path::extension` (the path is a host filesystem path, not an archive-relative
+/// name, so `std::path` is the right model here); a non-UTF-8 name yields `None`.
 pub fn path_extension(path: &Path) -> Option<&str> {
-    path_text::extension(path.file_name()?.to_str()?)
+    path.extension()?.to_str()
 }
 
 pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {

@@ -1604,6 +1604,90 @@ fn test_safe_join() -> anyhow::Result<()> {
 }
 
 #[test]
+fn sanitizer_neutralizes_hostile_names() -> anyhow::Result<()> {
+    // Hostile entry names: traversal (`../`, `..\`), a nested traversal, an absolute
+    // POSIX path, a Windows drive prefix, and an empty name. The cross-check packs them
+    // verbatim with the `zip` crate and reads them back, so hostility is judged by the
+    // same crate that extracts archives (REFACTOR.md §8.1) rather than by a re-stated
+    // rule, and the sanitizer is required to agree with that verdict.
+    use std::io::{Cursor, Write};
+
+    let hostile = [
+        "../escape.png",
+        "..\\escape.png",
+        "a/../../escape.png",
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+        "",
+    ];
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for name in hostile {
+        // A future `zip` that refuses one of these must not silently shrink the check.
+        assert!(
+            writer.start_file(name, options).is_ok(),
+            "zip refused to store the hostile name {name:?}"
+        );
+        writer.write_all(b"x")?;
+    }
+    let bytes = writer.finish()?.into_inner();
+
+    let base = Path::new("/safe/base");
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+    assert_eq!(
+        archive.len(),
+        hostile.len(),
+        "not all hostile names survived the zip round-trip"
+    );
+
+    // `(name, whether zip considers it enclosable)`.
+    let mut verdicts: Vec<(String, bool)> = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        let name = file.name().to_string();
+        let enclosed = file.enclosed_name().is_some();
+
+        // Whatever `zip` decided, `safe_join` must keep the entry inside `base`: the
+        // sanitizer neutralises traversal, an absolute path, a drive prefix and "".
+        let joined = safe_join(base, &name);
+        assert!(
+            joined.starts_with(base),
+            "sanitizer let {name:?} escape base: {joined:?}"
+        );
+
+        // For exactly the names `zip` refuses to enclose, our normalized form must carry
+        // no traversal component: every component is `Normal`, or the name is dropped
+        // entirely (`None`). `zip`'s `enclosed_name()` is the oracle for "hostile".
+        if !enclosed {
+            if let Some(normalized) = normalize_archive_path(&name) {
+                assert!(
+                    normalized
+                        .as_relative()
+                        .components()
+                        .all(|component| matches!(component, relative_path::Component::Normal(_))),
+                    "{name:?} normalized to a traversal: {normalized}"
+                );
+            }
+        }
+        verdicts.push((name, enclosed));
+    }
+
+    // If `zip` stopped treating the traversal/absolute names as hostile, the assertions
+    // above would be vacuous. These cases are separator-independent, so they are rejected
+    // on every platform.
+    for hostile_name in ["../escape.png", "a/../../escape.png", "/etc/passwd"] {
+        assert!(
+            verdicts
+                .iter()
+                .any(|(name, enclosed)| name == hostile_name && !enclosed),
+            "zip no longer rejects {hostile_name:?}; the cross-check is vacuous"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn test_cross_platform_nested_directory_extraction() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let cbz_path = tmp.path().join("nested.cbz");

@@ -23,13 +23,13 @@ use anyhow::{bail, Context, Result};
 use image::{DynamicImage, GenericImageView, GrayImage, Luma, Rgb, RgbImage};
 use imageproc::filter::filter;
 use imageproc::kernel::Kernel;
+use relative_path::{RelativePath, RelativePathBuf};
 
 use crate::ebook::model::{Background, ComicTree, MediaType, Page, PageData, RelPath, SourceName};
 use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::kernels;
 use crate::ebook::processing::page::{self, Method};
-use crate::path_text;
 use crate::units::{Pixels, Size};
 
 /// The reference caps the virtual page width at 1072 px (`max_width`), regardless of
@@ -76,10 +76,10 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
         }
         let merged = merge_chapter(&mut chapter.pages)?;
         // The merged strip is written back under the first page's sanitized stem
-        // (`os.path.splitext(first)[0]`), then saved as PNG; the virtual pages keep
-        // that stem and get a `-NNNN` suffix.
-        let stem = path_text::stem(chapter.pages[0].source_name.as_str()).to_string();
-        chapter.pages = split_chapter(merged, &stem, options)?;
+        // (`os.path.splitext(first)[0]`, keeping its chapter directory), then saved as
+        // PNG; the virtual pages keep that stem and get a `-NNNN` suffix.
+        let stem = strip_extension(chapter.pages[0].source_name.as_relative());
+        chapter.pages = split_chapter(merged, stem.as_str(), options)?;
     }
     Ok(())
 }
@@ -214,13 +214,22 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
     Ok(pages)
 }
 
+/// Python's `os.path.splitext(path)[0]`: `path` with its final extension removed,
+/// keeping the directory (`""`-rooted names keep no directory).
+fn strip_extension(path: &RelativePath) -> RelativePathBuf {
+    match path.file_stem() {
+        Some(file) => path.parent().unwrap_or(RelativePath::new("")).join(file),
+        None => path.to_relative_path_buf(),
+    }
+}
+
 /// A [`Page`] wrapping a webtoon strip or virtual page.
 ///
 /// The strip is RGB and reported as PNG so `--no-processing` emits the merged/split
 /// PNGs the reference would have packaged (`imgDirectoryProcessing` is skipped there);
 /// the normal path re-encodes the pixels through the per-page pipeline.
 fn page_from(image: DynamicImage, source_name: SourceName) -> Page {
-    let rel_path = RelPath::new(path_text::file_name(source_name.as_str()));
+    let rel_path = RelPath::new(source_name.as_relative().file_name().unwrap_or(""));
     let dimensions = Size::from_dimensions(image.dimensions());
     Page {
         source_name,

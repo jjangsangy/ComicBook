@@ -143,7 +143,7 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
             media_type: ManifestMediaType::Image(entry.media_type),
         });
         if let Some(below) = entry.below {
-            let below_file = crate::path_text::file_name(below.name.as_str());
+            let below_file = below.name.as_relative().file_name().unwrap_or("");
             manifest.push(OpfItem {
                 id: ManifestId::below_image(&id),
                 href: Href::image(&images_dir(entry.image_dir), FileName::new(below_file)),

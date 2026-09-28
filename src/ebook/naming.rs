@@ -18,10 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::Regex;
+use relative_path::{RelativePath, RelativePathBuf};
 
 use crate::ebook::model::{ChapterName, ComicTree, MediaType, Page, RelPath, SourceName};
 use crate::ebook::options::{Options, OutputEncoding};
-use crate::path_text;
 
 /// KCC's deterministic page-name prefix (`kcc-0001`).
 const PAGE_PREFIX: &str = "kcc";
@@ -138,25 +138,23 @@ fn slugify_directories(
         if chapter.name.is_root() {
             continue;
         }
-        let name = chapter.name.as_str();
-        let mut prefix = String::new();
-        for segment in name.split('/') {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(segment);
-            directories.insert(prefix.clone());
+        let mut prefix = RelativePathBuf::new();
+        // Every directory prefix of the chapter path, built component-wise.
+        for segment in chapter.name.as_relative().components() {
+            prefix.push(segment);
+            directories.insert(prefix.as_str().to_string());
         }
     }
 
     // Parent path → immediate child basenames.
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     for directory in &directories {
-        let (parent, base) = path_text::split_dir_file(directory);
+        let path = RelativePath::new(directory);
+        let parent = path.parent().unwrap_or(RelativePath::new(""));
         children
-            .entry(parent.to_string())
+            .entry(parent.as_str().to_string())
             .or_default()
-            .push(base.to_string());
+            .push(path.file_name().unwrap_or("").to_string());
     }
 
     let mut slug_map: HashMap<String, String> = HashMap::new();
@@ -354,13 +352,14 @@ fn read_names(directory: &Path) -> Vec<String> {
 
 /// Whether `name` has one of the cover image extensions.
 fn is_cover_image(name: &str) -> bool {
-    path_text::extension(name)
+    RelativePath::new(name)
+        .extension()
         .is_some_and(|ext| COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// The lower-cased image extension of a page's source name.
 fn page_extension(page: &Page) -> String {
-    match path_text::extension(page.source_name.as_str()) {
+    match page.source_name.as_relative().extension() {
         Some(ext) => ext.to_ascii_lowercase(),
         // A name with no extension: fall back to the payload's media type. A
         // `Consumed` page has none, but it cannot reach the naming pass, which
@@ -381,13 +380,9 @@ fn kobo_name(name: &str) -> String {
     pattern.replace_all(name, "_").into_owned()
 }
 
-/// Join a directory and a name, skipping the separator at the root.
+/// Join a directory and a name, dropping the separator at the root.
 fn join(directory: &str, name: &str) -> String {
-    if directory.is_empty() {
-        name.to_string()
-    } else {
-        format!("{directory}/{name}")
-    }
+    RelativePath::new(directory).join(name).as_str().to_string()
 }
 
 /// Python's `os.path.splitext(...)[0]`: drop the last extension of the basename.

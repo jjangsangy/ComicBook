@@ -18,6 +18,7 @@ use std::fmt;
 use std::path::Path;
 
 use anyhow::Result;
+use relative_path::RelativePath;
 use time::macros::format_description;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -28,7 +29,6 @@ use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags, ScribeH
 use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
-use crate::path_text;
 use crate::units::Size;
 
 /// A page's chapter directory relative to `OEBPS/Images` (`""` at the root).
@@ -192,7 +192,7 @@ pub(crate) fn build_entries<'a>(
                     .filter(|next| next.flags.half == ScribeHalf::Below),
                 ScribeHalf::NotSplit => None,
             };
-            let file = file_name(page.name.as_str());
+            let file = file_name(page.name.as_relative());
             filelist.push(PageRef {
                 image_dir: dir,
                 file,
@@ -244,7 +244,7 @@ pub(crate) fn build_entries<'a>(
     for chapter in &book.chapters {
         let dir = ImageDir::new(chapter.name.as_str().trim_matches('/'));
         for page in &chapter.pages {
-            let file = file_name(page.name.as_str());
+            let file = file_name(page.name.as_relative());
             documents.push(ZipEntry::borrowed(
                 format!("OEBPS/{}/{}", images_dir(dir), file),
                 page.bytes.as_slice(),
@@ -371,14 +371,18 @@ fn bookmark_entries(
     entries
 }
 
-/// The last `/`-separated segment of a page name, as a [`FileName`].
-fn file_name(name: &str) -> FileName<'_> {
-    FileName::new(path_text::file_name(name))
+/// The final component of a page's path, as a [`FileName`].
+fn file_name(path: &RelativePath) -> FileName<'_> {
+    FileName::new(path.file_name().unwrap_or(""))
 }
 
 /// A file name without its extension (Python's `os.path.splitext(...)[0]`).
 fn stem_of(file: FileName<'_>) -> Stem<'_> {
-    Stem::new(path_text::stem(file.as_str()))
+    Stem::new(
+        RelativePath::new(file.as_str())
+            .file_stem()
+            .unwrap_or(file.as_str()),
+    )
 }
 
 /// `OEBPS/Images` or `OEBPS/Images/<chapter>`.

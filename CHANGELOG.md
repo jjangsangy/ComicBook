@@ -154,10 +154,9 @@ release when a version tag is pushed.
   unchanged:
   - `archive::ops` collapses a wrapper folder through one `RootStrip { name, prefix }` value (its
     `RootStripPolicy` match is exhaustive again, with no guarded `_` arm), and the repeated
-    basename/stem plumbing is now the shared `path_text::{file_name, directory, split_dir_file,
-    stem, extension}` helpers used by the archive, naming, chunk, webtoon, page and EPUB paths
-    (the dead `rsplit(..).next().unwrap_or(..)` fallbacks are gone, including the cover-name
-    classifier and the wrapper-root component scan).
+    basename/stem plumbing is now delegated to `relative-path`'s `RelativePath` methods used by the
+    archive, naming, chunk, webtoon, page and EPUB paths (the dead `rsplit(..).next().unwrap_or(..)`
+    fallbacks are gone, including the cover-name classifier and the wrapper-root component scan).
   - `metadata::ComicInfo` keys its nine single-value fields on a `Field` enum (one spelling of
     each name, with `Field::from_name` as its inverse) and drains them through one exhaustive
     `match`, replacing three separate string lists; a malformed (non-UTF-8) element name now
@@ -185,6 +184,15 @@ release when a version tag is pushed.
     `image_ops::path_extension(&Path)` helper (no `to_string_lossy` ladder); as a consequence a
     leading-dot name (`.png`) and a non-UTF-8 file name are no longer treated as images by
     `convert`/`clamp`.
+- Backed the archive-relative path newtypes (`NormalizedArchivePath`, `SourceName`, `RelPath`,
+  `PageName`, `ChapterName`) with the `relative-path` crate's `RelativePathBuf` instead of `String`,
+  and removed the private hand-rolled separator helpers in favour of `RelativePath`'s
+  `file_name`/`parent`/`file_stem`/`extension`/`components`/`strip_prefix` operations (the optional
+  path-layer side quest in `REFACTOR.md`). The newtypes gained an `as_relative()` accessor; their
+  `as_str()`/`Deref`/`Display`/comparison surface and every emitted archive/EPUB byte is unchanged.
+  `std::path` remains the host-filesystem type (`safe_join`'s `PathBuf` and
+  `image_ops::path_extension`), and `is_os_metadata` keeps its backslash-aware split because it also
+  classifies raw host paths.
 
 ### Fixed
 

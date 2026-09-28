@@ -12,6 +12,7 @@
 //! values it interpolates (see docs/dependencies.md).
 
 use anyhow::Result;
+use relative_path::RelativePath;
 
 use super::html_escape;
 use super::templates::{render_lf, BelowImage, PageXhtml, PanelBox, PanelId};
@@ -36,11 +37,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         ..
     } = *page;
     let stem = page.stem();
-    let depth = image_dir
-        .as_str()
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .count();
+    let depth = RelativePath::new(image_dir.as_str()).components().count();
     // KCC walks `dirpath` up to the `Images` component, counting one `../` per
     // level and one for the `Text/` level itself.
     let backref = depth + 1;
@@ -75,7 +72,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     // exists; the absent case is an empty, never-referenced `String`.
     let below_src = match below {
         Some(image) => {
-            let file = crate::path_text::file_name(image.name.as_str());
+            let file = image.name.as_relative().file_name().unwrap_or("");
             format!("{}Images/{postfix}{file}", "../".repeat(backref))
         }
         None => String::new(),

@@ -13,6 +13,7 @@
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
+use relative_path::{RelativePath, RelativePathBuf};
 use std::fmt;
 
 use crate::units::Size;
@@ -158,50 +159,60 @@ pub struct PageFlags {
     pub half: ScribeHalf,
 }
 
-/// Declare a `#[repr(transparent)]` newtype over `String` naming a distinct
-/// identity, so two confusable names cannot be swapped at a call site.
+/// Declare a `#[repr(transparent)]` newtype over a [`RelativePathBuf`] naming a
+/// distinct identity, so two confusable names cannot be swapped at a call site.
 ///
-/// Each newtype is layout-identical to `String` (zero cost) and renders through
-/// [`fmt::Display`]. It deliberately does **not** implement `Deref<Target = str>`:
-/// an implicit coercion would let a name flow into any `&str` slot, defeating the
-/// wrapper. Reaching the borrowed string is an explicit `as_str()` at each
-/// boundary, and comparisons against string literals go through the
-/// `PartialEq<str>` impls (matching `String`). No allocating conversion is
-/// exposed on a hot path.
+/// The backing store is the `relative-path` crate's relative, `/`-separated path
+/// (REFACTOR.md §8.1), which is the shape of every name in this pipeline; the newtype
+/// still carries the pipeline-specific meaning on top. `as_relative()` hands out the
+/// borrowed [`RelativePath`] so callers use `file_name`/`parent`/`file_stem`/`extension`
+/// instead of splitting strings. Each newtype is layout-identical to `RelativePathBuf`
+/// (zero cost) and renders through [`fmt::Display`]. It deliberately does **not**
+/// implement `Deref<Target = str>`: an implicit coercion would let a name flow into any
+/// `&str` slot, defeating the wrapper. Reaching the borrowed string is an explicit
+/// `as_str()` at each boundary, and comparisons against string literals go through the
+/// `PartialEq<str>` impls, which compare the raw bytes as the old `String` backing store
+/// did (the derived `Eq`/`Hash`, by contrast, are the crate's component-wise equality).
+/// No allocating conversion is exposed on a hot path.
 macro_rules! string_newtype {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         #[repr(transparent)]
-        pub struct $name(String);
+        pub struct $name(RelativePathBuf);
 
         impl $name {
-            /// Wrap an owned string.
-            pub fn new(value: impl Into<String>) -> Self {
-                $name(value.into())
+            /// Wrap an owned or borrowed relative path.
+            pub fn new(value: impl AsRef<RelativePath>) -> Self {
+                $name(value.as_ref().to_relative_path_buf())
             }
 
             /// The name as a borrowed string.
             pub fn as_str(&self) -> &str {
-                &self.0
+                self.0.as_str()
+            }
+
+            /// The name as a borrowed, `/`-separated [`RelativePath`].
+            pub fn as_relative(&self) -> &RelativePath {
+                self.0.as_relative_path()
             }
         }
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
+                f.write_str(self.0.as_str())
             }
         }
 
         impl PartialEq<str> for $name {
             fn eq(&self, other: &str) -> bool {
-                self.0 == other
+                self.0.as_str() == other
             }
         }
 
         impl PartialEq<&str> for $name {
             fn eq(&self, other: &&str) -> bool {
-                self.0 == *other
+                self.0.as_str() == *other
             }
         }
     };
@@ -237,17 +248,17 @@ pub enum ChapterName {
     /// The root chapter, whose pages sit directly in the image root.
     Root,
     /// A non-empty directory path relative to the image root.
-    Dir(String),
+    Dir(RelativePathBuf),
 }
 
 impl ChapterName {
     /// Build a chapter name from a directory path; the empty path is the root.
-    pub fn new(path: impl Into<String>) -> Self {
-        let path = path.into();
-        if path.is_empty() {
+    pub fn new(path: impl AsRef<RelativePath>) -> Self {
+        let path = path.as_ref();
+        if path.as_str().is_empty() {
             ChapterName::Root
         } else {
-            ChapterName::Dir(path)
+            ChapterName::Dir(path.to_relative_path_buf())
         }
     }
 
@@ -260,7 +271,16 @@ impl ChapterName {
     pub fn as_str(&self) -> &str {
         match self {
             ChapterName::Root => "",
-            ChapterName::Dir(path) => path,
+            ChapterName::Dir(path) => path.as_str(),
+        }
+    }
+
+    /// The directory path as a borrowed, `/`-separated [`RelativePath`] (`""` for
+    /// the root).
+    pub fn as_relative(&self) -> &RelativePath {
+        match self {
+            ChapterName::Root => RelativePath::new(""),
+            ChapterName::Dir(path) => path.as_relative_path(),
         }
     }
 
@@ -654,5 +674,24 @@ mod tests {
         assert!(ChapterName::new("").is_root());
         assert!(!ChapterName::new("Chapter 1").is_root());
         assert_eq!(ChapterName::root().as_str(), "");
+        assert_eq!(ChapterName::root().as_relative().as_str(), "");
+        assert_eq!(
+            ChapterName::new("Chapter 1/sub").as_relative().as_str(),
+            "Chapter 1/sub"
+        );
+    }
+
+    #[test]
+    fn name_newtypes_expose_a_relative_view() {
+        let name = SourceName::new("Chapter 1/page.jpg");
+        assert_eq!(name.as_str(), "Chapter 1/page.jpg");
+        assert_eq!(name.as_relative().as_str(), "Chapter 1/page.jpg");
+        assert_eq!(name.as_relative().file_name(), Some("page.jpg"));
+        assert_eq!(
+            name.as_relative()
+                .parent()
+                .map(relative_path::RelativePath::as_str),
+            Some("Chapter 1")
+        );
     }
 }

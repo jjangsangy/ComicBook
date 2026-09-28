@@ -19,12 +19,12 @@
 //! empty tome, so a single oversized unit simply becomes its own tome.
 
 use anyhow::Result;
+use relative_path::Component;
 
 use crate::ebook::model::{ChapterName, EncodedPage, PageName, ScribeHalf};
 use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
 use crate::ebook::processing::cover::{self, Cover};
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
-use crate::path_text;
 use crate::units::Bytes;
 
 /// KCC's default cap when neither `--target-size` nor webtoon mode applies (400 MB).
@@ -78,9 +78,9 @@ pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<Processed
     assemble(book.cover, tome_chapters, &options.processing)
 }
 
-/// The number of path segments of an encoded page (`Images/<name>` → `split('/')`).
+/// The number of path segments of an encoded page (`Images/<name>` → its components).
 fn depth(page: &EncodedPage) -> usize {
-    page.name.as_str().split('/').count()
+    page.name.as_relative().components().count()
 }
 
 /// KCC's `level`: the shared page depth, or `(_, true)` when depths differ.
@@ -108,7 +108,7 @@ fn flatten(book: &mut ProcessedBook) {
     let mut pages = Vec::new();
     for chapter in &mut book.chapters {
         for mut page in chapter.pages.drain(..) {
-            page.name = PageName::new(path_text::file_name(page.name.as_str()).to_string());
+            page.name = PageName::new(page.name.as_relative().file_name().unwrap_or(""));
             pages.push(page);
         }
     }
@@ -243,16 +243,13 @@ fn per_top_level(chapters: Vec<ProcessedChapter>) -> Vec<Vec<ProcessedChapter>> 
         .into_iter()
         .filter(|chapter| !chapter.pages.is_empty())
     {
-        let top = chapter
-            .name
-            .as_str()
-            .split('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
-        if current.as_deref() != Some(top.as_str()) {
+        let top = match chapter.name.as_relative().components().next() {
+            Some(Component::Normal(segment)) => segment,
+            _ => "",
+        };
+        if current.as_deref() != Some(top) {
             tomes.push(Vec::new());
-            current = Some(top);
+            current = Some(top.to_string());
         }
         if let Some(tome) = tomes.last_mut() {
             tome.push(chapter);

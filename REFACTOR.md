@@ -367,8 +367,8 @@ landed; explicit dependencies are called out. The finished shape is described in
   clean · `cargo nextest run` → **351 passed, 13 skipped** at the phase commit (was 346; +5 new).
   The verification follow-ups above are included in the tree-wide count reported under Phase 3.
 - **Changelog:** `## [Unreleased] → Changed` entry added for the public-surface changes.
-- **Follow-on:** `safe_join` stays bespoke here; the optional [§8.1](#81-back-the-path-newtypes-with-relative-path)
-  side quest proposes backing the path newtypes with `relative-path` after Phase 6.
+- **Follow-on:** `safe_join` stays bespoke; the optional [§8.1](#81-back-the-path-newtypes-with-relative-path)
+  side quest later backed the path newtypes with `relative-path` (done — see 8.5).
 
 ### Phase 2 — Typed CLI values
 
@@ -1332,6 +1332,12 @@ record a `[Unreleased]` entry.
 
 ### 8.1 Back the path newtypes with `relative-path`
 
+> **Status: done (8.5 ✅).** Landed as the crate-backed path layer: the newtypes are backed by
+> `RelativePathBuf`, the `path_text` helpers are deleted, `safe_join` reuses the sanitizer via
+> `to_path`, and hostile-name neutralisation is pinned by
+> `integration_tests::sanitizer_neutralizes_hostile_names`. See `docs/porting.md` and
+> `docs/dependencies.md`.
+
 **Motivation.** Phase 1 introduced [`NormalizedArchivePath`](#phase-1--archive-tag-union-and-path-identity)
 and, with it, a small pile of hand-rolled *cross-platform interop* helpers that re-implement what a
 maintained relative-path library already does — on exactly the semantics we care about (always
@@ -1436,5 +1442,5 @@ memory footguns 4.
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
 archive tag union (1 ✅) → typed CLI values (2 ✅) → config sum types (3 ✅) → geometry newtypes
 (4 ✅) → processing enums (5 ✅) → page state machine (6 ✅) → output types (7 ✅) → guard/dedup
-sweep (8 ✅) → docs close-out (9). The optional
-[crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).
+sweep (8 ✅) → docs close-out (9). The crate-backed
+[path layer](#81-back-the-path-newtypes-with-relative-path) side quest (8.5 ✅) is also done.

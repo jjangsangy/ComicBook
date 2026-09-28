@@ -17,6 +17,7 @@
 //!   too (KCC's `if not ordered_image_paths: return workdir`).
 
 use anyhow::{Context, Result};
+use relative_path::{Component, RelativePath, RelativePathBuf};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,7 +25,6 @@ use std::sync::Arc;
 use crate::archive::{open_reader, ArchiveKind, EntryContent};
 use crate::ebook::model::ComicTree;
 use crate::ebook::options::{Layout, Options};
-use crate::path_text;
 
 use super::archive::{build_tree, load_page, LoadedPage, RootStrip};
 
@@ -220,12 +220,15 @@ fn normalize(path: &str) -> String {
 
 /// The directory part of a container path (`""` for a root-level file).
 fn dir_of(path: &str) -> String {
-    path_text::directory(path).to_string()
+    RelativePath::new(path)
+        .parent()
+        .map(|parent| parent.as_str().to_string())
+        .unwrap_or_default()
 }
 
 /// The extension of a path, including the leading dot (`""` when none).
 fn extension_of(path: &str) -> String {
-    match path_text::extension(path) {
+    match RelativePath::new(path).extension() {
         Some(ext) => format!(".{ext}"),
         None => String::new(),
     }
@@ -233,21 +236,27 @@ fn extension_of(path: &str) -> String {
 
 /// Resolve `relative` against `base_dir`, applying `.`/`..` the way
 /// `os.path.join` + filesystem access would.
+///
+/// `..` is clamped at the container root (a `pop` on the empty buffer is a no-op),
+/// matching the previous hand-rolled resolver; an absolute `relative` (a leading `/`)
+/// ignores `base_dir`. A leading `\` is *not* absolute: backslashes are only folded for
+/// component splitting, so a `\`-separated href is tolerated and stays relative.
 fn resolve_relative(base_dir: &str, relative: &str) -> String {
-    let mut segments: Vec<&str> = Vec::new();
-    if !relative.starts_with('/') && !base_dir.is_empty() {
-        segments.extend(base_dir.split('/').filter(|part| !part.is_empty()));
+    let mut out = RelativePathBuf::new();
+    if !relative.starts_with('/') {
+        out.push(RelativePath::new(base_dir));
     }
-    for part in relative.split(['/', '\\']) {
-        match part {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
+    let folded = relative.replace('\\', "/");
+    for component in RelativePath::new(folded.as_str()).components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
             }
-            other => segments.push(other),
+            Component::CurDir => {}
+            Component::Normal(segment) => out.push(segment),
         }
     }
-    segments.join("/")
+    out.as_str().to_string()
 }
 
 #[cfg(test)]
@@ -266,6 +275,20 @@ mod tests {
         );
         assert_eq!(resolve_relative("", "Images/a.png"), "Images/a.png");
         assert_eq!(resolve_relative("OEBPS/Text", "a.png"), "OEBPS/Text/a.png");
+        // A leading `/` ignores the base; a leading `\` does not (backslashes are only
+        // folded for splitting), so a `\`-separated href stays relative.
+        assert_eq!(resolve_relative("OEBPS", "/Images/a.png"), "Images/a.png");
+        assert_eq!(
+            resolve_relative("OEBPS", "\\Images\\a.png"),
+            "OEBPS/Images/a.png"
+        );
+    }
+
+    #[test]
+    fn dir_of_is_the_container_parent() {
+        assert_eq!(dir_of("OEBPS/Text/page.xhtml"), "OEBPS/Text");
+        assert_eq!(dir_of("page.xhtml"), "");
+        assert_eq!(dir_of(""), "");
     }
 
     #[test]
