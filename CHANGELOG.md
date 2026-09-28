@@ -165,6 +165,9 @@ release when a version tag is pushed.
   `AGENTS.md`, `REFACTOR.md`, `docs/development.md`, `CONTRIBUTING.md`, `README.md` and the pull
   request template: only the pass/fail summary and the names of the failing cases matter, so the
   full run output is not echoed. CI keeps the unfiltered `cargo nextest run --no-fail-fast`.
+- Noted in `AGENTS.md` that the `cargo nextest`-through-`tail` rule overrides the built-in
+  `terminal` tool's default guidance against piping to `head`/`tail`, and dropped the rule's
+  trailing cross-reference.
 
 ## [0.2.7] - 2026-09-27
 

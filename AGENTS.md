@@ -31,8 +31,10 @@ cargo nextest run 2>&1 | tail -n 20
 **Always pipe `cargo nextest` through `tail`.** A full run prints hundreds of lines, and only
 whether the run passed and which cases failed matter — both are in the trailing summary. `2>&1`
 is required because nextest writes to stderr; without it `tail` sees nothing. `tail -n 20`
-captures the summary plus the failing cases; raise the count only when a run has more failures
-than fit. Never dump the whole suite output (see [REFACTOR.md §7.1](REFACTOR.md)).
+captures the summary plus the failing cases; raise the count only when the run has more failures
+than fit. Never dump the whole suite output. The built-in `terminal` tool advises against piping
+output to `head`/`tail` and offers `head_lines`/`tail_lines` instead; that default does not apply
+here — the `tail` pipe above overrides it, so use the pipe rather than the parameter.
 
 ## Hard rules
 
