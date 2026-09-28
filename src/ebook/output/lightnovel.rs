@@ -22,7 +22,7 @@ use rayon::prelude::*;
 use crate::archive::{ArchiveKind, ArchiveWriter, EntryContent};
 use crate::ebook::input;
 use crate::ebook::model::{MediaType, Page};
-use crate::ebook::options::Options;
+use crate::ebook::options::{Options, ReaderFamily};
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::page::{self, Method};
 use crate::ebook::{naming, progress};
@@ -70,7 +70,13 @@ pub fn convert_with(
     // KCC's `if ext != '.epub'` guard only preserves `.epub` for an image-less
     // source; every source we can load has at least one page, so the output is
     // always a CBZ.
-    let dest = naming::output_filename(source, options.output.as_deref(), ".cbz", "", options);
+    let dest = naming::output_filename(
+        source,
+        options.output.destination.as_deref(),
+        ".cbz",
+        "",
+        options,
+    );
     write_cbz(&dest, &entries, tree.comicinfo.as_deref())?;
     Ok(vec![dest])
 }
@@ -79,10 +85,10 @@ pub fn convert_with(
 ///
 /// KCC reads the profile table here (which `checkOptions` replaces with the
 /// `Custom` entry when `--custom-width`/`--custom-height` were given), so
-/// `profile_data` is the right source.
+/// `device.data` is the right source.
 fn resize_bounds(options: &Options) -> (u32, u32) {
-    let (mut width, mut height) = (options.profile_data.width, options.profile_data.height);
-    if options.is_kindle {
+    let (mut width, mut height) = (options.device.data.width, options.device.data.height);
+    if options.device.reader == ReaderFamily::Kindle {
         width = width.min(KINDLE_MAX_DIMENSION);
         height = height.min(KINDLE_MAX_DIMENSION);
     }
@@ -108,12 +114,12 @@ fn resize_page(page: &mut Page, bounds: (u32, u32), options: &Options) -> Result
     let mut image = page
         .take_image()
         .context("light-novel page has no decoded image")?;
-    if !options.force_color {
+    if !options.processing.color.force_color {
         image = grayscale(image);
     }
     let image = page::contain(&image, bounds, Method::Bicubic)?;
     let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
-    page::encode_dynamic(&image, media_type, options.jpeg_quality)
+    page::encode_dynamic(&image, media_type, options.processing.jpeg_quality)
 }
 
 /// KCC's light-novel colour conversion (`RGB → L`, `RGBA → LA`; see module docs).

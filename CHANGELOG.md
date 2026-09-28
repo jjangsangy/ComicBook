@@ -36,6 +36,28 @@ release when a version tag is pushed.
     both is now a `clap` error rather than silently letting white win).
   - `convert --to` is now a validated `ValueEnum` (`cbz`, `zip`, `cbr`, `rar`, `cb7`, `7z`, `cbt`,
     `tar`, `dir`), so an unsupported target is rejected while parsing.
+- Split the resolved `ebook` run configuration into cohesive groups and replaced the derived
+  boolean flags with enums (the configuration step of the type-safety refactor tracked in
+  `REFACTOR.md`):
+  - `ebook::options::Options` is now a thin aggregate of `DeviceOptions`/`MainOptions`/
+    `ProcessingOptions`/`OutputOptions`/`SessionOptions` (plus `inputs`). `metadata::resolve_with`
+    takes `&OutputOptions`, and the `chunk`/`kindle` helpers take the single group they read.
+  - The `is_kindle`/`is_kobo`/`device_kind` triple is a `ReaderFamily`; `custom_profile` plus the
+    `"Custom"` name sentinel is a `Geometry`; `panel_view`/`two_panel`/`legacy_panel_view` is a
+    `PanelView` (with `--vertical-4-panel` kept as an independent flag, since it only affects the
+    OPF writing mode); and `format` plus the `kfx`/`kepub`/`keep_epub`/`kindle_azw3` flags is an
+    `OutputEncoding` (`write_tome` matches it exhaustively, and `Options::resolve` derives a concrete
+    `ResolvedFormat` so its encoding match is exhaustive too — no `bail!` remains).
+    `kindle_scribe_azw3` becomes `ProcessingOptions::scribe`, because it also applies to EPUB/MOBI
+    output on a Scribe. `right_to_left` is now `MainOptions::right_to_left()`, and the Kindle
+    Panel View predicate is `Options::panel_view_enabled()`.
+  - `Profile::is_kobo_brand()`/`is_scribe()` no longer test the human-facing profile code string;
+    they read `DeviceKind` and an explicit Scribe set respectively.
+  - `assemble` now takes a `TitleOrigin` (`Derived`/`Fusion`) instead of the covarying
+    `default_title` + `fusion` pair, and `naming::slugify` takes a `NameStyle` (`Slug`/`Cbz`)
+    rather than the whole request `Format`.
+- Updated the `docs/cli.md` and `docs/processing.md` reference tables to describe the typed mode
+  values and the consolidated `--borders` flag introduced by the CLI step above.
 
 ### Fixed
 

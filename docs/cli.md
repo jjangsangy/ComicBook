@@ -47,14 +47,14 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 | KCC | New | Notes |
 |:---|:---|:---|
 | `-n/--noprocessing` | `-n/--no-processing` | pass pages through untouched |
-| `-r/--splitter` | `-r/--splitter <0\|1\|2>` | 0 split, 1 rotate, 2 both |
+| `-r/--splitter` | `-r/--splitter <split\|rotate\|both>` | named values; `0`/`1`/`2` kept as aliases |
 | `-g/--gamma` | `-g/--gamma <float>` | gamma correction (auto when 0) |
-| `-c/--cropping` | `-c/--cropping <0\|1\|2>` | 0 off, 1 margins, 2 margins+page numbers |
+| `-c/--cropping` | `-c/--cropping <off\|margins\|pages>` | named values; `0`/`1`/`2` kept as aliases |
 | `--cp/--croppingpower` | `--cropping-power <float>` | |
 | `--cm/--croppingminimum` | `--cropping-minimum <float>` | |
 | `--preservemargin` | `--preserve-margin <int>` | |
-| `--ipc/--interpanelcrop` | `--inter-panel-crop <0\|1\|2>` | |
-| `--blackborders` / `--whiteborders` | `--black-borders` / `--white-borders` | |
+| `--ipc/--interpanelcrop` | `--inter-panel-crop <off\|horizontal\|both>` | named values; `0`/`1`/`2` kept as aliases |
+| `--blackborders` / `--whiteborders` | `--borders <white\|black>` | old `--black-borders`/`--white-borders` kept as hidden aliases |
 | `--forcecolor` | `--force-color` | do not grayscale |
 | `--forcepng` | `--force-png` | PNG for B/W pages |
 | `--force-png-rgb` | `--force-png-rgb` | colour pages as PNG |
@@ -80,8 +80,11 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 | `--tempdir` | `--temp-dir` | spool temp files on the source drive |
 | `--mozjpeg` | `--mozjpeg` | accepted but rejected at resolve time (not supported) |
 
-`--splitter`, `--cropping` and `--inter-panel-crop` are constrained to `0..=2`, matching KCC's
-`choices`; an out-of-range value is a clap usage error.
+`--splitter`, `--cropping`, `--inter-panel-crop`, `--metadata-title` and `--batch-split` accept
+named values, with their previous `0`/`1`/`2` spellings kept as aliases. The border colour is one
+`--borders <white\|black>` flag; the legacy `--black-borders`/`--white-borders` are hidden aliases,
+and passing more than one border colour is a clap usage error. An unrecognised value is a clap
+usage error.
 
 ### Output
 
@@ -89,14 +92,14 @@ Flags are renamed to snake-case for clarity; semantics are kept.
 |:---|:---|:---|
 | `-o/--output` | `-o/--output <path>` | output directory or filename |
 | `-t/--title` | `-t/--title <str>` | default = source name |
-| `--metadatatitle` | `--metadata-title <0\|1\|2>` | |
+| `--metadatatitle` | `--metadata-title <default\|combine\|only>` | named values; `0`/`1`/`2` kept as aliases |
 | `--keepcomicinfo` | `--keep-comicinfo` | keep original ComicInfo.xml (CBZ) |
 | `-a/--author` | `-a/--author <str>` | default = ComicInfo / `KCC` |
 | `--language` | `--language <bcp47>` | default `en-US` |
 | `-f/--format` | `-f/--format <FMT>` | see [Formats](#formats) |
 | `--nokepub` | `--no-kepub` | `.epub` instead of `.kepub.epub` |
 | — | `--kepub-short-ext` | single `.kepub` instead of `.kepub.epub` (requires KePub output) |
-| `-b/--batchsplit` | `-b/--batch-split <0\|1\|2>` | |
+| `-b/--batchsplit` | `-b/--batch-split <none\|auto\|per-subdir>` | named values; `0`/`1`/`2` kept as aliases |
 | `--spreadshift` | `--spread-shift` | |
 | `--onepagelandscape` | `--one-page-landscape` | |
 | `--ebok` | `--doc-type <ebok\|pdoc\|none>` | replaces the `--ebok` boolean |

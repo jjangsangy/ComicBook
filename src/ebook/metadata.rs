@@ -17,7 +17,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
 use crate::ebook::model::ComicTree;
-use crate::ebook::options::{Format, MetadataTitle, Options};
+use crate::ebook::options::{MetadataTitle, OutputEncoding, OutputOptions};
 
 /// The ComicInfo.xml elements KCC reads (its `MetadataParser.data` keys).
 const SINGLE_FIELDS: [&str; 9] = [
@@ -150,8 +150,8 @@ pub struct BookMetadata {
 /// the author falls back to the first listed people (or `KCC`), and the
 /// series/volume/number/summary/bookmarks are lifted from the ComicInfo
 /// regardless of the other flags.
-pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetadata {
-    resolve_with(tree, source, options, None)
+pub fn resolve(tree: &ComicTree, source: &Path, output: &OutputOptions) -> BookMetadata {
+    resolve_with(tree, source, output, None)
 }
 
 /// Resolve a book's metadata, overriding the title derived from `source`.
@@ -162,7 +162,7 @@ pub fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetada
 pub fn resolve_with(
     tree: &ComicTree,
     source: &Path,
-    options: &Options,
+    output: &OutputOptions,
     default_title: Option<&str>,
 ) -> BookMetadata {
     // A malformed ComicInfo is ignored entirely, matching KCC's
@@ -172,16 +172,16 @@ pub fn resolve_with(
         .as_deref()
         .and_then(|xml| ComicInfo::parse(xml).ok());
 
-    let book_default_title = options.title.is_none();
-    let default_author = options.author.is_none();
+    let book_default_title = output.title.is_none();
+    let default_author = output.author.is_none();
 
-    let mut title = match &options.title {
+    let mut title = match &output.title {
         Some(title) => title.clone(),
         None => default_title
             .map(str::to_string)
             .unwrap_or_else(|| default_title_from(source)),
     };
-    let mut authors = match &options.author {
+    let mut authors = match &output.author {
         Some(author) => vec![author.clone()],
         None => vec!["KCC".to_string()],
     };
@@ -196,7 +196,7 @@ pub fn resolve_with(
         // `Only` takes the embedded title verbatim; `Default`/`Combine` fold the
         // embedded series/volume/number into the default schema, but only when the
         // user did not pass an explicit title.
-        match options.metadata_title {
+        match output.metadata_title {
             MetadataTitle::Only => title = info.title.clone(),
             mode @ (MetadataTitle::Default | MetadataTitle::Combine) => {
                 if book_default_title {
@@ -248,7 +248,7 @@ pub fn resolve_with(
         if !info.series.is_empty() {
             series = info.series.clone();
         }
-        if options.keep_comicinfo && options.format == Format::Cbz {
+        if output.keep_comicinfo && matches!(output.encoding, OutputEncoding::Cbz) {
             comicinfo_xml = tree.comicinfo.clone();
         }
     }
@@ -353,6 +353,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::{Cli, Commands};
+    use crate::ebook::options::Options;
 
     const SAMPLE: &str = r#"<?xml version="1.0"?>
 <ComicInfo>
@@ -375,6 +376,11 @@ mod tests {
             Commands::Ebook(args) => Options::resolve(&args),
             _ => bail!("expected the ebook subcommand"),
         }
+    }
+
+    /// Resolve from the whole run, for test convenience.
+    fn resolve(tree: &ComicTree, source: &Path, options: &Options) -> BookMetadata {
+        super::resolve(tree, source, &options.output)
     }
 
     fn tree(xml: &str) -> ComicTree {
@@ -487,7 +493,7 @@ mod tests {
     #[test]
     fn keep_comicinfo_retains_the_document_for_cbz() -> Result<()> {
         let cbz = options(&["-p", "KDX", "--keep-comicinfo"])?;
-        assert_eq!(cbz.format, Format::Cbz);
+        assert!(matches!(cbz.output.encoding, OutputEncoding::Cbz));
         let kept = resolve(&tree(SAMPLE), Path::new("/tmp/Book.cbz"), &cbz);
         assert_eq!(kept.comicinfo_xml.as_deref(), Some(SAMPLE.as_bytes()));
 

@@ -29,7 +29,9 @@ use std::borrow::Cow;
 
 use super::color::{color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb};
 use crate::ebook::model::{Background, EncodedPage, MediaType, OrderClass, Page, PageFlags};
-use crate::ebook::options::{BorderColor, Format, Options, Splitter};
+use crate::ebook::options::{
+    Autocontrast, BorderColor, Gamma, Geometry, Layout, Options, OutputEncoding, Splitter,
+};
 use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
 
@@ -43,16 +45,6 @@ const AUTO_CROP_THRESHOLD: f64 = 0.015;
 /// halves (KCC's literal `1920` in `saveToDir`).
 pub(crate) const SCRIBE_MAX_DIMENSION: u32 = 1920;
 
-/// The profile's output geometry, enlarged by 1.5× in `--hq` panel-view mode.
-pub fn profile_size(options: &Options) -> (u32, u32) {
-    let (mut width, mut height) = (options.profile_data.width, options.profile_data.height);
-    if options.hq {
-        width = (f64::from(width) * 1.5) as u32;
-        height = (f64::from(height) * 1.5) as u32;
-    }
-    (width, height)
-}
-
 /// One payload produced by the splitter: an image plus the order class it maps to.
 struct Payload {
     order: OrderClass,
@@ -65,7 +57,7 @@ struct Payload {
 /// Used by tests and one-off callers; the tree pipeline hands its pixels in
 /// directly through [`process_decoded`] so it never holds two decoded copies.
 pub fn process_page(page: &Page, options: &Options, size: (u32, u32)) -> Result<Vec<EncodedPage>> {
-    if options.no_processing {
+    if options.processing.no_processing {
         return passthrough(page, options);
     }
 
@@ -106,7 +98,7 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
             let image = page
                 .decoded()
                 .context("page has neither source bytes nor decoded pixels")?;
-            encode_dynamic(image, media_type, options.jpeg_quality)?
+            encode_dynamic(image, media_type, options.processing.jpeg_quality)?
         }
     };
     Ok(vec![passthrough_page(page, media_type, bytes)])
@@ -124,7 +116,7 @@ pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result
             let image = page
                 .decoded()
                 .context("page has neither source bytes nor decoded pixels")?;
-            encode_dynamic(image, media_type, options.jpeg_quality)?
+            encode_dynamic(image, media_type, options.processing.jpeg_quality)?
         }
     };
     Ok(vec![passthrough_page(page, media_type, bytes)])
@@ -150,7 +142,7 @@ fn passthrough_page(page: &Page, media_type: MediaType, bytes: Vec<u8>) -> Encod
 /// The padding colour: an explicit `--black-borders`/`--white-borders` wins over
 /// the detected page background.
 pub fn page_fill(page: &Page, options: &Options) -> Background {
-    match options.borders_color {
+    match options.processing.borders {
         Some(BorderColor::White) => Background::White,
         Some(BorderColor::Black) => Background::Black,
         None => page.background,
@@ -165,13 +157,13 @@ pub fn page_fill(page: &Page, options: &Options) -> Background {
 fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<Payload> {
     let (width, height) = image.dimensions();
     let (dst_width, dst_height) = size;
-    let right_to_left = options.right_to_left;
+    let right_to_left = options.main.right_to_left();
     let landscape_mismatch = (width > height) != (dst_width > dst_height);
 
-    if options.maximize_strips {
+    if options.processing.strips.maximize {
         return vec![maximize_strips(&image, right_to_left)];
     }
-    if options.webtoon {
+    if options.main.webtoon {
         return vec![Payload {
             order: OrderClass::Normal,
             image,
@@ -181,7 +173,7 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
     if landscape_mismatch
         && width <= dst_height
         && height <= dst_width
-        && options.splitter == Splitter::Rotate
+        && options.processing.splitter == Splitter::Rotate
     {
         return vec![rotate_payload(image, options)];
     }
@@ -189,7 +181,7 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
         let ratio = f64::from(width) / f64::from(height);
         let mut payloads = Vec::new();
 
-        if options.splitter != Splitter::Rotate && ratio < BISECT_THRESHOLD {
+        if options.processing.splitter != Splitter::Rotate && ratio < BISECT_THRESHOLD {
             let (first, second) = bisect(&image, right_to_left);
             payloads.push(Payload {
                 order: OrderClass::SplitLeft,
@@ -202,8 +194,8 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
                 rotated: false,
             });
         }
-        if options.splitter != Splitter::Split
-            || (options.splitter == Splitter::Split && ratio >= BISECT_THRESHOLD)
+        if options.processing.splitter != Splitter::Split
+            || (options.processing.splitter == Splitter::Split && ratio >= BISECT_THRESHOLD)
         {
             payloads.push(rotate_payload(image, options));
         }
@@ -247,14 +239,14 @@ fn maximize_strips(image: &DynamicImage, right_to_left: bool) -> Payload {
 /// Takes the image by value: under `--no-rotate` the page is passed through
 /// unchanged, so it can be moved instead of copied.
 fn rotate_payload(image: DynamicImage, options: &Options) -> Payload {
-    let order = if options.rotate_first {
+    let order = if options.processing.rotation.first {
         OrderClass::RotateFirst
     } else {
         OrderClass::RotateLast
     };
-    let rotated = if options.no_rotate {
+    let rotated = if options.processing.rotation.no_rotate {
         image
-    } else if options.rotate_right {
+    } else if options.processing.rotation.right {
         image.rotate90()
     } else {
         image.rotate270()
@@ -262,7 +254,7 @@ fn rotate_payload(image: DynamicImage, options: &Options) -> Payload {
     Payload {
         order,
         image: rotated,
-        rotated: !options.no_rotate,
+        rotated: !options.processing.rotation.no_rotate,
     }
 }
 
@@ -316,7 +308,7 @@ fn encode_payload(
         let color = color_check(&rgb, false, options);
         (DynamicImage::ImageRgb8(rgb), color)
     };
-    let color_output = color && options.force_color;
+    let color_output = color && options.processing.color.force_color;
 
     let image = prepare_image(
         image,
@@ -336,7 +328,7 @@ fn encode_payload(
         below,
     };
 
-    if options.kindle_scribe_azw3 {
+    if options.processing.scribe {
         let (width, height) = image.dimensions();
         if height > SCRIBE_MAX_DIMENSION {
             let above = image.crop_imm(0, 0, width, SCRIBE_MAX_DIMENSION);
@@ -416,7 +408,7 @@ fn prepare_image(
     resize_image(&mut image, options, size, order, fill)?;
     // The moiré eraser runs on the resized plane, after autocontrast and before
     // quantization (KCC's `optimizeForDisplay`).
-    if options.erase_rainbow && image.width() > 1 && image.height() > 1 {
+    if options.processing.erase_rainbow && image.width() > 1 && image.height() > 1 {
         image = super::rainbow::erase_rainbow_artifacts(&image, color_output);
     }
     Ok(image)
@@ -437,12 +429,15 @@ pub(crate) fn is_grayscale_image(image: &DynamicImage) -> bool {
 /// `--gamma` defaults to 0, which falls back to the profile gamma (1.0 today, so
 /// a no-op). See docs/processing.md.
 fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
-    let mut gamma = f64::from(options.gamma);
-    if gamma < 0.1 {
-        gamma = f64::from(options.profile_data.gamma);
-        if (gamma - 1.0).abs() > f64::EPSILON && color {
-            gamma = 1.0;
-        }
+    let mut gamma = match options.processing.gamma {
+        Gamma::Auto => f64::from(options.device.data.gamma),
+        Gamma::Linear(value) => f64::from(value),
+    };
+    if matches!(options.processing.gamma, Gamma::Auto)
+        && (gamma - 1.0).abs() > f64::EPSILON
+        && color
+    {
+        gamma = 1.0;
     }
     if (gamma - 1.0).abs() < f64::EPSILON {
         return;
@@ -474,10 +469,10 @@ fn gamma_correct(image: &mut DynamicImage, options: &Options, color: bool) {
 /// `color` is the page's colour *detection* result (not whether colour is kept):
 /// KCC only autocontrasts detected-colour pages with `--color-autocontrast`.
 fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) {
-    if options.webtoon || options.no_auto_contrast {
+    if options.main.webtoon || options.processing.autocontrast == Autocontrast::Off {
         return;
     }
-    if color && !options.color_auto_contrast {
+    if color && !options.processing.color.autocontrast_color {
         return;
     }
 
@@ -487,7 +482,7 @@ fn autocontrast_image(image: &mut DynamicImage, options: &Options, color: bool) 
         return;
     }
 
-    if options.auto_level {
+    if options.processing.autocontrast == Autocontrast::Level {
         autolevel_image(image, color);
     }
 
@@ -628,21 +623,22 @@ fn resize_image(
     let (width, height) = image.dimensions();
     let method = resize_method(image, size);
 
-    if options.stretch {
+    if options.processing.sizing.stretch {
         *image = resize_to(image, size.0, size.1, method)?;
         return Ok(());
     }
-    if options.wallpaper {
+    if options.main.layout == Layout::Wallpaper {
         // KCC 9.x leaves this branch unreachable (a bare `pass`); we implement the
         // documented intent. See docs/porting.md.
         *image = fit(image, size, method)?;
         return Ok(());
     }
-    if options.no_rotate
+    if options.processing.rotation.no_rotate
         && matches!(order, OrderClass::RotateFirst | OrderClass::RotateLast)
-        && !options.kindle_scribe_azw3
+        && !options.processing.scribe
     {
-        if options.kindle_azw3 && (width > SCRIBE_MAX_DIMENSION || height > SCRIBE_MAX_DIMENSION) {
+        if options.kindle_azw3() && (width > SCRIBE_MAX_DIMENSION || height > SCRIBE_MAX_DIMENSION)
+        {
             *image = contain(
                 image,
                 (SCRIBE_MAX_DIMENSION, SCRIBE_MAX_DIMENSION),
@@ -653,21 +649,26 @@ fn resize_image(
         }
         return Ok(());
     }
-    if method == Method::Bicubic && !options.upscale {
+    if method == Method::Bicubic && !options.processing.sizing.upscale {
         // The page already fits the profile and upscaling is off.
         return Ok(());
     }
 
     let ratio_device = f64::from(size.1) / f64::from(size.0);
     let ratio_image = f64::from(height) / f64::from(width);
-    let white_borders = matches!(options.borders_color, Some(BorderColor::White));
-    let kdx = options.profile == Profile::Kdx && !options.custom_profile;
+    let white_borders = matches!(options.processing.borders, Some(BorderColor::White));
+    let kdx = options.device.profile == Profile::Kdx
+        && !matches!(options.device.geometry, Geometry::Custom { .. });
 
     if kdx && (ratio_image - ratio_device).abs() < AUTO_CROP_THRESHOLD * 3.0
         || (ratio_image - ratio_device).abs() < AUTO_CROP_THRESHOLD
     {
         *image = fit(image, size, method)?;
-    } else if matches!(options.format, Format::Cbz | Format::Pdf) && !white_borders {
+    } else if matches!(
+        options.output.encoding,
+        OutputEncoding::Cbz | OutputEncoding::Pdf
+    ) && !white_borders
+    {
         *image = pad(image, size, method, fill)?;
     } else {
         *image = contain(image, size, method)?;
@@ -906,28 +907,29 @@ fn encode_image(
     options: &Options,
     color_output: bool,
 ) -> Result<(MediaType, Vec<u8>)> {
-    let png_branch = options.force_png && (!color_output || options.force_png_rgb);
+    let png_branch =
+        options.processing.png.force && (!color_output || options.processing.png.force_rgb);
 
     if png_branch {
-        if options.webp_output {
+        if options.processing.webp_output {
             return Ok((MediaType::WebP, encode_webp_lossless(&rgb_view(image))));
         }
-        if options.kindle_azw3 {
+        if options.kindle_azw3() {
             return Ok((MediaType::Gif, encode_gif(image)?));
         }
 
         let prepared = if !color_output {
             // Grayscale page under `--force-png`: optionally quantise to the
             // profile palette, then fall back to grayscale where KCC does.
-            if options.no_quantize {
+            if options.processing.png.no_quantize {
                 PreparedPng::Gray(luma_view(image))
             } else {
-                let quantized = quantize(&rgb_view(image), options.profile_data.palette)?;
-                if matches!(options.format, Format::Pdf)
-                    || (options.profile == Profile::Kdx
-                        && options.format == Format::Cbz
-                        && !options.custom_profile)
-                    || options.png_legacy
+                let quantized = quantize(&rgb_view(image), options.device.data.palette)?;
+                if matches!(options.output.encoding, OutputEncoding::Pdf)
+                    || (options.device.profile == Profile::Kdx
+                        && matches!(options.output.encoding, OutputEncoding::Cbz)
+                        && !matches!(options.device.geometry, Geometry::Custom { .. }))
+                    || options.processing.png.legacy
                 {
                     PreparedPng::Gray(Cow::Owned(quantized_to_luma(&quantized)))
                 } else {
@@ -956,13 +958,16 @@ fn encode_image(
         return Ok((MediaType::Png, bytes));
     }
 
-    if options.webp_output {
+    if options.processing.webp_output {
         return Ok((
             MediaType::WebP,
-            encode_webp_lossy(&rgb_view(image), options.jpeg_quality),
+            encode_webp_lossy(&rgb_view(image), options.processing.jpeg_quality),
         ));
     }
-    Ok((MediaType::Jpeg, encode_jpeg(image, options.jpeg_quality)?))
+    Ok((
+        MediaType::Jpeg,
+        encode_jpeg(image, options.processing.jpeg_quality)?,
+    ))
 }
 
 /// Quantise an RGB image onto a fixed palette with Floyd–Steinberg dithering,
@@ -1368,7 +1373,7 @@ mod tests {
     fn grayscale_pages_encode_as_jpeg_by_default() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
         let options = options(&[])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
         assert_eq!(encoded[0].name, "page-kcc-x.jpg");
@@ -1380,7 +1385,7 @@ mod tests {
     fn force_png_emits_an_indexed_png() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
         let options = options(&["-p", "KoE", "--force-png"])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
         // Palette PNG signature + IHDR bit depth 4 (16-colour palette).
         assert_eq!(&encoded[0].bytes[..8], b"\x89PNG\r\n\x1a\n");
@@ -1392,7 +1397,7 @@ mod tests {
     fn png_legacy_emits_grayscale_png() -> Result<()> {
         let source = page(40, 40, [10, 10, 10]);
         let options = options(&["-p", "KoE", "--force-png", "--png-legacy"])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
         // IHDR colour type 0 (grayscale).
         assert_eq!(encoded[0].bytes[25], 0, "IHDR colour type");
@@ -1404,7 +1409,7 @@ mod tests {
         // Kindle output replaces monochrome PNGs with GIFs (KCC's AZW3 path).
         let source = page(40, 40, [10, 10, 10]);
         let options = options(&["--force-png"])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].media_type, MediaType::Gif);
         assert!(encoded[0].bytes.starts_with(b"GIF"));
         Ok(())
@@ -1414,7 +1419,7 @@ mod tests {
     fn force_color_keeps_a_colour_page_as_jpeg() -> Result<()> {
         let source = page(40, 40, [255, 0, 0]);
         let options = options(&["--force-color", "--force-png"])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         // A colour page stays JPEG unless `--force-png-rgb` is given.
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
         Ok(())
@@ -1430,7 +1435,7 @@ mod tests {
             "--force-png",
             "--force-png-rgb",
         ])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].media_type, MediaType::Png);
         Ok(())
     }
@@ -1440,7 +1445,7 @@ mod tests {
         let mut source = page(10, 10, [1, 2, 3]);
         source.raw = Some(vec![1, 2, 3, 4]);
         let options = options(&["--no-processing"])?;
-        let encoded = process_page(&source, &options, profile_size(&options))?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].bytes, vec![1, 2, 3, 4]);
         assert_eq!(encoded[0].media_type, MediaType::Png);
         assert_eq!(encoded[0].order_class, OrderClass::Normal);
@@ -1568,7 +1573,7 @@ mod tests {
         // then split into a 1920-row top and a 560-row bottom.
         let tall = page(2000, 3000, [10, 10, 10]);
         let options = options(&["-f", "epub", "-p", "KS"])?;
-        let size = profile_size(&options);
+        let size = options.profile_size();
         let encoded = process_page(&tall, &options, size)?;
 
         assert_eq!(encoded.len(), 2);
@@ -1588,7 +1593,7 @@ mod tests {
     fn a_scribe_page_that_fits_is_named_whole() -> Result<()> {
         let small = page(100, 150, [10, 10, 10]);
         let options = options(&["-f", "epub", "-p", "KS"])?;
-        let size = profile_size(&options);
+        let size = options.profile_size();
         let encoded = process_page(&small, &options, size)?;
 
         assert_eq!(encoded.len(), 1);

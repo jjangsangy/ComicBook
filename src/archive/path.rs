@@ -257,6 +257,12 @@ mod tests {
             parse_entry_info("Chapter/", false).map(|entry| entry.kind),
             Some(EntryKind::Directory)
         );
+        // A raw name ending in a backslash is a directory too, matching how the zip/tar/7z/rar
+        // backends read `parse_entry_info` (see the Phase 1 note in REFACTOR.md).
+        assert_eq!(
+            parse_entry_info("weird\\", false).map(|entry| entry.kind),
+            Some(EntryKind::Directory)
+        );
         assert_eq!(
             parse_entry_info("Chapter", true).map(|entry| entry.kind),
             Some(EntryKind::Directory)

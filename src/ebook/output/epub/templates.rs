@@ -101,7 +101,7 @@ pub(crate) struct Opf<'a> {
     pub group: &'a str,
     pub modified: &'a str,
     pub has_cover: bool,
-    /// The Kindle fixed-layout metas (`is_kindle && !custom_profile`).
+    /// The Kindle fixed-layout metas (a Kindle reader without custom geometry).
     pub kindle_layout: bool,
     pub device_width: u32,
     pub device_height: u32,

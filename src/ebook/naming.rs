@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::ebook::model::{ComicTree, MediaType, Page};
-use crate::ebook::options::{Format, Options};
+use crate::ebook::options::{Options, OutputEncoding};
 
 /// KCC's deterministic page-name prefix (`kcc-0001`).
 const PAGE_PREFIX: &str = "kcc";
@@ -43,16 +43,25 @@ pub struct Sanitized {
     pub cover_path: Option<String>,
 }
 
+/// How [`slugify`] treats a name: the reference only keeps CBZ names verbatim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameStyle {
+    /// Slugify the name (every non-CBZ output).
+    Slug,
+    /// Keep the name verbatim (CBZ output).
+    Cbz,
+}
+
 /// KCC's `slugify`.
 ///
-/// The format and `is_natural_sorted` arguments reproduce the two shortcuts in
+/// The style and `is_natural_sorted` arguments reproduce the two shortcuts in
 /// the reference: a naturally ordered CBZ keeps its directory names verbatim,
 /// and an already-naturally-ordered tree skips the number zero-padding.
-pub fn slugify(value: &str, format: Format, is_natural_sorted: bool) -> String {
-    if format == Format::Cbz && is_natural_sorted {
+pub fn slugify(value: &str, style: NameStyle, is_natural_sorted: bool) -> String {
+    if style == NameStyle::Cbz && is_natural_sorted {
         return value.to_string();
     }
-    let mut value = if format == Format::Cbz {
+    let mut value = if style == NameStyle::Cbz {
         value.to_string()
     } else {
         slug::slugify(value)
@@ -156,6 +165,13 @@ fn slugify_directories(
     let mut slug_map: HashMap<String, String> = HashMap::new();
     let mut titles: HashMap<String, String> = HashMap::new();
 
+    // The slug style is a property of the whole run, not of a directory.
+    let style = if matches!(options.output.encoding, OutputEncoding::Cbz) {
+        NameStyle::Cbz
+    } else {
+        NameStyle::Slug
+    };
+
     // Breadth-first so a parent is always resolved before its children.
     let mut queue: Vec<(String, String)> = vec![(String::new(), String::new())];
     while let Some((raw_parent, slug_parent)) = queue.pop() {
@@ -168,7 +184,7 @@ fn slugify_directories(
 
         let mut used: HashSet<String> = HashSet::new();
         for sibling in order {
-            let mut slug = slugify(&sibling, options.format, natural_sorted);
+            let mut slug = slugify(&sibling, style, natural_sorted);
             while used.contains(&slug) && sibling.to_uppercase() != slug.to_uppercase() {
                 slug.push('A');
             }
@@ -209,22 +225,18 @@ pub fn output_filename(
     options: &Options,
 ) -> PathBuf {
     // KCC's `folder_output` (`-f folder`) is not ported; output is always a file.
-    let ext = if options.format == Format::Epub && options.kepub {
+    let ext = match options.output.encoding {
         // Kobo's canonical extension is `.kepub.epub`; `--kepub-short-ext` trims it
         // to `.kepub`.
-        if options.kepub_short_ext {
-            ".kepub".to_string()
-        } else {
-            ".kepub.epub".to_string()
-        }
-    } else {
-        ext.to_string()
+        OutputEncoding::Kepub { short_ext: true } => ".kepub".to_string(),
+        OutputEncoding::Kepub { short_ext: false } => ".kepub.epub".to_string(),
+        _ => ext.to_string(),
     };
 
     match wanted {
         Some(wanted) => wanted_filename(source, wanted, &ext, tome_number),
         None if source.is_dir() => append_str(source, &format!("{tome_number}{ext}")),
-        None if options.format == Format::Epub && options.kepub => {
+        None if matches!(options.output.encoding, OutputEncoding::Kepub { .. }) => {
             let base = if source.is_file() {
                 source.file_stem()
             } else {
@@ -430,30 +442,33 @@ mod tests {
 
     #[test]
     fn slugify_transliterates_and_collapses() {
-        assert_eq!(slugify("Chapter 1", Format::Epub, true), "chapter-1");
-        assert_eq!(slugify("Über Stück", Format::Epub, true), "uber-stuck");
-        assert_eq!(slugify("A   B", Format::Epub, true), "a-b");
+        assert_eq!(slugify("Chapter 1", NameStyle::Slug, true), "chapter-1");
+        assert_eq!(slugify("Über Stück", NameStyle::Slug, true), "uber-stuck");
+        assert_eq!(slugify("A   B", NameStyle::Slug, true), "a-b");
     }
 
     #[test]
     fn slugify_collapses_underscores_and_dots() {
         // Deliberate deviation from python-slugify, whose custom pattern preserves
         // `_`/`.` — see docs/porting.md.
-        assert_eq!(slugify("a_b.c", Format::Epub, true), "a-b-c");
+        assert_eq!(slugify("a_b.c", NameStyle::Slug, true), "a-b-c");
     }
 
     #[test]
     fn slugify_pads_numbers_unless_naturally_sorted() {
         // "chapter-10" is not naturally sorted, so the first two runs are padded.
-        assert_eq!(slugify("Chapter 10", Format::Epub, false), "chapter-0010");
-        assert_eq!(slugify("Chapter 10", Format::Epub, true), "chapter-10");
-        assert_eq!(slugify("2 Vol 3", Format::Epub, false), "0002-vol-0003");
+        assert_eq!(
+            slugify("Chapter 10", NameStyle::Slug, false),
+            "chapter-0010"
+        );
+        assert_eq!(slugify("Chapter 10", NameStyle::Slug, true), "chapter-10");
+        assert_eq!(slugify("2 Vol 3", NameStyle::Slug, false), "0002-vol-0003");
     }
 
     #[test]
     fn slugify_keeps_cbz_names_when_naturally_sorted() {
-        assert_eq!(slugify("Chapter 1", Format::Cbz, true), "Chapter 1");
-        assert_eq!(slugify("Chapter 1", Format::Cbz, false), "Chapter 0001");
+        assert_eq!(slugify("Chapter 1", NameStyle::Cbz, true), "Chapter 1");
+        assert_eq!(slugify("Chapter 1", NameStyle::Cbz, false), "Chapter 0001");
     }
 
     #[test]

@@ -157,7 +157,7 @@ fn split_stem(source_name: &str) -> String {
 /// page instead of cloning the whole (potentially huge) buffer.
 fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<Vec<Page>> {
     let (width, height) = merged.dimensions();
-    if height <= options.profile_data.height {
+    if height <= options.device.data.height {
         // Shorter than the device: the strip is used as a single page (`<stem>.png`).
         return Ok(vec![page_from(merged, format!("{stem}.png"))]);
     }
@@ -223,7 +223,7 @@ fn page_from(image: DynamicImage, source_name: String) -> Page {
 /// by the *virtual* width; when the device is wider than the cap it divides by the cap
 /// instead of the device width.
 fn virtual_height(strip_width: u32, options: &Options) -> u32 {
-    let device = &options.profile_data;
+    let device = &options.device.data;
     let virtual_width = MAX_VIRTUAL_WIDTH.min(device.width).min(strip_width);
     let base = if device.width > MAX_VIRTUAL_WIDTH {
         f64::from(device.height) / f64::from(MAX_VIRTUAL_WIDTH)

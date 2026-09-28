@@ -287,8 +287,7 @@ fn windows_authored_archive_entries_load_as_nested_chapters() -> Result<()> {
 /// never embeds a Windows-reserved character (see docs/development.md).
 #[test]
 fn slugified_names_avoid_windows_reserved_characters() {
-    use comic_book::ebook::naming::slugify;
-    use comic_book::ebook::options::Format;
+    use comic_book::ebook::naming::{slugify, NameStyle};
 
     let raw_names = [
         "a:b?c*d|e",
@@ -300,7 +299,7 @@ fn slugified_names_avoid_windows_reserved_characters() {
         "\u{1F600} emoji",
     ];
     for raw in raw_names {
-        let slug = slugify(raw, Format::Epub, false);
+        let slug = slugify(raw, NameStyle::Slug, false);
         for forbidden in ['<', '>', ':', '"', '/', '\\', '|', '?', '*'] {
             assert!(
                 !slug.contains(forbidden),

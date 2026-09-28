@@ -68,7 +68,7 @@ pub fn process_tree_with(
     options: &Options,
     reporter: &progress::Reporter,
 ) -> Result<ProcessedBook> {
-    let size = page::profile_size(options);
+    let size = options.profile_size();
     let bar = reporter.child(tree.page_count() as u64, "Processing images");
 
     let mut chapters = Vec::with_capacity(tree.chapters.len());
@@ -84,7 +84,7 @@ pub fn process_tree_with(
             .enumerate()
             .map(|(page_index, page)| {
                 let is_first_page = first_chapter == Some(chapter_index) && page_index == 0;
-                let result = if options.no_processing {
+                let result = if options.processing.no_processing {
                     // Passthrough needs only the source bytes and the header
                     // dimensions, so the page is never decoded; its bytes are moved
                     // into the output rather than copied.
@@ -150,21 +150,29 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Resu
         return Ok(());
     }
 
-    let power = f64::from(options.cropping_power);
-    let minimum = f64::from(options.cropping_minimum);
-    if !options.webtoon {
-        match options.cropping {
-            Cropping::PageNumbers => {
-                crop::crop_page_number(image, power, minimum, options.preserve_margin, background)
-            }
-            Cropping::Margins => {
-                crop::crop_margin(image, power, minimum, options.preserve_margin, background)
-            }
+    let power = f64::from(options.processing.cropping_power);
+    let minimum = f64::from(options.processing.cropping_minimum);
+    if !options.main.webtoon {
+        match options.processing.cropping {
+            Cropping::PageNumbers => crop::crop_page_number(
+                image,
+                power,
+                minimum,
+                options.processing.preserve_margin,
+                background,
+            ),
+            Cropping::Margins => crop::crop_margin(
+                image,
+                power,
+                minimum,
+                options.processing.preserve_margin,
+                background,
+            ),
             Cropping::Off => {}
         }
     }
 
-    let direction = match options.inter_panel_crop {
+    let direction = match options.processing.inter_panel_crop {
         InterPanelCrop::Off => None,
         InterPanelCrop::Horizontal => Some(interpanel::Direction::Horizontal),
         InterPanelCrop::Both => Some(interpanel::Direction::Both),
@@ -219,7 +227,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
             }
             let (width, height) = page.dimensions();
             image_number += 1;
-            if options.profile_data.width > width && options.profile_data.height > height {
+            if options.device.data.width > width && options.device.data.height > height {
                 image_smaller += 1;
             }
         }
@@ -240,9 +248,9 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     // `imageSmaller > imageNumber * 0.25` compares floats in the reference; the
     // integer form below is exact and avoids the exact-multiple edge case.
     if image_smaller * 4 > image_number
-        && !options.upscale
-        && !options.stretch
-        && !options.profile.is_scribe()
+        && !options.processing.sizing.upscale
+        && !options.processing.sizing.stretch
+        && !options.device.profile.is_scribe()
     {
         warnings.push(
             "WARNING: More than 25% of images are smaller than target device resolution. \

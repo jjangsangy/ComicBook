@@ -581,14 +581,24 @@ impl Profile {
         self.device_kind() == DeviceKind::Remarkable
     }
 
-    /// KCC keys several behaviours off a `Ko` prefix; keep that exact test.
+    /// KCC keys several behaviours off a `Ko` prefix, which is exactly the
+    /// [`DeviceKind::Kobo`] family.
     pub fn is_kobo_brand(self) -> bool {
-        self.code().starts_with("Ko")
+        self.device_kind() == DeviceKind::Kobo
     }
 
-    /// KCC keys Scribe-only behaviour off a `KS` prefix.
+    /// True for the Scribe devices (KCC's `KS` prefix).
     pub fn is_scribe(self) -> bool {
-        self.code().starts_with("KS")
+        matches!(
+            self,
+            Profile::Ks1860
+                | Profile::Ks1920
+                | Profile::Ks1240
+                | Profile::Ks1324
+                | Profile::Ks
+                | Profile::Ks3
+                | Profile::Kscs
+        )
     }
 
     /// Look up a profile by its canonical code (case-sensitive).

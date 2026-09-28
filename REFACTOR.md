@@ -330,33 +330,42 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 - **Delivered as planned:** `EntryKind`, `EntryContent<'a>`, `ArchiveEntry`,
   `NormalizedArchivePath` (`Option` return), `RootStripPolicy` (`convert_archive_ext`) and
-  `RootStrip` (`build_tree`), and a typed `ArchiveWriter::add_entry`/`add_entry_normalized`. All
-  ten findings (A1, A2, A3, A4, E1, E2, D7, D8, D9, E4) are addressed.
+  `RootStrip` (`build_tree`), and a typed `ArchiveWriter::add_entry`/`add_entry_normalized`. The
+  ten findings (A1, A2, A3, A4, E1, E2, D7, D8, D9, E4) are addressed; E4 keeps `Option<&str>` and
+  makes the degraded `same_file`/listing paths explicit rather than silent (see below).
 - **Refinements over the sketch:**
   - A1's `FnMut(&str, EntryContent)` became `FnMut(&NormalizedArchivePath, EntryContent)`: the
     reader's names are already normalized, so carrying the typed path end-to-end is what lets
     `add_entry_normalized` take `&NormalizedArchivePath` (D7) without re-parsing.
-  - `NormalizedArchivePath` also derives `Deref<Target = str>` (not in §2.2's sketch) for call-site
-    ergonomics. It cannot be built from an arbitrary `&str`, so the construction invariant is
-    untouched.
-  - Placement: `EntryKind`/`ArchiveEntry`/`NormalizedArchivePath`/`BaseName` helpers in
-    `archive/path.rs`, `EntryContent` in `archive/reader.rs`, `DecodedImage` in `archive/ops.rs`.
+  - `NormalizedArchivePath` also implements `Deref<Target = str>` (not in §2.2's sketch) so a
+    normalized path can be read through `Option::as_deref()` alongside `str`, as the
+    `integration_tests::test_normalize_archive_path` assertions do. The construction invariant is
+    untouched: it still cannot be built from an arbitrary `&str`.
+  - Placement: `EntryKind`/`ArchiveEntry`/`NormalizedArchivePath` in `archive/path.rs`,
+    `EntryContent` in `archive/reader.rs`, `BaseName`/`DecodedImage` in `archive/ops.rs`.
 - **Behaviour notes:**
   - E2 consumes the parsed `EntryKind` in the directory reader; a Unix file whose *name* ends in a
     backslash is now classified as a directory, matching how the zip/tar/7z/rar backends already
     read `parse_entry_info`. No effect on comic images. The reader still skips sockets/fifos so
     `File::open` cannot block.
   - E4 keeps `Option<&str>` for the destination name and source stem; `is_matching_root` reduces to
-    the two `contains` checks, and an absent value behaves exactly like the old `""`.
+    the two `contains` checks, and an absent value behaves exactly like the old `""`. The
+    IO-degradation clause is now explicit: `same_file` only blocks a conversion on `Ok(true)` (a
+    stat failure means "not the same file"), and a `list_entries` failure is funnelled through the
+    documented `single_root_dir` helper, which skips root-stripping and lets `read_entries` surface
+    the real error.
 - **Scope grew slightly** past the three named call sites: `ebook/input/epub.rs` and
   `ebook/input/pdf.rs` (the other `build_tree` callers), `src/clamp.rs` (`get_images_from_source`,
   D9), `src/convert.rs` (`convert_archive_ext`, A3), and the two test files
   (`integration_tests`, `ebook_input_epub_pdf_tests`).
 - **New tests:** four in `archive::path` (empty-path → `None`, file/dir tagging,
-  `find_single_root_dir` kinds, `is_matching_root` optionality) and one in `archive::reader`
-  (directory/file `EntryContent` round-trip).
+  `find_single_root_dir` kinds, `is_matching_root` optionality), one in `archive::reader`
+  (directory/file `EntryContent` round-trip), and — added during verification — a `RootStripPolicy`
+  round-trip in `archive::ops` plus a trailing-backslash classification case in the `archive::path`
+  tagging test.
 - **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
-  clean · `cargo nextest run` → **351 passed, 13 skipped** (was 346; +5 new).
+  clean · `cargo nextest run` → **351 passed, 13 skipped** at the phase commit (was 346; +5 new).
+  The verification follow-ups above are included in the tree-wide count reported under Phase 3.
 - **Changelog:** `## [Unreleased] → Changed` entry added for the public-surface changes.
 - **Follow-on:** `safe_join` stays bespoke here; the optional [§8.1](#81-back-the-path-newtypes-with-relative-path)
   side quest proposes backing the path newtypes with `relative-path` after Phase 6.
@@ -371,10 +380,10 @@ landed; explicit dependencies are called out. The finished shape is described in
   `BatchSplit`, `ArchiveFormat`; `--borders <white|black>` replacing the two border bools.
   Numeric aliases (`#[value(alias = "0")]`, …) keep `--splitter 1` parsing.
 - **Gate:** CLI parsing tests; existing output tests must not change.
-**Note:** this is the only phase that alters the *accepted input surface*; see
+- **Note:** this is the only phase that alters the *accepted input surface*; see
   [§6.1](#61-command-line-surface).
 
-  **Completed notes.**
+**Completed notes.**
 
   - **Delivered as planned:** `ValueEnum`s `Splitter` (`Split`/`Rotate`/`Both`), `Cropping`
     (`Off`/`Margins`/`PageNumbers`), `InterPanelCrop` (`Off`/`Horizontal`/`Both`), `MetadataTitle`
@@ -392,9 +401,9 @@ landed; explicit dependencies are called out. The finished shape is described in
     `#[value(name = …)]` so the canonical names are `pages`/`per-subdir`. Defaults keep their `0`/`2`
     spellings, so `--help` shows the same `[default: …]` as before.
   - **A20 implementation.** `--borders` is the new flag; `--black-borders`/`--white-borders` are kept
-    as hidden bool aliases that conflict with each other and with `--borders`, so `--black-borders`
-    and `--white-borders` still work but passing both (or mixing a legacy flag with `--borders`) is a
-    `clap` error. This is the one accepted-input change; it is recorded in the changelog.
+    as separate hidden legacy flags (not `alias` directives) that conflict with each other and with
+    `--borders`, so each still works alone but passing both (or mixing a legacy flag with `--borders`)
+    is a `clap` error. This is the one accepted-input change; it is recorded in the changelog.
   - **Behaviour-preserving elsewhere.** `run_convert` takes the typed `ArchiveFormat` and derives its
     extension/kind, so the duplicated accepted-list and error string are gone; the test helper
     `tests/common::run_convert` parses its `&str` target through the same `ValueEnum`, keeping the
@@ -411,8 +420,12 @@ landed; explicit dependencies are called out. The finished shape is described in
   - **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
     clean · `cargo nextest run` → **354 passed, 13 skipped** (was 351; +3 new).
   - **Changelog:** `## [Unreleased] → Changed` entry added for the CLI-surface change.
+  - **Review follow-up.** The `docs/cli.md`/`docs/processing.md` reference tables were updated (during
+    verification) to describe the named mode values and the consolidated `--borders` flag.
 
 ### Phase 3 — Resolved configuration sum types
+
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
 
 - **Findings:** A12, A13, A14, A18, A19, A21, B5, B15; consumers G2, G4, G8.
 - **Scope:** `ebook/options.rs`, `ebook/profiles.rs`, `ebook/mod.rs`, and every `options.*`
@@ -427,6 +440,68 @@ landed; explicit dependencies are called out. The finished shape is described in
   to the group they read.
 - **Gate:** `output/*` and `ebook_*` tests unchanged.
 - **Depends on:** Phase 2.
+
+**Completed notes.**
+
+- **Delivered as planned:** `ReaderFamily` (`Kindle`/`Kobo`, where `Kobo` is KCC's
+  `isKobo == !isKindle`, covering reMarkable/`Other`), `Geometry` (`Profile`/`Custom`),
+  `PanelView`, and `OutputEncoding` (`Epub { kfx }`/`Kepub { short_ext }`/`Mobi { keep_epub }`/
+  `Azw3`/`Cbz`/`Pdf`); `TitleOrigin` for `assemble`. `Options` is now a thin aggregate of
+  `DeviceOptions`/`MainOptions`/`ProcessingOptions`/`OutputOptions`/`SessionOptions` plus
+  `inputs`; the dropped fields are all gone. `write_tome` matches `OutputEncoding` exhaustively,
+  so its `bail!` is removed (B5/E8), and `resolve` derives a private `ResolvedFormat` while it
+  expands the presets, so building the `OutputEncoding` is exhaustive with no `bail!` either (B5).
+- **Refinements over the sketch:**
+  - **`PanelView` is `{ Off, Hq, Two, Legacy }`, not `{ Off, Two, Vertical4, Legacy }`.** The
+    reachable panel layouts need the plain `-q` mode, and `--vertical-4-panel` is an *independent*
+    axis (it only selects the OPF writing mode and may co-occur with any mode), so it stays a
+    separate `MainOptions::vertical_4_panel` bool rather than becoming an unreachable union. Both
+    deviations are behaviour-preserving (pinned by the golden/panel tests).
+  - **`OutputEncoding::Azw3` carries no `scribe` payload.** `kindle_scribe_azw3` is true for EPUB/
+    MOBI output on a Scribe too, so it lives on `ProcessingOptions::scribe` (as §6.2 says); the
+    AZW3 variant stays a unit variant to avoid a second, weaker source of truth.
+  - Also introduced to match §6.2: `Layout` (`Regular`/`LightNovel`/`Wallpaper`), `Gamma`
+    (`Auto`/`Linear`), `Autocontrast` (`Contrast`/`Off`/`Level`), and the orthogonal clusters
+    `ColorTuning`/`PngOptions`/`Strips`/`Sizing`/`RotationOptions`/`CoverOptions`/`SourceOptions`.
+  - `DeviceOptions` also drops the dead `device_kind` field (no reader existed).
+  - `Geometry::Custom` replaces both `custom_profile` and the `"Custom"` `ProfileData.name`
+    sentinel; `data.name` now keeps the profile label.
+- **Derived facts as methods:** `MainOptions::right_to_left()` (`manga && !webtoon`),
+  `Options::profile_size()` (`device.data` + `main.hq`), `Options::kindle_azw3()`
+  (reader + `output.encoding`), and `Options::panel_view_enabled()` (Kindle reader + a selected
+  panel mode), each replacing a duplicated field/predicate (G2, G8).
+- **Signatures narrowed where clean:** `metadata::resolve_with`/`resolve` take `&OutputOptions`;
+  `chunk::target_size` takes `&MainOptions`, `chunk::assemble` takes `&ProcessingOptions`, and
+  `kindle::create_scratch` takes `&SessionOptions`. The cross-group per-page pipeline
+  (`processing/*`) and the EPUB builders still take `&Options`; narrowing them needs a borrowed
+  context and is left to a later phase.
+- **B15:** `Profile::is_kobo_brand()` now delegates to `DeviceKind::Kobo`, and `is_scribe()`
+  matches the seven Scribe variants. No `ProfileEntry` column and no `DeviceKind` negation helper
+  (both rejected in review as non-idiomatic/boolean-blind).
+- **B12 (`naming::NameStyle`)** was pulled in because removing `Options.format` forced
+  `slugify`'s parameter: it now takes `NameStyle { Slug, Cbz }` instead of the whole request
+  `Format`.
+- **Behaviour-preserving remainder:** every consumer edit is a mechanical field-path change.
+  `xhtml.rs::panel_layout`'s branch chain became a single `buildHTML` truth-table `match`.
+  `--light-novel` shadows `--wallpaper` only on the path where it actually short-circuits the
+  `page.rs` pipeline (the non-fusion path); under `--file-fusion` the pipeline runs, so wallpaper
+  still selects its fit branch, matching the old two-bool behaviour (pinned by
+  `ebook_tests::light_novel_and_wallpaper_resolve_to_a_layout`).
+- **Scope grew** past the four named files to every `options.*` reader: `ebook/{chunk,metadata,naming}.rs`,
+  `processing/{mod,page,color,cover,webtoon}.rs`, `input/{epub,pdf}.rs`,
+  `output/{mod,kindle}.rs`, `output/epub/{mod,opf,xhtml}.rs`, `output/lightnovel.rs`, plus the
+  mechanical `Options`-construction updates in `tests/ebook_tests.rs`/`tests/ebook_robustness_tests.rs`.
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **357 passed, 13 skipped** (Phase 2's 354 plus the review's three
+  added tests: the resolution table below, the root-strip policy, and the layout precedence; the
+  byte-exact golden tests still pass unchanged).
+- **Changelog:** `## [Unreleased] → Changed` entry added for the resolved-configuration change.
+- **Review follow-up.** Verification added the §7.6 resolution-table test
+  (`ebook_tests::resolved_output_encoding_matches_every_format_and_preset`), finished A19/G2 with
+  `Options::panel_view_enabled()`, closed B5 with the private `ResolvedFormat`, and pinned the
+  fusion/wallpaper layout precedence. `ResolvedFormat` is a helper enum local to `Options::resolve`,
+  not a field on `Options`; the cross-group stage signatures remain `&Options` for now, and the
+  optional [§8.1](#81-back-the-path-newtypes-with-relative-path) side quest is unaffected.
 
 ### Phase 4 — Geometry and unit newtypes
 
@@ -505,7 +580,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 |:--|:--|:--|:--|
 | 1 Archive ✅ | — | `archive/`, 3 call sites | low |
 | 2 CLI | — | CLI + option fields | low (user-visible) |
-| 3 Config | 2 | `options`/`profiles` + all readers | medium |
+| 3 Config ✅ | 2 | `options`/`profiles` + all readers | medium |
 | 4 Geometry | — | processing + output boundaries | medium (broad, mechanical) |
 | 5 Processing | 4 | processing hot paths | medium (perf) |
 | 6 Page state | 4 | `model` + input/processing | **high (memory)** |
@@ -609,7 +684,8 @@ pub struct MainOptions {
     pub manga: bool,
     pub hq: bool,
     pub layout: Layout,              // was light_novel + wallpaper
-    pub panel_view: PanelView,       // was panel_view + two_panel + vertical_4_panel + legacy_panel_view
+    pub panel_view: PanelView,       // was panel_view + two_panel + legacy_panel_view
+    pub vertical_4_panel: bool,      // independent axis: only drives the OPF writing mode
     pub webtoon: bool,
     pub invert_direction: bool,
     pub file_fusion: bool,
@@ -700,7 +776,7 @@ enum Geometry       { Profile(Profile), Custom { width: u32, height: u32 } }
 
 // MainOptions
 enum Layout         { Regular, LightNovel, Wallpaper }
-enum PanelView      { Off, Two, Vertical4, Legacy }
+enum PanelView      { Off, Hq, Two, Legacy }   // Hq is KCC's `-q`; `--vertical-4-panel` stays a separate flag
 
 // ProcessingOptions
 enum Splitter       { Split, Rotate, Both }
@@ -716,7 +792,7 @@ enum OutputEncoding {
     Epub { kfx: bool },
     Kepub { short_ext: bool },
     Mobi { keep_epub: bool },
-    Azw3 { scribe: bool },
+    Azw3,                            // unit: the Scribe split lives on ProcessingOptions::scribe
     Cbz,
     Pdf,
 }

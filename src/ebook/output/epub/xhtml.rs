@@ -17,7 +17,7 @@ use super::html_escape;
 use super::templates::{render_lf, PageXhtml, PanelBox};
 use super::PageRef;
 use crate::ebook::model::PageFlags;
-use crate::ebook::options::Options;
+use crate::ebook::options::{Options, PanelView, ReaderFamily};
 
 /// Build one page's XHTML (`buildHTML`).
 ///
@@ -54,7 +54,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     // The viewport spans the stacked page (KCC's `imgsizeframe`), but each `<img>`
     // keeps its own size.
     let frame_height = height + below.map_or(0, |image| image.height);
-    let (viewport_width, viewport_height) = if options.hq {
+    let (viewport_width, viewport_height) = if options.main.hq {
         (
             (f64::from(width) / 1.5).floor() as u32,
             (f64::from(frame_height) / 1.5).floor() as u32,
@@ -82,7 +82,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         None => (String::new(), 0, 0),
     };
 
-    let panel = options.is_kindle && options.panel_view;
+    let panel = options.panel_view_enabled();
     let (boxes, panel_width, panel_height) = if panel {
         panel_layout(width, height, flags, options)
     } else {
@@ -95,7 +95,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
         viewport_width,
         viewport_height,
         body_style,
-        kindle_spacer: options.is_kindle,
+        kindle_spacer: options.device.reader == ReaderFamily::Kindle,
         img_width: width,
         img_height: height,
         image_src: &image_src,
@@ -115,6 +115,13 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     Ok(out.into_bytes())
 }
 
+/// Panel View regions for the 2x2 grid, in KCC's `boxes` order.
+const PANELS_2X2: [&str; 4] = ["PV-TL", "PV-TR", "PV-BL", "PV-BR"];
+/// Panel View regions when the page is narrower than the screen (`PV-T`/`PV-B`).
+const PANELS_STACKED: [&str; 2] = ["PV-T", "PV-B"];
+/// Panel View regions when the page is shorter than the screen (`PV-L`/`PV-R`).
+const PANELS_SIDE_BY_SIDE: [&str; 2] = ["PV-L", "PV-R"];
+
 /// The Kindle virtual Panel View grid (`buildHTML`'s `PV-*` block).
 ///
 /// The panel grid depends on how the page's scaled size compares with the device
@@ -125,19 +132,19 @@ fn panel_layout(
     flags: PageFlags,
     options: &Options,
 ) -> (Vec<PanelBox>, u32, u32) {
-    let device = (options.profile_data.width, options.profile_data.height);
+    let device = (options.device.data.width, options.device.data.height);
 
     // `--two-panel` scales the page to the device width; `--hq` magnifies by 1.5x.
-    let size = if options.two_panel {
-        let scale = f64::from(device.0) / f64::from(width);
-        (device.0, (scale * f64::from(height)) as u32)
-    } else if options.hq {
-        (width, height)
-    } else {
-        (
+    let size = match options.main.panel_view {
+        PanelView::Two => {
+            let scale = f64::from(device.0) / f64::from(width);
+            (device.0, (scale * f64::from(height)) as u32)
+        }
+        PanelView::Hq => (width, height),
+        PanelView::Legacy | PanelView::Off => (
             (f64::from(width) * 1.5) as u32,
             (f64::from(height) * 1.5) as u32,
-        )
+        ),
     };
 
     let no_horizontal = f64::from(size.0) - f64::from(device.0) < f64::from(device.0) * 0.01;
@@ -146,35 +153,22 @@ fn panel_layout(
     let x = panel_offset(device.0, size.0);
     let y = panel_offset(device.1, size.1);
 
-    // The panel order and grid follow `buildHTML`: a rotated page reorders the
-    // quadrants, and right-to-left reading mirrors them.
-    let (names, order): (&[&'static str], &[u32]) = if !no_horizontal && !no_vertical {
-        if flags.rotated {
-            if options.right_to_left {
-                (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[1, 3, 2, 4])
-            } else {
-                (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[2, 4, 1, 3])
-            }
-        } else if options.right_to_left {
-            (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[2, 1, 4, 3])
-        } else {
-            (&["PV-TL", "PV-TR", "PV-BL", "PV-BR"], &[1, 2, 3, 4])
-        }
-    } else if no_horizontal && !no_vertical {
-        if flags.rotated && !options.right_to_left {
-            (&["PV-T", "PV-B"], &[2, 1])
-        } else {
-            (&["PV-T", "PV-B"], &[1, 2])
-        }
-    } else if !no_horizontal && no_vertical {
-        if flags.rotated || !options.right_to_left {
-            (&["PV-L", "PV-R"], &[1, 2])
-        } else {
-            (&["PV-L", "PV-R"], &[2, 1])
-        }
-    } else {
-        (&[], &[])
-    };
+    // The panel grid and its magnification order follow `buildHTML` verbatim: the
+    // grid drops an axis the page does not fill, and the order is a permutation of
+    // the quadrants flipped by rotation and right-to-left reading.
+    let right_to_left = options.main.right_to_left();
+    let (names, order): (&[&'static str], &[u32]) =
+        match (no_horizontal, no_vertical, flags.rotated, right_to_left) {
+            (true, true, ..) => (&[], &[]),
+            (false, false, true, true) => (&PANELS_2X2, &[1, 3, 2, 4]),
+            (false, false, true, false) => (&PANELS_2X2, &[2, 4, 1, 3]),
+            (false, false, false, true) => (&PANELS_2X2, &[2, 1, 4, 3]),
+            (false, false, false, false) => (&PANELS_2X2, &[1, 2, 3, 4]),
+            (true, false, true, false) => (&PANELS_STACKED, &[2, 1]),
+            (true, false, ..) => (&PANELS_STACKED, &[1, 2]),
+            (false, true, false, true) => (&PANELS_SIDE_BY_SIDE, &[2, 1]),
+            (false, true, ..) => (&PANELS_SIDE_BY_SIDE, &[1, 2]),
+        };
 
     let boxes = names
         .iter()

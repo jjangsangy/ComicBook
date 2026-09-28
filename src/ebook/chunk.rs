@@ -21,7 +21,7 @@
 use anyhow::Result;
 
 use crate::ebook::model::EncodedPage;
-use crate::ebook::options::{BatchSplit, Options};
+use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
 use crate::ebook::processing::cover;
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
 
@@ -36,7 +36,7 @@ const MEGABYTE: u64 = 1_048_576;
 /// Returns the book as a single tome when chunking was not requested, and always
 /// at least one tome.
 pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<ProcessedBook>> {
-    if options.batch_split == BatchSplit::None && options.target_size.is_none() {
+    if options.output.batch_split == BatchSplit::None && options.main.target_size.is_none() {
         return Ok(vec![book]);
     }
     if book.chapters.iter().all(|chapter| chapter.pages.is_empty()) {
@@ -51,12 +51,14 @@ pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<Processed
         level = 1;
     }
 
-    let target = target_size(options);
+    let target = target_size(&options.main);
     let mut mode = level;
-    if options.batch_split == BatchSplit::PerSubdirectory && mode == 2 {
+    if options.output.batch_split == BatchSplit::PerSubdirectory && mode == 2 {
         mode = 3;
     }
-    if options.batch_split == BatchSplit::Auto && mode == 2 && chapters_exceed_target(&book, target)
+    if options.output.batch_split == BatchSplit::Auto
+        && mode == 2
+        && chapters_exceed_target(&book, target)
     {
         // A chapter that is itself over the cap cannot be split as a whole.
         flatten(&mut book);
@@ -72,7 +74,12 @@ pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<Processed
         split_chapters(chapters, target)
     };
 
-    assemble(book.cover, book.cover_smart_crop, tome_chapters, options)
+    assemble(
+        book.cover,
+        book.cover_smart_crop,
+        tome_chapters,
+        &options.processing,
+    )
 }
 
 /// The number of path segments of an encoded page (`Images/<name>` → `split('/')`).
@@ -120,7 +127,7 @@ fn flatten(book: &mut ProcessedBook) {
 }
 
 /// The size a webtoon/target-size run splits against (`chunk_process`).
-fn target_size(options: &Options) -> u64 {
+fn target_size(options: &MainOptions) -> u64 {
     match options.target_size {
         Some(megabytes) => u64::from(megabytes) * MEGABYTE,
         None if options.webtoon => WEBTOON_TARGET_SIZE,
@@ -256,7 +263,7 @@ fn assemble(
     cover: Option<EncodedPage>,
     cover_smart_crop: bool,
     tome_chapters: Vec<Vec<ProcessedChapter>>,
-    options: &Options,
+    options: &ProcessingOptions,
 ) -> Result<Vec<ProcessedBook>> {
     let total = tome_chapters.len();
     let mut tomes = Vec::with_capacity(total);

@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::ebook::options::{DocType, Format, Options};
+use crate::ebook::options::{DocType, Options, OutputEncoding, SessionOptions};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
@@ -40,7 +40,11 @@ pub fn build_kindle(
 ) -> Result<()> {
     let entries = epub::build_entries(book, prepared, source, options, title, drop_bookmarks)?;
 
-    if options.keep_epub {
+    let keep_epub = matches!(
+        options.output.encoding,
+        OutputEncoding::Mobi { keep_epub: true }
+    );
+    if keep_epub {
         epub::package::write_epub(epub_dest, &entries)?;
     }
 
@@ -48,7 +52,7 @@ pub fn build_kindle(
     // the in-memory tree into a scratch directory for it. `--temp-dir` puts that
     // directory on the source's drive, as KCC's `getWorkFolder` does; the in-memory
     // pipeline has no other temp tree to relocate.
-    let scratch = create_scratch(source, options)?;
+    let scratch = create_scratch(source, &options.session)?;
     write_tree(scratch.path(), &entries)?;
     let opf_path = scratch.path().join("OEBPS/content.opf");
 
@@ -65,7 +69,7 @@ pub fn build_kindle(
 
     // `--doc-type` maps onto EXTH 501; the default (`none`) omits it, avoiding
     // the firmware "back to library" issue (see docs/output.md).
-    let doc_type = doc_type_tag(options.doc_type);
+    let doc_type = doc_type_tag(options.output.doc_type);
     build_mobi(&extracted, kindle_dest, options, doc_type.as_deref())
         .map_err(|error| anyhow!("Kindle output failed: {error}"))?;
 
@@ -87,20 +91,20 @@ fn build_mobi(
     kindling::mobi::build_mobi_from_extracted(
         extracted,
         kindle_dest,
-        false,                          // no_compress
-        false,                          // headwords_only
-        None,                           // srcs_data
-        false,                          // include_cmet
-        true,                           // no_hd_images
-        false,                          // creator_tag
-        options.format == Format::Azw3, // kf8_only
-        doc_type,                       // doc_type (EXTH 501)
-        false,                          // kindle_limits
-        true,                           // self_check
-        false,                          // kindlegen_parity
-        false,                          // strict_accents
-        false,                          // fold_accents
-        false,                          // force_user_fonts
+        false,                                                   // no_compress
+        false,                                                   // headwords_only
+        None,                                                    // srcs_data
+        false,                                                   // include_cmet
+        true,                                                    // no_hd_images
+        false,                                                   // creator_tag
+        matches!(options.output.encoding, OutputEncoding::Azw3), // kf8_only
+        doc_type,                                                // doc_type (EXTH 501)
+        false,                                                   // kindle_limits
+        true,                                                    // self_check
+        false,                                                   // kindlegen_parity
+        false,                                                   // strict_accents
+        false,                                                   // fold_accents
+        false,                                                   // force_user_fonts
     )
 }
 
@@ -117,10 +121,10 @@ fn doc_type_tag(doc_type: DocType) -> Option<String> {
 ///
 /// Without `--temp-dir` it is created in the system temp directory; with it, next
 /// to the source, so the spooled images live on the same drive as the input.
-fn create_scratch(source: &Path, options: &Options) -> Result<tempfile::TempDir> {
+fn create_scratch(source: &Path, session: &SessionOptions) -> Result<tempfile::TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix("comic-book-kindle-");
-    let scratch = match options.temp_dir.then(|| source.parent()).flatten() {
+    let scratch = match session.temp_dir.then(|| source.parent()).flatten() {
         Some(parent) if !parent.as_os_str().is_empty() => builder.tempdir_in(parent),
         _ => builder.tempdir(),
     };

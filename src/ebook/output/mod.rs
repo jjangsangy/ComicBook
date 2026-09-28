@@ -1,4 +1,4 @@
-//! Output builders, dispatched by the resolved [`Format`](super::options::Format).
+//! Output builders, dispatched by the resolved [`OutputEncoding`].
 //!
 //! Every format dispatches through [`write_book`], which splits the processed book
 //! into tomes with [`crate::ebook::chunk`] and writes one file per tome, each with
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ebook::chunk;
 use crate::ebook::naming;
-use crate::ebook::options::{Format, Options};
+use crate::ebook::options::{Options, OutputEncoding};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
@@ -25,7 +25,7 @@ use crate::ebook::PreparedBook;
 /// The book is split into tomes first ([`chunk::split`]); a single-tome book is
 /// written exactly as before, while a split book produces one file per tome with
 /// KCC's `[i/n]` title and ` <i>` filename suffix. KePub is not handled here:
-/// `Options::resolve` folds it into [`Format::Epub`] (the KePub differences live
+/// `Options::resolve` folds it into [`OutputEncoding::Epub`] (the KePub differences live
 /// in the shared EPUB builder). Light-novel mode never reaches this function —
 /// [`super::convert_source`] dispatches to [`lightnovel::convert`] before the
 /// normal pipeline (see docs/output.md).
@@ -86,11 +86,11 @@ fn write_tome(
     suffix: &str,
     drop_bookmarks: bool,
 ) -> Result<Vec<PathBuf>> {
-    match options.format {
-        Format::Epub => {
+    match options.output.encoding {
+        OutputEncoding::Epub { .. } | OutputEncoding::Kepub { .. } => {
             let dest = naming::output_filename(
                 source,
-                options.output.as_deref(),
+                options.output.destination.as_deref(),
                 ".epub",
                 suffix,
                 options,
@@ -106,36 +106,41 @@ fn write_tome(
             )?;
             Ok(vec![dest])
         }
-        Format::Cbz => {
-            let dest =
-                naming::output_filename(source, options.output.as_deref(), ".cbz", suffix, options);
+        OutputEncoding::Cbz => {
+            let dest = naming::output_filename(
+                source,
+                options.output.destination.as_deref(),
+                ".cbz",
+                suffix,
+                options,
+            );
             cbz::build_cbz(&dest, book, prepared)?;
             Ok(vec![dest])
         }
-        Format::Pdf => {
-            let dest =
-                naming::output_filename(source, options.output.as_deref(), ".pdf", suffix, options);
+        OutputEncoding::Pdf => {
+            let dest = naming::output_filename(
+                source,
+                options.output.destination.as_deref(),
+                ".pdf",
+                suffix,
+                options,
+            );
             pdf::build_pdf(&dest, book, prepared, title)?;
             Ok(vec![dest])
         }
-        Format::Mobi | Format::Azw3 => {
+        OutputEncoding::Mobi { keep_epub } => {
             // KCC always builds the fixed-layout EPUB first and derives the
             // Kindle file name from it by replacing the extension
             // (`makeMOBIFix`); the intermediate EPUB survives only under
             // `mobi+epub` (see docs/output.md).
             let epub_dest = naming::output_filename(
                 source,
-                options.output.as_deref(),
+                options.output.destination.as_deref(),
                 ".epub",
                 suffix,
                 options,
             );
-            let kindle_ext = if options.format == Format::Azw3 {
-                "azw3"
-            } else {
-                "mobi"
-            };
-            let kindle_dest = epub_dest.with_extension(kindle_ext);
+            let kindle_dest = epub_dest.with_extension("mobi");
             kindle::build_kindle(
                 &epub_dest,
                 &kindle_dest,
@@ -148,13 +153,35 @@ fn write_tome(
             )?;
 
             let mut written = vec![kindle_dest];
-            if options.keep_epub {
+            if keep_epub {
                 written.push(epub_dest);
             }
             Ok(written)
         }
-        // `Options::resolve` expands these presets before a format reaches here.
-        other => anyhow::bail!("internal error: unresolved output format {other:?}"),
+        OutputEncoding::Azw3 => {
+            // As [`OutputEncoding::Mobi`], but the intermediate EPUB is never
+            // kept (`makeMOBIFix` picks the `.azw3` extension).
+            let epub_dest = naming::output_filename(
+                source,
+                options.output.destination.as_deref(),
+                ".epub",
+                suffix,
+                options,
+            );
+            let kindle_dest = epub_dest.with_extension("azw3");
+            kindle::build_kindle(
+                &epub_dest,
+                &kindle_dest,
+                book,
+                prepared,
+                source,
+                options,
+                title,
+                drop_bookmarks,
+            )?;
+
+            Ok(vec![kindle_dest])
+        }
     }
 }
 

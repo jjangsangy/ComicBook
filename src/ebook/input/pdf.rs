@@ -27,7 +27,7 @@ use super::archive::{build_tree, LoadedPage, RootStrip};
 
 /// Load a PDF source into a [`ComicTree`].
 pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
-    if options.legacy_extract {
+    if options.processing.source.legacy_extract {
         return legacy_extract(source);
     }
     rasterize(source, options)
@@ -55,7 +55,7 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
             _ => {
                 let (page_width, page_height) = page.size();
                 let zoom = render_zoom(
-                    options.pdf_width,
+                    options.processing.source.pdf_width,
                     target_width,
                     target_height,
                     page_width,
@@ -80,9 +80,9 @@ fn rasterize(source: &Path, options: &Options) -> Result<ComicTree> {
 /// The device target size KCC renders PDF pages against, widened to leave room
 /// for the margin/page-number crop (`getWorkFolder`'s `cropping` multipliers).
 fn render_target(options: &Options) -> (f32, f32) {
-    let width = options.profile_data.width as f32;
-    let height = options.profile_data.height as f32;
-    match options.cropping {
+    let width = options.device.data.width as f32;
+    let height = options.device.data.height as f32;
+    match options.processing.cropping {
         Cropping::Margins => (width * 1.2, height * 1.2),
         Cropping::PageNumbers => (width * 1.25, height * 1.25),
         Cropping::Off => (width, height),

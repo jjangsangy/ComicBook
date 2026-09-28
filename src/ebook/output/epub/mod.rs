@@ -133,7 +133,12 @@ pub(crate) fn build_entries<'a>(
     let entries = if bookmarks.is_empty() {
         chapter_starts
     } else {
-        bookmark_entries(&filelist, bookmarks, options.splitter, &mut page_titles)
+        bookmark_entries(
+            &filelist,
+            bookmarks,
+            options.processing.splitter,
+            &mut page_titles,
+        )
     };
 
     let cover = book.cover.as_ref().map(|cover| cover.bytes.as_slice());
@@ -179,7 +184,7 @@ pub(crate) fn build_entries<'a>(
                 &filelist,
                 &prepared.sanitized.chapter_titles,
                 &page_titles,
-                &options.language,
+                &options.output.language,
                 &uuid,
             )?
             .into_bytes(),
@@ -207,7 +212,7 @@ pub(crate) fn build_entries<'a>(
                 cover.is_some(),
                 source,
                 &prepared.metadata,
-                &options.language,
+                &options.output.language,
                 &uuid,
                 &modified,
                 options,

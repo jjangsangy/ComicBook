@@ -55,18 +55,18 @@ pub fn process(
     // `into_rgb8` reuses the decoded buffer when the source is already RGB.
     let mut image = DynamicImage::ImageRgb8(source.into_rgb8());
     page::autocontrast_preserve_tone(&mut image);
-    if !options.force_color {
+    if !options.processing.color.force_color {
         image = DynamicImage::ImageLuma8(to_luma601(&image));
     }
 
-    let smart_cropped = if options.smart_cover_crop {
-        crop_main_cover(&mut image, options.right_to_left)
+    let smart_cropped = if options.processing.cover.smart_crop {
+        crop_main_cover(&mut image, options.main.right_to_left())
     } else {
         false
     };
 
     let size = cover_size(options);
-    let image = if options.cover_fill && !options.kindle_scribe_azw3 {
+    let image = if options.processing.cover.fill && !options.processing.scribe {
         page::fit(&image, size, Method::Lanczos)?
     } else {
         // `thumbnail` takes ownership so an already-small cover is not copied.
@@ -76,7 +76,7 @@ pub fn process(
     // The OPF advertises the cover as `image/jpeg`, so it is always JPEG whatever
     // the source page's format was.
     let (width, height) = (image.width(), image.height());
-    let bytes = page::encode_jpeg(&image, options.jpeg_quality)?;
+    let bytes = page::encode_jpeg(&image, options.processing.jpeg_quality)?;
 
     Ok(Some(Cover {
         page: EncodedPage {
@@ -95,8 +95,8 @@ pub fn process(
 /// The cover's target size: the profile, with both dimensions capped at 1920 for
 /// Kindle Scribe KF8 output (`Cover.process`).
 fn cover_size(options: &Options) -> (u32, u32) {
-    let (width, height) = (options.profile_data.width, options.profile_data.height);
-    if options.kindle_scribe_azw3 {
+    let (width, height) = (options.device.data.width, options.device.data.height);
+    if options.processing.scribe {
         (
             width.min(page::SCRIBE_MAX_DIMENSION),
             height.min(page::SCRIBE_MAX_DIMENSION),

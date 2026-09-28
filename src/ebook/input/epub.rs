@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::archive::{open_reader, ArchiveKind, EntryContent};
 use crate::ebook::model::ComicTree;
-use crate::ebook::options::Options;
+use crate::ebook::options::{Layout, Options};
 
 use super::archive::{build_tree, load_page, LoadedPage, RootStrip};
 
@@ -36,7 +36,7 @@ type OrderedImages = Vec<(String, Arc<[u8]>)>;
 pub fn load(source: &Path, options: &Options) -> Result<ComicTree> {
     // KCC bails out to the plain extracted tree before the spine walk for these
     // modes, so the container's images load in natural order instead.
-    if options.legacy_extract || options.light_novel {
+    if options.processing.source.legacy_extract || options.main.layout == Layout::LightNovel {
         return super::archive::load(source, ArchiveKind::Cbz);
     }
 

@@ -19,7 +19,7 @@ use anyhow::Result;
 use super::templates::{render_lf, Opf, OpfItem, SpineItem, StyleCss};
 use super::{html_escape, images_dir, text_dir, unique_id, PageRef};
 use crate::ebook::metadata::BookMetadata;
-use crate::ebook::options::Options;
+use crate::ebook::options::{Geometry, Options, OutputEncoding, ReaderFamily};
 
 /// KCC's `KindleComicConverter-<version>` contributor string.
 const CONTRIBUTOR: &str = "KindleComicConverter-11.3.2";
@@ -46,18 +46,18 @@ pub(crate) fn build_opf(
     modified: &str,
     options: &Options,
 ) -> Result<String> {
-    let device = (options.profile_data.width, options.profile_data.height);
+    let device = (options.device.data.width, options.device.data.height);
 
     // `--vertical-4-panel` writes top-to-bottom; `--invert-direction` swaps the
     // two suffixes relative to the normal rule.
     let writing_mode = format!(
         "{}{}",
-        if options.vertical_4_panel {
+        if options.main.vertical_4_panel {
             "vertical"
         } else {
             "horizontal"
         },
-        match (options.invert_direction, options.right_to_left) {
+        match (options.main.invert_direction, options.main.right_to_left()) {
             (true, true) | (false, false) => "-lr",
             _ => "-rl",
         }
@@ -65,18 +65,19 @@ pub(crate) fn build_opf(
 
     let manifest = manifest_items(filelist);
 
-    let (direction, initial_side) = match (options.invert_direction, options.right_to_left) {
-        (true, false) | (false, true) => ("rtl", "right"),
-        _ => ("ltr", "left"),
-    };
+    let (direction, initial_side) =
+        match (options.main.invert_direction, options.main.right_to_left()) {
+            (true, false) | (false, true) => ("rtl", "right"),
+            _ => ("ltr", "left"),
+        };
     let initial_side = flip_for_source(initial_side, source, options);
     let reflist: Vec<String> = filelist.iter().map(unique_id).collect();
-    let spread = spread_properties(&reflist, options.right_to_left, initial_side);
+    let spread = spread_properties(&reflist, options.main.right_to_left(), initial_side);
     let spine: Vec<SpineItem> = reflist
         .iter()
         .zip(&spread)
         .map(|(entry, property)| {
-            let property = if options.one_page_landscape {
+            let property = if options.output.one_page_landscape {
                 "center"
             } else {
                 property
@@ -98,7 +99,7 @@ pub(crate) fn build_opf(
         .collect();
 
     // Series metadata is only meaningful for non-Kindle readers.
-    let has_series = !options.is_kindle && !metadata.series.is_empty();
+    let has_series = options.device.reader != ReaderFamily::Kindle && !metadata.series.is_empty();
     let series = html_escape(&metadata.series);
     let group = if !metadata.volume.is_empty() && !metadata.number.is_empty() {
         Some(format!("{}.{}", metadata.volume, metadata.number))
@@ -126,11 +127,16 @@ pub(crate) fn build_opf(
         group: &group,
         modified,
         has_cover,
-        kindle_layout: options.is_kindle && !options.custom_profile,
+        kindle_layout: options.device.reader == ReaderFamily::Kindle
+            && !matches!(options.device.geometry, Geometry::Custom { .. }),
         device_width: device.0,
         device_height: device.1,
         writing_mode: &writing_mode,
-        region_mag: if options.kfx { "false" } else { "true" },
+        region_mag: if matches!(options.output.encoding, OutputEncoding::Epub { kfx: true }) {
+            "false"
+        } else {
+            "true"
+        },
         manifest: &manifest,
         direction,
         spine: &spine,
@@ -183,8 +189,8 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
 /// The shared `style.css`.
 pub(crate) fn style_css(options: &Options) -> Result<String> {
     let view = StyleCss {
-        scribe: options.kindle_scribe_azw3,
-        panel: options.is_kindle && options.panel_view,
+        scribe: options.processing.scribe,
+        panel: options.panel_view_enabled(),
     };
     render_lf(&view)
 }
@@ -266,7 +272,7 @@ fn flip_for_source(mut side: &'static str, source: &Path, options: &Options) -> 
     if name.ends_with(".pdf") || name.ends_with(".epub") {
         side = other(side);
     }
-    if options.spread_shift {
+    if options.output.spread_shift {
         side = other(side);
     }
     side
@@ -274,12 +280,9 @@ fn flip_for_source(mut side: &'static str, source: &Path, options: &Options) -> 
 
 /// KCC's `pageSpreadProperty`: a different attribute spelling per reader family.
 fn page_spread_property(property: &str, options: &Options) -> String {
-    if options.is_kindle {
-        format!("linear=\"yes\" properties=\"page-spread-{property}\"")
-    } else if options.is_kobo {
-        format!("properties=\"rendition:page-spread-{property}\"")
-    } else {
-        String::new()
+    match options.device.reader {
+        ReaderFamily::Kindle => format!("linear=\"yes\" properties=\"page-spread-{property}\""),
+        ReaderFamily::Kobo => format!("properties=\"rendition:page-spread-{property}\""),
     }
 }
 

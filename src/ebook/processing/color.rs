@@ -34,10 +34,10 @@ pub fn color_check(image: &RgbImage, original_is_grayscale: bool, options: &Opti
     if original_is_grayscale {
         return false;
     }
-    if options.webtoon {
+    if options.main.webtoon {
         return true;
     }
-    calculate_color(image, options.force_color)
+    calculate_color(image, options.processing.color.force_color)
 }
 
 /// The histogram cascade, returning as soon as a step decides.
