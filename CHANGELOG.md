@@ -196,6 +196,8 @@ release when a version tag is pushed.
 
 ### Fixed
 
+- `clamp`'s `remove_dir_all_force` no longer trips the `unused_variables` lint on Windows: the
+  outer `Err(e)` binding is used only by the non-Windows arm, so it is now `Err(_e)` for both.
 - `scripts/set-version.sh` and `scripts/set-version.ps1` (with `--changelog` / `-Changelog`) now
   re-open an empty `## [Unreleased]` heading above the dated release, so the default branch keeps a
   section for the next release's entries instead of losing it on roll-over.

@@ -138,7 +138,7 @@ pub fn remove_dir_all_force<P: AsRef<Path>>(path: P) -> io::Result<()> {
     }
     match fs::remove_dir_all(path) {
         Ok(_) => Ok(()),
-        Err(e) => {
+        Err(_e) => {
             #[cfg(windows)]
             {
                 for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
@@ -153,7 +153,7 @@ pub fn remove_dir_all_force<P: AsRef<Path>>(path: P) -> io::Result<()> {
                 fs::remove_dir_all(path)
             }
             #[cfg(not(windows))]
-            Err(e)
+            Err(_e)
         }
     }
 }
