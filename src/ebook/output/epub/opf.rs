@@ -172,7 +172,12 @@ fn manifest_items(filelist: &[PageRef<'_>]) -> Vec<OpfItem> {
         });
         if let Some(below) = entry.below {
             let below_id = id.replace("above", "below");
-            let below_file = below.name.rsplit('/').next().unwrap_or(below.name.as_str());
+            let below_file = below
+                .name
+                .as_str()
+                .rsplit('/')
+                .next()
+                .unwrap_or(below.name.as_str());
             manifest.push(OpfItem {
                 id: format!("img_{below_id}"),
                 href: format!("{}/{}", images_dir(entry.image_dir), below_file),
@@ -348,18 +353,17 @@ mod tests {
     #[test]
     fn a_scribe_above_page_adds_its_below_image_to_the_manifest() {
         use crate::ebook::model::{
-            Background, EncodedPage, MediaType, OrderClass, Orientation, PageFlags, ResolvedFill,
-            ScribeHalf,
+            Background, EncodedPage, MediaType, OrderClass, Orientation, PageFlags, PageName,
+            ResolvedFill, ScribeHalf,
         };
 
         let below = EncodedPage {
-            name: "kcc-0001-kcc-x-below.jpg".to_string(),
+            name: PageName::new("kcc-0001-kcc-x-below.jpg"),
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: Vec::new(),
             size: Size::new(100, 50),
             flags: PageFlags {
-                order_class: OrderClass::Normal,
                 orientation: Orientation::Upright,
                 background: ResolvedFill::new(Background::White),
                 half: ScribeHalf::Below,
@@ -371,7 +375,6 @@ mod tests {
             stem: "kcc-0001-kcc-x-above",
             size: Size::new(100, 150),
             flags: PageFlags {
-                order_class: OrderClass::Normal,
                 orientation: Orientation::Upright,
                 background: ResolvedFill::new(Background::White),
                 half: ScribeHalf::Above,

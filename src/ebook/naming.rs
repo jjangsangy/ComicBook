@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::ebook::model::{ComicTree, MediaType, Page};
+use crate::ebook::model::{ChapterName, ComicTree, MediaType, Page, RelPath, SourceName};
 use crate::ebook::options::{Options, OutputEncoding};
 
 /// KCC's deterministic page-name prefix (`kcc-0001`).
@@ -99,22 +99,18 @@ pub fn sanitize_tree(tree: &mut ComicTree, options: &Options) -> Sanitized {
     let mut page_number = 1u32;
     let mut cover_path = None;
     for chapter in &mut tree.chapters {
-        if let Some(slug) = slug_map.get(&chapter.name) {
-            chapter.name = slug.clone();
+        if let Some(slug) = slug_map.get(chapter.name.as_str()).cloned() {
+            chapter.name = ChapterName::new(slug);
         }
         let directory = chapter.name.clone();
         for page in &mut chapter.pages {
             let stem = format!("{PAGE_PREFIX}-{page_number:04}");
             page_number += 1;
             let file = format!("{stem}.{}", page_extension(page));
-            page.rel_path = file.clone();
-            page.source_name = if directory.is_empty() {
-                file
-            } else {
-                format!("{directory}/{file}")
-            };
+            page.rel_path = RelPath::new(file.clone());
+            page.source_name = SourceName::new(join(directory.as_str(), &file));
             if cover_path.is_none() {
-                cover_path = Some(page.source_name.clone());
+                cover_path = Some(page.source_name.as_str().to_string());
             }
         }
     }
@@ -138,10 +134,10 @@ fn slugify_directories(
     // Every directory path (all prefixes of the chapter paths).
     let mut directories: BTreeSet<String> = BTreeSet::new();
     for chapter in &tree.chapters {
-        let name = chapter.name.trim_matches('/');
-        if name.is_empty() {
+        if chapter.name.is_root() {
             continue;
         }
+        let name = chapter.name.as_str();
         let mut prefix = String::new();
         for segment in name.split('/') {
             if !prefix.is_empty() {
@@ -369,16 +365,19 @@ fn is_cover_image(name: &str) -> bool {
 fn page_extension(page: &Page) -> String {
     let file = page
         .source_name
+        .as_str()
         .rsplit('/')
         .next()
-        .unwrap_or(&page.source_name);
+        .unwrap_or(page.source_name.as_str());
     match file.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
-        _ => page
-            .source_media_type
-            .unwrap_or(MediaType::Jpeg)
-            .extension()
-            .to_string(),
+        // A name with no extension: fall back to the payload's media type. A
+        // `Consumed` page has none, but it cannot reach the naming pass, which
+        // runs before decoding; keep the historical default rather than fail.
+        _ => match page.media_type() {
+            Some(media_type) => media_type.extension().to_string(),
+            None => MediaType::Jpeg.extension().to_string(),
+        },
     }
 }
 

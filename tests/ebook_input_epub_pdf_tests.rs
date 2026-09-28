@@ -114,7 +114,7 @@ fn epub_loads_spine_in_order_and_picks_the_largest_image() -> Result<()> {
 
     // Flat chapter, spine order: page2 (largest of small/large) then page1.
     assert_eq!(tree.chapters.len(), 1);
-    assert_eq!(tree.chapters[0].name, "");
+    assert!(tree.chapters[0].name.is_root());
     let pages = &tree.chapters[0].pages;
     assert_eq!(pages[0].dimensions().to_dimensions(), (60, 70));
     assert_eq!(pages[0].rel_path, "0.png");
@@ -123,10 +123,10 @@ fn epub_loads_spine_in_order_and_picks_the_largest_image() -> Result<()> {
 
     // The chosen image keeps its original bytes (see docs/porting.md).
     assert_eq!(
-        pages[0].source_media_type,
+        pages[0].media_type(),
         Some(comic_book::ebook::model::MediaType::Png)
     );
-    assert!(pages[0].raw.is_some());
+    assert!(pages[0].source_bytes().is_some());
     Ok(())
 }
 
@@ -330,7 +330,7 @@ fn pdf_with_one_image_extracts_it_at_native_size() -> Result<()> {
     assert_eq!(page.dimensions().to_dimensions(), (40, 30));
     assert_eq!(page.rel_path, "p-0.png");
     assert_eq!(
-        page.source_media_type,
+        page.media_type(),
         Some(comic_book::ebook::model::MediaType::Png)
     );
     Ok(())

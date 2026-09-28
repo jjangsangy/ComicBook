@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
 use std::path::Path;
 
-use crate::ebook::model::{ComicTree, EncodedPage, MediaType, OrderClass, PageFlags};
+use crate::ebook::model::{ComicTree, EncodedPage, MediaType, OrderClass, PageFlags, PageName};
 use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::crop;
@@ -27,6 +27,7 @@ use crate::units::{BBox, Quality, Size};
 
 /// The processed cover plus whether `--smart-cover-crop` actually cropped it
 /// (KCC's `Cover.smartcover`, which CBZ/PDF output tests before writing a cover).
+#[derive(Debug)]
 pub struct Cover {
     pub page: EncodedPage,
     pub smart_cropped: bool,
@@ -81,7 +82,7 @@ pub fn process(
 
     Ok(Some(Cover {
         page: EncodedPage {
-            name: "cover.jpg".to_string(),
+            name: PageName::new("cover.jpg"),
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes,
@@ -286,25 +287,21 @@ mod tests {
 
     /// A tree whose only page is a solid-colour image of the given size.
     fn tree_with_page(width: u32, height: u32, color: [u8; 3]) -> ComicTree {
-        use crate::ebook::model::{Chapter, Page};
+        use crate::ebook::model::{Chapter, ChapterName, Page, PageData, RelPath, SourceName};
 
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(color)));
         let page = Page {
-            source_name: "kcc-0001.png".to_string(),
-            rel_path: "kcc-0001.png".to_string(),
-            image: Some(image),
+            source_name: SourceName::new("kcc-0001.png"),
+            rel_path: RelPath::new("kcc-0001.png"),
+            data: PageData::Pixels(MediaType::Png, image),
             dimensions: Size::new(width, height),
             background: crate::ebook::model::Background::White,
-            flags: PageFlags::default(),
-            raw: None,
-            source_media_type: Some(MediaType::Png),
         };
         ComicTree {
             chapters: vec![Chapter {
-                name: String::new(),
+                name: ChapterName::root(),
                 pages: vec![page],
             }],
-            cover: None,
             comicinfo: None,
         }
     }

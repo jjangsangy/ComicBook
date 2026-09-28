@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use crate::archive::{ArchiveKind, ArchiveWriter, EntryContent};
 use crate::ebook::input;
-use crate::ebook::model::{MediaType, Page};
+use crate::ebook::model::{Page, SourceName};
 use crate::ebook::options::{Options, ReaderFamily};
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::page::{self, Method};
@@ -52,7 +52,7 @@ pub fn convert_with(
     // `os.walk` order KCC's `makeZIP` reproduces. Pages are mutated so each one's
     // pixels are released as soon as it has been resized.
     let bar = reporter.child(tree.page_count() as u64, "Resizing images");
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut entries: Vec<(SourceName, Vec<u8>)> = Vec::new();
     for chapter in &mut tree.chapters {
         let resized = chapter
             .pages
@@ -106,12 +106,17 @@ fn resize_page(page: &mut Page, bounds: Size, options: &Options) -> Result<Vec<u
     if size.width <= bounds.width && size.height <= bounds.height {
         // The tree is dropped once every page has been archived, so the source
         // bytes can be *moved* into the output instead of cloned.
-        if let Some(raw) = page.raw.take() {
+        if let Some(raw) = page.take_source() {
             return Ok(raw);
         }
     }
 
     page.ensure_decoded()?;
+    // Captured before the pixels are taken: a pixel-only page carries its media
+    // type in the payload, which `take_image` moves away.
+    let media_type = page
+        .media_type()
+        .context("light-novel page has no media type")?;
     let mut image = page
         .take_image()
         .context("light-novel page has no decoded image")?;
@@ -119,7 +124,6 @@ fn resize_page(page: &mut Page, bounds: Size, options: &Options) -> Result<Vec<u
         image = grayscale(image);
     }
     let image = page::contain(&image, bounds, Method::Bicubic)?;
-    let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
     page::encode_dynamic(&image, media_type, options.processing.jpeg_quality)
 }
 
@@ -134,7 +138,11 @@ fn grayscale(image: DynamicImage) -> DynamicImage {
 }
 
 /// Write the (mostly untouched) pages as a CBZ, preserving their source paths.
-fn write_cbz(dest: &Path, entries: &[(String, Vec<u8>)], comicinfo: Option<&[u8]>) -> Result<()> {
+fn write_cbz(
+    dest: &Path,
+    entries: &[(SourceName, Vec<u8>)],
+    comicinfo: Option<&[u8]>,
+) -> Result<()> {
     let mut writer =
         ArchiveWriter::new(ArchiveKind::Cbz, dest).context("Failed to create the CBZ archive")?;
 
@@ -145,7 +153,7 @@ fn write_cbz(dest: &Path, entries: &[(String, Vec<u8>)], comicinfo: Option<&[u8]
     }
     for (name, bytes) in entries {
         writer
-            .add_entry(name, EntryContent::File(bytes))
+            .add_entry(name.as_str(), EntryContent::File(bytes))
             .with_context(|| format!("Failed to add {name} to the CBZ"))?;
     }
 

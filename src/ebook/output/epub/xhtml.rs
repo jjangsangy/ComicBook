@@ -72,7 +72,12 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
 
     let (below_src, below_width, below_height) = match below {
         Some(image) => {
-            let file = image.name.rsplit('/').next().unwrap_or(image.name.as_str());
+            let file = image
+                .name
+                .as_str()
+                .rsplit('/')
+                .next()
+                .unwrap_or(image.name.as_str());
             (
                 format!("{}Images/{postfix}{file}", "../".repeat(backref)),
                 image.size.width,

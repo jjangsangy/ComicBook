@@ -6,14 +6,14 @@
 //!
 //! To keep peak memory linear in the *output* rather than in the decoded book, a
 //! [`Page`] does not decode its pixels at ingest: it carries the encoded source
-//! bytes plus the header dimensions, and [`Page::ensure_decoded`] decodes on
-//! demand. The processing pass releases each page's pixels again as soon as it
-//! has been encoded, so only the in-flight pages (one per `rayon` worker) are
-//! ever decoded at once.
+//! bytes as [`PageData::Encoded`], and [`Page::ensure_decoded`] moves it to
+//! [`PageData::EncodedDecoded`]. The processing pass releases each page's pixels
+//! again as soon as it has been encoded, so only the in-flight pages (one per
+//! `rayon` worker) are ever decoded at once.
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
-use std::path::PathBuf;
+use std::fmt;
 
 use crate::units::Size;
 
@@ -144,9 +144,11 @@ impl ResolvedFill {
 }
 
 /// Page-level flags carried through processing into output naming.
+///
+/// The spread order lives on [`EncodedPage::order_class`] rather than here, so it
+/// has a single owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PageFlags {
-    pub order_class: OrderClass,
     pub orientation: Orientation,
     /// The resolved fill the page is padded with (the `--borders` override if
     /// set, otherwise the detected [`Page::background`]): drives the black XHTML
@@ -156,45 +158,197 @@ pub struct PageFlags {
     pub half: ScribeHalf,
 }
 
+/// Declare a `#[repr(transparent)]` newtype over `String` naming a distinct
+/// identity, so two confusable names cannot be swapped at a call site.
+///
+/// Each newtype is layout-identical to `String` (zero cost) and renders through
+/// [`fmt::Display`]. It deliberately does **not** implement `Deref<Target = str>`:
+/// an implicit coercion would let a name flow into any `&str` slot, defeating the
+/// wrapper. Reaching the borrowed string is an explicit `as_str()` at each
+/// boundary, and comparisons against string literals go through the
+/// `PartialEq<str>` impls (matching `String`). No allocating conversion is
+/// exposed on a hot path.
+macro_rules! string_newtype {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[repr(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Wrap an owned string.
+            pub fn new(value: impl Into<String>) -> Self {
+                $name(value.into())
+            }
+
+            /// The name as a borrowed string.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.0 == other
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.0 == *other
+            }
+        }
+    };
+}
+
+string_newtype! {
+    /// The book-relative source path of a page: the archive entry or
+    /// folder-relative path *after* a single redundant root directory has been
+    /// stripped, so equivalent CBZ/folder inputs yield the same value.
+    SourceName
+}
+
+string_newtype! {
+    /// A page's file name within its [`Chapter`] (the basename of its
+    /// [`SourceName`]).
+    RelPath
+}
+
+string_newtype! {
+    /// An [`EncodedPage`]'s output file name, including the `-kcc-<order>` suffix
+    /// and the media extension.
+    PageName
+}
+
+/// A chapter's image-root-relative directory path.
+///
+/// The root chapter is the explicit [`ChapterName::Root`], not an empty
+/// directory: `new("")` returns it, so a `Dir` is never empty and "is this the
+/// root?" cannot be spelled as an empty-string comparison that a typo could
+/// invert. `Dir` carries the (non-empty) directory path verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChapterName {
+    /// The root chapter, whose pages sit directly in the image root.
+    Root,
+    /// A non-empty directory path relative to the image root.
+    Dir(String),
+}
+
+impl ChapterName {
+    /// Build a chapter name from a directory path; the empty path is the root.
+    pub fn new(path: impl Into<String>) -> Self {
+        let path = path.into();
+        if path.is_empty() {
+            ChapterName::Root
+        } else {
+            ChapterName::Dir(path)
+        }
+    }
+
+    /// The root chapter, whose pages sit directly in the image root.
+    pub fn root() -> Self {
+        ChapterName::Root
+    }
+
+    /// The directory path as a borrowed string (`""` for the root).
+    pub fn as_str(&self) -> &str {
+        match self {
+            ChapterName::Root => "",
+            ChapterName::Dir(path) => path,
+        }
+    }
+
+    /// Whether this is the root chapter.
+    pub fn is_root(&self) -> bool {
+        matches!(self, ChapterName::Root)
+    }
+}
+
+impl fmt::Display for ChapterName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Encoded source bytes plus the media type they decode to.
+///
+/// Kept together so a page's lazy-decode source and the OPF manifest's
+/// `media-type` cannot drift apart (see docs/architecture.md).
+#[derive(Debug)]
+pub struct Source {
+    raw: Vec<u8>,
+    media_type: MediaType,
+}
+
+impl Source {
+    /// Pair encoded bytes with their media type.
+    pub fn new(raw: Vec<u8>, media_type: MediaType) -> Self {
+        Source { raw, media_type }
+    }
+
+    /// The encoded bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// The media type the bytes decode to.
+    pub fn media_type(&self) -> MediaType {
+        self.media_type
+    }
+}
+
+/// A page's image payload, as an explicit state machine.
+///
+/// The old representation (`image: Option<DynamicImage>`, `raw: Option<Vec<u8>>`
+/// and `source_media_type: Option<MediaType>`) admitted a `(None, None)` page
+/// that four call sites defended against. Every state below is reachable and
+/// meaningful; the transitions (`Encoded → EncodedDecoded → Encoded`, then to
+/// `Consumed`) are moves, never copies.
+///
+/// [`PageData::EncodedDecoded`] deliberately keeps the encoded [`Source`]
+/// alongside the pixels so a decode never discards the bytes (see
+/// docs/architecture.md; the memory regression tests pin this).
+///
+/// Deliberately **not** `Clone`: duplicating a decoded frame plus the encoded
+/// bytes would silently double peak memory.
+#[derive(Debug)]
+pub enum PageData {
+    /// Encoded bytes, not yet decoded.
+    Encoded(Source),
+    /// A cached decode over the retained bytes.
+    EncodedDecoded(Source, DynamicImage),
+    /// Pixel-only (a webtoon strip): no source bytes exist.
+    Pixels(MediaType, DynamicImage),
+    /// Bytes and/or pixels have been moved out; the page carries no image.
+    Consumed,
+}
+
 /// A single source page.
 ///
-/// The pixels are decoded lazily: [`Page::image`] is `None` between ingest and
-/// processing (and again once a processed page has been encoded), while
-/// [`Page::raw`] holds the encoded source bytes and [`Page::dimensions`] the
-/// header dimensions. This bounds peak memory to the encoded book plus the few
+/// The pixels are decoded lazily: a freshly ingested page is
+/// [`PageData::Encoded`], and processing moves it through
+/// [`PageData::EncodedDecoded`] and back, freeing the pixels as soon as the page
+/// has been encoded. This bounds peak memory to the encoded book plus the few
 /// pages a `rayon` batch is actively decoding, instead of the whole decoded book
 /// (see docs/architecture.md).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Page {
     /// Source path within the book's image tree (see [`crate::ebook::input`]).
-    ///
-    /// This is the archive entry or folder-relative path *after* a single
-    /// redundant root directory has been stripped, so equivalent CBZ/folder
-    /// inputs yield the same value.
-    pub source_name: String,
+    pub source_name: SourceName,
     /// Chapter-relative path (the file name within [`Chapter::name`]).
-    pub rel_path: String,
-    /// Decoded pixels, or `None` until the page is processed.
-    ///
-    /// Exists only while the page is being transformed/encoded; see the type
-    /// docs. A page may instead be *pixel-only* (webtoon strips): then `image` is
-    /// `Some` and `raw` is `None`.
-    pub image: Option<DynamicImage>,
+    pub rel_path: RelPath,
+    /// The encoded/pixels payload; see [`PageData`].
+    pub data: PageData,
     /// The source image's dimensions, read from the codec header at ingest so an
     /// undersized-page check does not need to decode the whole image.
     pub dimensions: Size,
     pub background: Background,
-    pub flags: PageFlags,
-    /// The source's original encoded bytes.
-    ///
-    /// Retained as the lazy decode source and so `--no-processing` can emit the
-    /// page byte-for-byte instead of re-encoding the decoded pixels (see
-    /// docs/architecture.md). `None` for a page that exists only as pixels (the
-    /// webtoon merge) or once `--no-processing` has moved the bytes into its
-    /// output page.
-    pub raw: Option<Vec<u8>>,
-    /// Media type of [`Page::raw`], inferred from the source extension.
-    pub source_media_type: Option<MediaType>,
 }
 
 impl Page {
@@ -205,55 +359,140 @@ impl Page {
 
     /// The decoded pixels, if this page has already been decoded.
     pub fn decoded(&self) -> Option<&DynamicImage> {
-        self.image.as_ref()
+        match &self.data {
+            PageData::EncodedDecoded(_, image) | PageData::Pixels(_, image) => Some(image),
+            PageData::Encoded(_) | PageData::Consumed => None,
+        }
     }
 
-    /// Decode the source bytes into [`Page::image`] if not already decoded.
-    ///
-    /// A page backed by pixels (webtoon output, test helpers) is returned as-is;
-    /// a page backed only by [`Page::raw`] is decoded once and cached until
-    /// [`Page::take_image`] releases it.
-    pub fn ensure_decoded(&mut self) -> Result<&DynamicImage> {
-        if self.image.is_none() {
-            let raw = self
-                .raw
-                .as_deref()
-                .context("page holds neither decoded pixels nor source bytes")?;
-            let decoded = image::load_from_memory(raw).context("image could not be decoded")?;
-            self.dimensions = Size::from_dimensions(decoded.dimensions());
-            self.image = Some(decoded);
+    /// The decoded pixels, if this page has already been decoded.
+    fn decoded_mut(&mut self) -> Option<&mut DynamicImage> {
+        match &mut self.data {
+            PageData::EncodedDecoded(_, image) | PageData::Pixels(_, image) => Some(image),
+            PageData::Encoded(_) | PageData::Consumed => None,
         }
-        self.image.as_ref().context("page has no decoded image")
+    }
+
+    /// The page's source media type, while it still carries bytes or pixels.
+    pub fn media_type(&self) -> Option<MediaType> {
+        match &self.data {
+            PageData::Encoded(source) | PageData::EncodedDecoded(source, _) => {
+                Some(source.media_type())
+            }
+            PageData::Pixels(media_type, _) => Some(*media_type),
+            PageData::Consumed => None,
+        }
+    }
+
+    /// The retained encoded bytes, if the page still holds any.
+    pub fn source_bytes(&self) -> Option<&[u8]> {
+        match &self.data {
+            PageData::Encoded(source) | PageData::EncodedDecoded(source, _) => Some(source.bytes()),
+            PageData::Pixels(_, _) | PageData::Consumed => None,
+        }
+    }
+
+    /// Decode the source bytes into cached pixels, if not already decoded.
+    ///
+    /// A page backed by bytes moves `Encoded → EncodedDecoded`, keeping the bytes;
+    /// a pixel-only page is returned as-is. A decode failure restores the encoded
+    /// bytes rather than dropping the book. A [`PageData::Consumed`] page (its
+    /// bytes were moved into an output) is an error, not a panic.
+    pub fn ensure_decoded(&mut self) -> Result<&mut DynamicImage> {
+        // Decode only an `Encoded` page; every other state is restored untouched.
+        let decoded = match std::mem::replace(&mut self.data, PageData::Consumed) {
+            PageData::Encoded(source) => match image::load_from_memory(source.bytes()) {
+                Ok(decoded) => Some((source, decoded)),
+                Err(error) => {
+                    self.data = PageData::Encoded(source);
+                    return Err(error).context("image could not be decoded");
+                }
+            },
+            // Already decoded (reuse the cache), pixel-only, or consumed (no
+            // payload to decode): restore the state unchanged.
+            already
+            @ (PageData::EncodedDecoded(..) | PageData::Pixels(..) | PageData::Consumed) => {
+                self.data = already;
+                None
+            }
+        };
+        if let Some((source, decoded)) = decoded {
+            self.dimensions = Size::from_dimensions(decoded.dimensions());
+            self.data = PageData::EncodedDecoded(source, decoded);
+        }
+        match self.decoded_mut() {
+            Some(image) => Ok(image),
+            None => Err(anyhow::anyhow!(
+                "page holds neither decoded pixels nor source bytes"
+            )),
+        }
     }
 
     /// Decode into an owned image without caching the result.
     ///
-    /// Used by one-off passes (the cover) that must not pin a decoded book.
+    /// Used by one-off passes (the cover) that must not pin a decoded book. The
+    /// `Clone` only fires for a page that was already decoded (never the cover
+    /// path, which runs before processing): see docs/architecture.md.
     pub fn to_decoded(&self) -> Result<DynamicImage> {
-        match &self.image {
-            Some(image) => Ok(image.clone()),
-            None => {
-                let raw = self
-                    .raw
-                    .as_deref()
-                    .context("page holds neither decoded pixels nor source bytes")?;
-                image::load_from_memory(raw).context("image could not be decoded")
+        match &self.data {
+            PageData::EncodedDecoded(_, image) | PageData::Pixels(_, image) => Ok(image.clone()),
+            PageData::Encoded(source) => {
+                image::load_from_memory(source.bytes()).context("image could not be decoded")
+            }
+            PageData::Consumed => Err(anyhow::anyhow!(
+                "page holds neither decoded pixels nor source bytes"
+            )),
+        }
+    }
+
+    /// Move the decoded pixels out, keeping any encoded source bytes.
+    ///
+    /// `EncodedDecoded → Encoded`; a pixel-only page becomes [`PageData::Consumed`]
+    /// (it has no bytes to keep).
+    pub fn take_image(&mut self) -> Option<DynamicImage> {
+        match std::mem::replace(&mut self.data, PageData::Consumed) {
+            PageData::EncodedDecoded(source, image) => {
+                self.data = PageData::Encoded(source);
+                Some(image)
+            }
+            PageData::Pixels(_, image) => Some(image),
+            // An encoded page has no pixels to take; a consumed page has neither.
+            already @ (PageData::Encoded(..) | PageData::Consumed) => {
+                self.data = already;
+                None
             }
         }
     }
 
-    /// Release the decoded pixels, keeping any encoded source bytes.
-    pub fn take_image(&mut self) -> Option<DynamicImage> {
-        self.image.take()
+    /// Move the encoded source bytes out.
+    ///
+    /// An [`PageData::Encoded`] page becomes [`PageData::Consumed`]; an
+    /// already-decoded page keeps its pixels ([`PageData::EncodedDecoded`] →
+    /// [`PageData::Pixels`]) so both halves of its payload are never dropped at
+    /// once. Returns `None` for a pixel-only or already-consumed page, which has
+    /// no bytes to give.
+    pub fn take_source(&mut self) -> Option<Vec<u8>> {
+        match std::mem::replace(&mut self.data, PageData::Consumed) {
+            PageData::Encoded(source) => Some(source.raw),
+            PageData::EncodedDecoded(source, image) => {
+                self.data = PageData::Pixels(source.media_type, image);
+                Some(source.raw)
+            }
+            // A pixel-only page has no bytes; a consumed page has neither.
+            already @ (PageData::Pixels(..) | PageData::Consumed) => {
+                self.data = already;
+                None
+            }
+        }
     }
 }
 
 /// A chapter (a source subdirectory, or the single implicit chapter of a file).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Chapter {
     /// Source directory path relative to the image root, before slugification
-    /// (empty for pages that sit directly in the root).
-    pub name: String,
+    /// ([`ChapterName::root`] for pages that sit directly in the root).
+    pub name: ChapterName,
     pub pages: Vec<Page>,
 }
 
@@ -266,7 +505,7 @@ pub struct Chapter {
 pub struct EncodedPage {
     /// Output file name, including the `-kcc-<order>` suffix and the media
     /// extension. Set by the naming pass from the sanitized page name.
-    pub name: String,
+    pub name: PageName,
     /// The `-kcc-<order>` class that drives the OPF spread algorithm.
     pub order_class: OrderClass,
     pub media_type: MediaType,
@@ -275,22 +514,10 @@ pub struct EncodedPage {
     pub flags: PageFlags,
 }
 
-/// Where a book's cover comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CoverSource {
-    /// The first page of the first chapter.
-    FirstPage,
-    /// A sibling image (e.g. a `Covers/` file).
-    Sibling(PathBuf),
-    /// A cover synthesized by `--file-fusion`.
-    Fused(PathBuf),
-}
-
 /// A fully decoded source, ready for processing.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ComicTree {
     pub chapters: Vec<Chapter>,
-    pub cover: Option<CoverSource>,
     /// Raw bytes of a discovered `ComicInfo.xml`, if any.
     ///
     /// The tree keeps the original document (rather than parsed fields) so that
@@ -304,7 +531,6 @@ impl ComicTree {
     pub fn new() -> Self {
         ComicTree {
             chapters: Vec::new(),
-            cover: None,
             comicinfo: None,
         }
     }
@@ -326,5 +552,107 @@ impl ComicTree {
 impl Default for ComicTree {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageFormat, RgbImage};
+    use std::io::Cursor;
+
+    /// A page whose payload is the PNG encoding of a solid image.
+    fn encoded_png_page(width: u32, height: u32) -> Result<Page> {
+        let image = DynamicImage::ImageRgb8(RgbImage::new(width, height));
+        let mut png = Vec::new();
+        image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+        Ok(Page {
+            source_name: SourceName::new("kcc-0001.png"),
+            rel_path: RelPath::new("kcc-0001.png"),
+            data: PageData::Encoded(Source::new(png, MediaType::Png)),
+            dimensions: Size::new(width, height),
+            background: Background::White,
+        })
+    }
+
+    #[test]
+    fn decoding_keeps_the_encoded_bytes_and_only_releases_the_pixels() -> Result<()> {
+        let mut page = encoded_png_page(2, 3)?;
+        assert!(page.decoded().is_none());
+
+        page.ensure_decoded()?;
+        assert!(page.decoded().is_some());
+        assert!(
+            page.source_bytes().is_some(),
+            "EncodedDecoded retains the encoded bytes"
+        );
+
+        let image = page.take_image().context("the decoded pixels move out")?;
+        assert_eq!(image.dimensions(), (2, 3));
+        assert!(page.decoded().is_none());
+        assert!(
+            page.source_bytes().is_some(),
+            "take_image returns the page to Encoded, not Consumed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn taking_the_source_bytes_consumes_the_page() -> Result<()> {
+        let mut page = encoded_png_page(2, 3)?;
+        assert!(page.take_source().is_some());
+        assert!(page.source_bytes().is_none());
+        assert!(page.decoded().is_none());
+        assert_eq!(page.media_type(), None);
+        assert!(
+            page.ensure_decoded().is_err(),
+            "a consumed page cannot be decoded"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_decode_restores_the_encoded_bytes() {
+        let mut page = Page {
+            source_name: SourceName::new("page.png"),
+            rel_path: RelPath::new("page.png"),
+            data: PageData::Encoded(Source::new(vec![0, 1, 2, 3], MediaType::Png)),
+            dimensions: Size::new(1, 1),
+            background: Background::White,
+        };
+        assert!(page.ensure_decoded().is_err());
+        assert!(
+            page.source_bytes().is_some(),
+            "the encoded bytes survive a decode failure"
+        );
+    }
+
+    #[test]
+    fn a_pixel_only_page_has_no_source_bytes_but_keeps_its_media_type() {
+        let page = Page {
+            source_name: SourceName::new("kcc-0001.png"),
+            rel_path: RelPath::new("kcc-0001.png"),
+            data: PageData::Pixels(
+                MediaType::WebP,
+                DynamicImage::ImageRgb8(RgbImage::new(1, 1)),
+            ),
+            dimensions: Size::new(1, 1),
+            background: Background::White,
+        };
+        assert!(page.source_bytes().is_none());
+        assert_eq!(page.media_type(), Some(MediaType::WebP));
+        assert!(page.decoded().is_some());
+    }
+
+    #[test]
+    fn an_empty_chapter_path_is_the_root_variant() {
+        assert_eq!(ChapterName::new(""), ChapterName::Root);
+        assert_eq!(
+            ChapterName::new("Chapter 1"),
+            ChapterName::Dir("Chapter 1".into())
+        );
+        assert!(ChapterName::new("").is_root());
+        assert!(!ChapterName::new("Chapter 1").is_root());
+        assert_eq!(ChapterName::root().as_str(), "");
     }
 }

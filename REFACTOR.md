@@ -647,11 +647,13 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 6 — Page state machine and name identity
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
+
 - **Findings:** C1, C2, C3, D1, D14, D15, F1, F2, C12.
 - **Scope:** `ebook/model.rs`, `ebook/input/{archive,epub,pdf,fusion}.rs`,
   `ebook/processing/{mod,page}.rs`, `ebook/mod.rs`.
 - **Deliverable:** `PageData { Encoded(Source), EncodedDecoded(Source, DynamicImage),
-  Pixels(MediaType, DynamicImage), Consumed }`; `SourceName`/`RelPath`/`ChapterName`;
+  Pixels(MediaType, DynamicImage), Consumed }`; `SourceName`/`RelPath`/`PageName`/`ChapterName`;
   `LoadedPage` folds into the carrier; `ProcessedBook.cover: Option<Cover>`; delete
   `ComicTree.cover`/`CoverSource`; remove `Page: Clone`; collapse `Fused`.
 - **Gate:** **the large-book memory regression tests are mandatory**
@@ -659,6 +661,76 @@ landed; explicit dependencies are called out. The finished shape is described in
   bytes and that `--no-processing` never decodes.
 - **Why late:** largest blast radius; benefits from the naming and geometry types being
   settled first.
+
+**Completed notes.**
+
+- **Delivered as planned:** the `PageData` state machine (C1), the four name identities (D1/D14),
+  the `LoadedPage` fold (D15), `ProcessedBook.cover: Option<Cover>` (C3), the `ComicTree.cover`/
+  `CoverSource` deletion (C2), the `Page`/`Chapter`/`ComicTree`/`PreparedBook` `Clone` removal
+  (F1), and the `Fused.source` collapse (C12). Every state transition is a move; the documented
+  one-off copy paths (F2) are unchanged.
+- **`Source` instead of bare bytes.** `Source { raw, media_type }` pairs the lazy-decode bytes
+  with the media type. `source_media_type` could only ever be `None` for an unreachable
+  extension (every `load_page` caller is gated by `is_ebook_image`), so it is now a non-optional
+  `MediaType`, resolved at `load_page` with the same `MediaType::Jpeg` fallback the consumers
+  already applied — byte-identical output. The ingest/`PageData` pairing also folds `LoadedPage`
+  into a `(SourceName, PageData, Size)` staging row (D15): `group_into_chapters` now moves the
+  carrier straight into `Page` instead of re-listing its fields.
+- **C1 accessors and transitions are exhaustive `match`es, not guards.** `decoded`/`media_type`/
+  `source_bytes` match the enum, and `ensure_decoded`/`take_image`/`take_source` list every variant
+  explicitly, so a new `PageData` state is a compile error rather than a silently-swallowed arm.
+  `ensure_decoded` moves `Encoded → EncodedDecoded` with `mem::replace` (and restores the `Encoded`
+  bytes if the decode fails, so a bad page never drops the book); `take_image` moves
+  `EncodedDecoded → Encoded` (exactly the old `image.take()`); `take_source` moves `Encoded` to
+  `Consumed` and `EncodedDecoded` to `Pixels`. The `.context("page holds neither …")` call sites are
+  gone, but `PageData::Consumed` remains a reachable error state: `ensure_decoded`/`to_decoded`
+  return an explicit `anyhow!` error and the consumers carry their own `.context(…)` guards, so this
+  is a runtime error, not an unrepresentable state. `prepare_page` reads the decoded image through
+  `ensure_decoded()?` (a state transition) rather than reaching into an `Option`, which is also what
+  lets the fill detection and the in-place crop share the borrow.
+- **`PageName` closes the D1 gap on the output side.** `EncodedPage.name` was the fourth
+  confusable `String`; it is now `PageName`, so `naming`/`chunk`/`output` cannot confuse a page's
+  source path with its output file name. C12 derives `Fused.source` in `run_fusion` as
+  `output_dir.join(&title)` (the title was always the file name), so the redundant path field is
+  dropped and the title stays the single source of truth.
+- **C2/C3 keep the cover one value.** `ComicTree.cover`/`CoverSource` were write-only (only
+  `FirstPage`/`None` were ever constructed, and cover selection already flowed through
+  `PreparedBook.cover_override`/`processing::cover`), so they are deleted. `ProcessedBook` now
+  carries `Option<cover::Cover>` (page plus its `smart_cropped` flag) instead of the split
+  `cover`/`cover_smart_crop` pair; `chunk::assemble` labels the borrowed page for a split book and
+  *moves* the cover through for a single tome, so the per-tome cover clone the old code needed is
+  gone.
+- **F1/F2.** `Page`/`Chapter`/`ComicTree`/`PreparedBook` — and, once the cover was unified,
+  `ProcessedBook`/`ProcessedChapter` — no longer derive `Clone` (nothing cloned
+  them; `rayon`'s `par_iter_mut` needs `Send`, not `Clone`); `PageData`/`Source` derive `Debug`
+  only, so a future `.clone()` of the payload is a compile error rather than a silent doubling of
+  peak memory. `EncodedPage: Clone` is kept (the sole intentional cover-sized copy, F3).
+  `Page::to_decoded`'s `Clone` is documented as firing only for an already-decoded page — never
+  the production cover path, which runs before processing (F2).
+- **Scope grew** past the named files to the cover/output consumers (`ebook/{chunk,output/{cbz,
+  pdf,epub/mod},naming,processing/{cover,webtoon},output/lightnovel}.rs`) and the integration
+  tests that read the carrier fields.
+- **New tests:** `model::tests` pins the state machine — `decoding_keeps_the_encoded_bytes_and_
+  only_releases_the_pixels` (the §4.1 pairing), `taking_the_source_bytes_consumes_the_page`,
+  `a_failed_decode_restores_the_encoded_bytes`, `a_pixel_only_page_has_no_source_bytes_but_
+  keeps_its_media_type`, and `an_empty_chapter_path_is_the_root_variant`.
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **370 passed, 13 skipped** (Phase 5's 365, +5 new model tests);
+  `--run-ignored all` → **383 passed, 0 skipped**, including the mandatory
+  `ingest_and_repack_stay_far_below_the_decoded_book_size` and
+  `a_large_book_converts_under_a_memory_ceiling`. The byte-exact goldens are unchanged.
+- **Changelog:** `## [Unreleased] → Changed` entry added; `docs/architecture.md`'s data-model
+  block updated for `PageData`/the name newtypes/`ProcessedBook::cover`.
+- **Verification follow-up (post-review).** A read-only phase-6 audit corrected several
+  overstatements and raised the type-safety bar: `ChapterName` is now a `Root`/`Dir(String)` enum
+  (no empty-string sentinel; `is_root()` is actually used), the state-machine transitions list every
+  variant, the silent `media_type().unwrap_or(MediaType::Jpeg)` fallbacks were replaced with
+  explicit `?`/`match` errors, `split_check` matches `Splitter` exhaustively (also dropping a
+  redundant `A || (!A && B)` clause), and the vestigial `Page::flags`/`PageFlags::order_class` were
+  removed. `docs/architecture.md`'s incorrect `Deref<Target = str>` claim was fixed too.
+- **Deferred on purpose:** `EncodedPage::order_class` is still parsed out of the file name by the
+  OPF spread algorithm (`output/epub/opf.rs`); switching that to the enum is §Phase 7 (B7,
+  `PageSide`).
 
 ### Phase 7 — Output type states and stringly values
 
@@ -701,7 +773,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 | 3 Config ✅ | 2 | `options`/`profiles` + all readers | medium |
 | 4 Geometry ✅ | — | processing + output boundaries | medium (broad, mechanical) |
 | 5 Processing ✅ | 4 | processing hot paths | medium (perf) |
-| 6 Page state | 4 | `model` + input/processing | **high (memory)** |
+| 6 Page state ✅ | 4 | `model` + input/processing | **high (memory)** |
 | 7 Output | 2, 3, 6 | `output/**` + templates | high (output bytes) |
 | 8 Sweep | 1–7 | cross-cutting | low |
 | 9 Close-out | 1–8 | docs | low |
@@ -1064,7 +1136,7 @@ before merging.
 | 3 Config | `ebook_tests`, `ebook_epub_tests`, `ebook_kindle_tests` | — | resolution table: each preset/format → expected `OutputEncoding` |
 | 4 Geometry | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_chunk_tests` | (tooling: `alloc_count`/`bench.sh` baseline, §7.7) | coordinate round-trips through the new named types |
 | 5 Processing ✅ | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_epub_tests` | `scribe_profile_splits_a_tall_page_into_above_and_below` | `ScribeHalf`/`Axis` behaviour equivalence |
-| 6 Page state | `ebook_input_tests`, `ebook_input_epub_pdf_tests`, `ebook_processing_tests`, `ebook_robustness_tests` | `ingest_and_repack_stay_far_below_the_decoded_book_size`, `a_large_book_converts_under_a_memory_ceiling`, `huge_book_stress` | `--no-processing` still never decodes; decoded page still retains its encoded bytes |
+| 6 Page state ✅ | `ebook_input_tests`, `ebook_input_epub_pdf_tests`, `ebook_processing_tests`, `ebook_robustness_tests` | `ingest_and_repack_stay_far_below_the_decoded_book_size`, `a_large_book_converts_under_a_memory_ceiling`, `huge_book_stress` | `--no-processing` still never decodes; decoded page still retains its encoded bytes |
 | 7 Output | `ebook_epub_tests`, `ebook_golden_tests`, `ebook_output_tests`, `ebook_kindle_tests` | `light_novel_...`, `smart_cover_crop_...`, `two_panel_and_vertical_4_panel_...` | none needed — the byte-exact goldens are the gate |
 | 8 Sweep | full suite + clippy | as touched | metadata field identity; exhaustive `Profile::entry`; `file_name` helper |
 | 9 Close-out | full suite | — | none |
@@ -1223,6 +1295,6 @@ memory footguns 4.
 
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
 archive tag union (1 ✅) → typed CLI values (2 ✅) → config sum types (3 ✅) → geometry newtypes
-(4 ✅) → processing enums (5 ✅) → page state machine (6) → output types (7) → guard/dedup
+(4 ✅) → processing enums (5 ✅) → page state machine (6 ✅) → output types (7) → guard/dedup
 sweep (8) → docs close-out (9). The optional
 [crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).

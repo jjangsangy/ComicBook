@@ -28,8 +28,8 @@ pub mod progress;
 pub use cli::EbookArgs;
 pub use metadata::BookMetadata;
 pub use model::{
-    Background, Chapter, ComicTree, CoverSource, OrderClass, Orientation, Page, PageFlags,
-    ScribeHalf,
+    Background, Chapter, ChapterName, ComicTree, OrderClass, Orientation, Page, PageData,
+    PageFlags, PageName, RelPath, ScribeHalf, Source, SourceName,
 };
 pub use naming::Sanitized;
 pub use options::{BorderColor, DocType, Format, Layout, Options};
@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 /// `ComicInfo.xml` and the CLI overrides into a [`BookMetadata`], and
 /// [`naming::sanitize_tree`] renames every chapter directory and page to the
 /// deterministic output layout (see docs/architecture.md).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PreparedBook {
     pub tree: ComicTree,
     pub metadata: BookMetadata,
@@ -118,16 +118,19 @@ fn run_fusion(options: &Options) -> Result<()> {
         fusion_options.output.destination = Some(fused.output_dir.clone());
     }
 
+    // The synthetic source path KCC converts (`<first name> [fused]`); the title is
+    // the single source of truth (see [`TitleOrigin::Fusion`]).
+    let source = fused.output_dir.join(&fused.title);
     let reporter = progress::Reporter::standalone();
     let prepared = assemble(
         fused.tree,
         fused.cover,
-        &fused.source,
+        &source,
         &fusion_options,
         TitleOrigin::Fusion(fused.title.as_str()),
         &reporter,
     );
-    let written = convert_prepared(prepared, &fused.source, &fusion_options, &reporter)?;
+    let written = convert_prepared(prepared, &source, &fusion_options, &reporter)?;
     for path in &written {
         reporter.println(format!("Created {}", path.display()));
     }
@@ -249,10 +252,7 @@ fn convert_prepared(
         processing::webtoon::transform(&mut prepared.tree, options)?;
     }
     let mut processed = processing::process_tree_with(&mut prepared.tree, options, reporter)?;
-    if let Some(cover) = cover {
-        processed.cover = Some(cover.page);
-        processed.cover_smart_crop = cover.smart_cropped;
-    }
+    processed.cover = cover;
     // The output builders read only the *encoded* book, so the decoded-source tree
     // (source bytes and any residual pixels) can be released before packaging.
     prepared.tree = ComicTree::new();

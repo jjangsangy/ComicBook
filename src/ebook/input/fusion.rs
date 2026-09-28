@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
-use crate::ebook::model::{Chapter, ComicTree};
+use crate::ebook::model::{Chapter, ChapterName, ComicTree};
 use crate::ebook::naming;
 use crate::ebook::options::Options;
 
@@ -25,10 +25,8 @@ pub struct Fused {
     pub tree: ComicTree,
     /// A shared `Covers/` cover, if the first input's directory has one.
     pub cover: Option<PathBuf>,
-    /// The synthetic source path KCC converts (`<first name> [fused]`), used for
-    /// the default title and the output file name.
-    pub source: PathBuf,
-    /// The resolved default title (`<first name> [fused]`).
+    /// The resolved default title (`<first name> [fused]`), which is also the
+    /// synthetic source's file name (see `crate::ebook::run_fusion`).
     pub title: String,
     /// The directory outputs land in by default: the first input's parent.
     pub output_dir: PathBuf,
@@ -65,7 +63,7 @@ pub fn build(sources: &[PathBuf], options: &Options) -> Result<Fused> {
             .flat_map(|chapter| chapter.pages)
             .collect();
         chapters.push(Chapter {
-            name: format!("{prefix}{}", names[index]),
+            name: ChapterName::new(format!("{prefix}{}", names[index])),
             pages,
         });
     }
@@ -75,17 +73,14 @@ pub fn build(sources: &[PathBuf], options: &Options) -> Result<Fused> {
         .map(Path::to_path_buf)
         .unwrap_or_default();
     let title = format!("{} [fused]", names[0]);
-    let source = parent.join(&title);
     let cover = naming::first_cover(&parent);
 
     Ok(Fused {
         tree: ComicTree {
             chapters,
-            cover: None,
             comicinfo: None,
         },
         cover,
-        source,
         title,
         output_dir: parent,
     })

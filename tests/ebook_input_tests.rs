@@ -6,7 +6,7 @@ use clap::Parser;
 use comic_book::archive::{compress_archive, ArchiveKind};
 use comic_book::cli::Cli;
 use comic_book::ebook::input::{detect_source_kind, load_tree, SourceKind};
-use comic_book::ebook::model::{ComicTree, CoverSource};
+use comic_book::ebook::model::ComicTree;
 use comic_book::ebook::options::Options;
 use image::{DynamicImage, GenericImageView, RgbImage};
 use std::fs;
@@ -35,10 +35,10 @@ fn tree_shape(tree: &ComicTree) -> Vec<ChapterShape> {
                 .iter()
                 .map(|page| {
                     let (width, height) = page.dimensions().to_dimensions();
-                    (page.rel_path.clone(), width, height)
+                    (page.rel_path.to_string(), width, height)
                 })
                 .collect();
-            (chapter.name.clone(), pages)
+            (chapter.name.to_string(), pages)
         })
         .collect()
 }
@@ -87,7 +87,6 @@ fn assert_variants_match(
         assert_eq!(&tree_shape(&tree), expected, "shape mismatch for {kind:?}");
         let pages: usize = tree.chapters.iter().map(|c| c.pages.len()).sum();
         assert_eq!(pages, tree.page_count(), "page_count mismatch for {kind:?}");
-        assert!(tree.cover.is_some(), "cover missing for {kind:?}");
     }
     Ok(())
 }
@@ -254,7 +253,6 @@ fn source_names_are_book_relative() -> Result<()> {
     let page = &tree.chapters[0].pages[0];
     assert_eq!(page.source_name, "Chapter 1/page.png");
     assert_eq!(page.rel_path, "page.png");
-    assert_eq!(tree.cover, Some(CoverSource::FirstPage));
     Ok(())
 }
 
@@ -399,7 +397,10 @@ fn ingest_defers_page_decoding() -> Result<()> {
             "ingest decoded {} before processing",
             page.source_name
         );
-        assert!(page.raw.is_some(), "the source bytes are retained");
+        assert!(
+            page.source_bytes().is_some(),
+            "the source bytes are retained"
+        );
     }
 
     // The dimensions come from the codec header, so they are available without a

@@ -20,7 +20,7 @@ use pdfboss_core::Document;
 use pdfboss_render::{extract_page_images, render_page, Pixmap};
 use std::path::Path;
 
-use crate::ebook::model::{ComicTree, MediaType};
+use crate::ebook::model::{ComicTree, MediaType, PageData, Source, SourceName};
 use crate::ebook::options::{Cropping, Options};
 use crate::units::Size;
 
@@ -142,9 +142,8 @@ fn pixmap_page(name: String, pixmap: Pixmap) -> Result<LoadedPage> {
         .encode_png()
         .map_err(|error| anyhow::anyhow!("Failed to encode PDF page: {error}"))?;
     Ok(LoadedPage {
-        name,
-        media_type: Some(MediaType::Png),
-        raw,
+        name: SourceName::new(name),
+        data: PageData::Encoded(Source::new(raw, MediaType::Png)),
         dimensions,
     })
 }

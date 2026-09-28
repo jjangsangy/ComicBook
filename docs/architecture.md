@@ -95,18 +95,29 @@ no runtime template file.
 ## Data model
 
 ```rust
-struct ComicTree { chapters: Vec<Chapter>, cover: Option<CoverSource>, comicinfo: Option<Vec<u8>> }
-struct Chapter { name: String, pages: Vec<Page> }   // name = image-root-relative dir path ("" = root)
+struct ComicTree { chapters: Vec<Chapter>, comicinfo: Option<Vec<u8>> }
+struct Chapter { name: ChapterName, pages: Vec<Page> }  // ChapterName is the image-root-relative dir path (Root = image root)
 struct Page {
-    source_name: String,         // book-relative source path (redundant root dir stripped)
-    rel_path: String,            // chapter-relative file name
-    image: Option<DynamicImage>, // decoded pixels, present only while processing
+    source_name: SourceName,     // book-relative source path (redundant root dir stripped)
+    rel_path: RelPath,           // chapter-relative file name (basename of `source_name`)
+    data: PageData,              // the image payload, as a state machine (below)
     dimensions: Size,            // header dimensions, available without decoding
     background: Background,      // detected page background (fill/crop decisions)
-    flags: PageFlags,            // Orientation, ResolvedFill, ScribeHalf, OrderClass
-    raw: Option<Vec<u8>>,        // original encoded bytes (lazy decode source, --no-processing)
-    source_media_type: Option<MediaType>,
 }
+enum PageData {                  // every state is reachable; transitions are moves
+    Encoded(Source),                        // bytes only, not yet decoded
+    EncodedDecoded(Source, DynamicImage),   // cached decode over the retained bytes
+    Pixels(MediaType, DynamicImage),        // webtoon strip: pixel-only
+    Consumed,                               // bytes/pixels moved out
+}
+struct Source { raw: Vec<u8>, media_type: MediaType }
+
+struct SourceName(String);   // #[repr(transparent)] book-relative source path
+struct RelPath(String);      // #[repr(transparent)] chapter-relative file name
+struct PageName(String);     // #[repr(transparent)] output file name (EncodedPage::name)
+
+enum ChapterName { Root, Dir(String) }  // image-root-relative dir path; Root is the image root
+
 enum Background { White, Black }
 struct ResolvedFill(Background)  // resolved --borders fill, distinct from Page::background
 enum OrderClass { Normal, RotateFirst, RotateLast, SplitLeft, SplitRight }
@@ -115,13 +126,16 @@ enum ScribeHalf { NotSplit, Above, Below }
 enum MediaType { Jpeg, Png, Gif, WebP }
 
 struct EncodedPage {            // one processed/encoded page (a spread can yield several)
-    name: String,               // stem + `-kcc-<order>` + extension
+    name: PageName,             // stem + `-kcc-<order>` + extension
     order_class: OrderClass,
     media_type: MediaType,
     bytes: Vec<u8>,
     size: Size,
     flags: PageFlags,
 }
+
+struct ProcessedBook { chapters: Vec<ProcessedChapter>, cover: Option<Cover>, page_count: usize }
+struct Cover { page: EncodedPage, smart_cropped: bool }
 ```
 
 - `Size` and the other geometry/unit newtypes (`BBox`, `IndexBox`, `Range`, `Percent`, `Fraction`,
@@ -130,15 +144,24 @@ struct EncodedPage {            // one processed/encoded page (a spread can yiel
   passed where a height is expected, and a byte cap can no longer be compared against a pixel
   count.
 
-- `Chapter::name` is the directory path relative to the image root (`""`, `"Chapter 1"`,
-  `"Chapter 1/Sub"`, …); each path component is slugified on output.
+- `SourceName`, `RelPath` and `PageName` are `#[repr(transparent)]` newtypes over `String`, and
+  `ChapterName` is a `Root`/`Dir(String)` enum (not an empty-string sentinel), so the four
+  confusable name identities can no longer be swapped at a call site and the root chapter cannot be
+  spelled as an empty directory. The newtypes are zero cost and deliberately do **not** implement
+  `Deref<Target = str>` — a name must be unwrapped through `as_str()` explicitly.
+- `Chapter::name` is the directory path relative to the image root (`Root`, `Dir("Chapter 1")`,
+  `Dir("Chapter 1/Sub")`, …); each path component is slugified on output.
 - `Page::source_name` is book-relative after an archive's single redundant root directory is
   stripped, so equivalent CBZ/folder inputs load identically.
-- `Page::image` is `None` until the page is processed; `Page::raw` holds the encoded source
-  bytes and `Page::dimensions` the header dimensions. A page may instead be *pixel-only*
-  (`image` set, `raw` `None`) when it was synthesized by the webtoon merge.
+- `PageData` makes the page's payload a move-only state machine: ingest produces `Encoded`, the
+  first decode caches `EncodedDecoded` (keeping the bytes so `--no-processing` can still emit
+  them), the webtoon merge produces `Pixels`, and `take_image`/`take_source` release the payload
+  to `Consumed`. The old `(None, None)` page is no longer representable, every transition matches
+  the enum exhaustively, and no transition clones (a `Consumed` page is an explicit
+  error state rather than a silent `None`).
 - `processing` turns each `Page` into one or more `EncodedPage`s; the tree then feeds chunking
-  and the output builders.
+  and the output builders. The processed cover travels as one `Cover` (page plus its
+  `smart_cropped` flag) rather than two parallel fields.
 
 ## Design principles
 

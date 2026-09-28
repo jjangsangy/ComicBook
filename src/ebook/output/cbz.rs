@@ -24,17 +24,17 @@ const COMICINFO_NAME: &str = "ComicInfo.xml";
 ///
 /// The cover is added only when it is not the first page already — KCC gates the
 /// `##cover.jpg` write on `cover.smartcover or options.customcover` (see
-/// docs/output.md), which
-/// the pipeline tracks as [`ProcessedBook::cover_smart_crop`] and a sibling
-/// `Covers/` override. `ComicInfo.xml` is added only when `--keep-comicinfo`
-/// retained it (KCC's `options.comicinfo_xml`, populated for CBZ only).
+/// docs/output.md), which the pipeline tracks as the cover's smart-crop flag and
+/// a sibling `Covers/` override. `ComicInfo.xml` is added only when
+/// `--keep-comicinfo` retained it (KCC's `options.comicinfo_xml`, populated for CBZ
+/// only).
 pub fn build_cbz(dest: &Path, book: &ProcessedBook, prepared: &PreparedBook) -> Result<()> {
     let mut writer =
         ArchiveWriter::new(ArchiveKind::Cbz, dest).context("Failed to create the CBZ archive")?;
 
     if let Some(cover) = &book.cover {
-        if book.cover_smart_crop || prepared.cover_override.is_some() {
-            writer.add_entry(COVER_NAME, EntryContent::File(&cover.bytes))?;
+        if cover.smart_cropped || prepared.cover_override.is_some() {
+            writer.add_entry(COVER_NAME, EntryContent::File(&cover.page.bytes))?;
         }
     }
 
@@ -45,7 +45,7 @@ pub fn build_cbz(dest: &Path, book: &ProcessedBook, prepared: &PreparedBook) -> 
     for chapter in &book.chapters {
         for page in &chapter.pages {
             writer
-                .add_entry(&page.name, EntryContent::File(&page.bytes))
+                .add_entry(page.name.as_str(), EntryContent::File(&page.bytes))
                 .with_context(|| format!("Failed to add {} to the CBZ", page.name))?;
         }
     }

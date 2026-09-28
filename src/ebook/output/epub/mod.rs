@@ -92,7 +92,7 @@ pub(crate) fn build_entries<'a>(
         if chapter.pages.is_empty() {
             continue;
         }
-        let dir = chapter.name.trim_matches('/');
+        let dir = chapter.name.as_str().trim_matches('/');
         chapter_starts.push(filelist.len());
         let mut index = 0;
         while index < chapter.pages.len() {
@@ -110,7 +110,12 @@ pub(crate) fn build_entries<'a>(
                     .filter(|next| next.flags.half == ScribeHalf::Below),
                 ScribeHalf::NotSplit => None,
             };
-            let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
+            let file = page
+                .name
+                .as_str()
+                .rsplit('/')
+                .next()
+                .unwrap_or(page.name.as_str());
             filelist.push(PageRef {
                 image_dir: dir,
                 file,
@@ -144,7 +149,7 @@ pub(crate) fn build_entries<'a>(
         )
     };
 
-    let cover = book.cover.as_ref().map(|cover| cover.bytes.as_slice());
+    let cover = book.cover.as_ref().map(|cover| cover.page.bytes.as_slice());
 
     let mut zip_entries: Vec<(String, Cow<'a, [u8]>)> = Vec::new();
     zip_entries.push((
@@ -161,9 +166,14 @@ pub(crate) fn build_entries<'a>(
     // Every processed page — including a Scribe `-below` companion — is written to
     // `OEBPS/Images`, whether or not it is a spine item.
     for chapter in &book.chapters {
-        let dir = chapter.name.trim_matches('/');
+        let dir = chapter.name.as_str().trim_matches('/');
         for page in &chapter.pages {
-            let file = page.name.rsplit('/').next().unwrap_or(page.name.as_str());
+            let file = page
+                .name
+                .as_str()
+                .rsplit('/')
+                .next()
+                .unwrap_or(page.name.as_str());
             zip_entries.push((
                 format!("OEBPS/{}/{}", images_dir(dir), file),
                 Cow::Borrowed(page.bytes.as_slice()),

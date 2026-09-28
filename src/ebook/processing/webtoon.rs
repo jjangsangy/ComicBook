@@ -24,7 +24,7 @@ use image::{DynamicImage, GenericImageView, GrayImage, Luma, Rgb, RgbImage};
 use imageproc::filter::filter;
 use imageproc::kernel::Kernel;
 
-use crate::ebook::model::{Background, ComicTree, MediaType, Page, PageFlags};
+use crate::ebook::model::{Background, ComicTree, MediaType, Page, PageData, RelPath, SourceName};
 use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::kernels;
@@ -77,7 +77,7 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
         // The merged strip is written back under the first page's sanitized stem
         // (`os.path.splitext(first)[0]`), then saved as PNG; the virtual pages keep
         // that stem and get a `-NNNN` suffix.
-        let stem = split_stem(&chapter.pages[0].source_name);
+        let stem = split_stem(chapter.pages[0].source_name.as_str());
         chapter.pages = split_chapter(merged, &stem, options)?;
     }
     Ok(())
@@ -177,7 +177,10 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
     let (width, height) = merged.dimensions();
     if height <= options.device.data.height {
         // Shorter than the device: the strip is used as a single page (`<stem>.png`).
-        return Ok(vec![page_from(merged, format!("{stem}.png"))]);
+        return Ok(vec![page_from(
+            merged,
+            SourceName::new(format!("{stem}.png")),
+        )]);
     }
     if width < MIN_STRIP_WIDTH {
         bail!(
@@ -209,7 +212,10 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
             target_y += i64::from(panel.height());
         }
         let name = format!("{stem}-{number:04}.png");
-        pages.push(page_from(DynamicImage::ImageRgb8(canvas), name));
+        pages.push(page_from(
+            DynamicImage::ImageRgb8(canvas),
+            SourceName::new(name),
+        ));
         number += 1;
     }
     Ok(pages)
@@ -220,20 +226,20 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
 /// The strip is RGB and reported as PNG so `--no-processing` emits the merged/split
 /// PNGs the reference would have packaged (`imgDirectoryProcessing` is skipped there);
 /// the normal path re-encodes the pixels through the per-page pipeline.
-fn page_from(image: DynamicImage, source_name: String) -> Page {
-    let rel_path = source_name
-        .rsplit_once('/')
-        .map_or_else(|| source_name.clone(), |(_, file)| file.to_string());
+fn page_from(image: DynamicImage, source_name: SourceName) -> Page {
+    let rel_path = RelPath::new(
+        source_name
+            .as_str()
+            .rsplit_once('/')
+            .map_or_else(|| source_name.as_str(), |(_, file)| file),
+    );
     let dimensions = Size::from_dimensions(image.dimensions());
     Page {
         source_name,
         rel_path,
-        image: Some(image),
+        data: PageData::Pixels(MediaType::Png, image),
         dimensions,
         background: Background::White,
-        flags: PageFlags::default(),
-        raw: None,
-        source_media_type: Some(MediaType::Png),
     }
 }
 
@@ -466,14 +472,11 @@ mod tests {
     fn strip_page(name: &str, image: DynamicImage) -> Page {
         let dimensions = Size::from_dimensions(image.dimensions());
         Page {
-            source_name: name.to_string(),
-            rel_path: name.to_string(),
-            image: Some(image),
+            source_name: SourceName::new(name),
+            rel_path: RelPath::new(name),
+            data: PageData::Pixels(MediaType::Png, image),
             dimensions,
             background: Background::White,
-            flags: PageFlags::default(),
-            raw: None,
-            source_media_type: Some(MediaType::Png),
         }
     }
 
@@ -586,16 +589,16 @@ mod tests {
 
     #[test]
     fn transform_replaces_each_chapter_with_merged_pages() -> Result<()> {
-        use crate::ebook::model::Chapter;
+        use crate::ebook::model::{Chapter, ChapterName};
 
         let tree = ComicTree {
             chapters: vec![
                 Chapter {
-                    name: String::new(),
+                    name: ChapterName::root(),
                     pages: Vec::new(),
                 },
                 Chapter {
-                    name: "Chapter 1".to_string(),
+                    name: ChapterName::new("Chapter 1"),
                     pages: vec![
                         strip_page("Chapter 1/kcc-0001.png", checker_strip(800, SEGMENTS_A)),
                         strip_page(
@@ -605,14 +608,13 @@ mod tests {
                     ],
                 },
             ],
-            cover: None,
             comicinfo: None,
         };
 
         let mut tree = tree;
         transform(&mut tree, &options(&["-p", "KV"])?)?;
         assert!(tree.chapters[0].pages.is_empty());
-        assert_eq!(tree.chapters[1].name, "Chapter 1");
+        assert_eq!(tree.chapters[1].name.as_str(), "Chapter 1");
         // The merge joins both pages (2150 + 500 = 2650px tall), then the panels are
         // re-split; names keep the chapter directory and the first page's stem.
         assert_eq!(

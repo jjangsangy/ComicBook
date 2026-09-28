@@ -106,6 +106,29 @@ release when a version tag is pushed.
   `Background`, so it cannot be confused with the detected `Page::background`; and the `Detected`
   (colour mode) and `ScribeHalf`/`Orientation` (page flags) dispatches in the processing and output
   pipeline use exhaustive `match`es instead of `if … == variant` comparisons or a `bool` re-collapse.
+- Made the page payload a move-only state machine and gave the page/chapter names distinct
+  compiler-checked identities (the page-state step of the type-safety refactor tracked in
+  `REFACTOR.md`). Emitted bytes are unchanged:
+  - `Page` replaces its `image: Option<DynamicImage>`/`raw: Option<Vec<u8>>`/`source_media_type:
+    Option<MediaType>` trio with one `PageData` (`Encoded(Source)`/`EncodedDecoded(Source,
+    DynamicImage)`/`Pixels(MediaType, DynamicImage)`/`Consumed`). The `(None, None)` page that four
+    call sites had to guard is no longer representable, a decode keeps the encoded bytes
+    (`EncodedDecoded`) so `--no-processing` still emits them without decoding, and every state
+    transition matches the enum exhaustively so a new state is a compile error.
+  - `Page` no longer derives `Clone` (nor do `Chapter`/`ComicTree`/`PreparedBook`/`ProcessedBook`/
+    `ProcessedChapter`), so a stray clone cannot duplicate a decoded frame plus the encoded book.
+  - `SourceName` (book-relative source path), `RelPath` (chapter-relative file name) and `PageName`
+    (`EncodedPage::name`) are `#[repr(transparent)]` newtypes, and `ChapterName` is a `Root`/`Dir`
+    enum rather than an empty-string sentinel — so the names cannot be swapped and the root chapter
+    cannot be misspelled as an empty directory.
+  - The unread `ComicTree::cover`/`CoverSource` are removed (cover selection already flowed through
+    `PreparedBook::cover_override`/`processing::cover`); `ProcessedBook` carries the cover as one
+    `Option<Cover>` (page plus its smart-crop flag) instead of the split `cover`/`cover_smart_crop`
+    pair; `input::archive::LoadedPage` folds into the `PageData` carrier; and `input::fusion::Fused`
+    derives its synthetic source path from `output_dir.join(&title)` instead of storing it.
+  - Removed the vestigial `Page::flags`/`PageFlags::order_class` (never read; `EncodedPage::
+    order_class` is the single owner), and replaced the silent `media_type().unwrap_or(Jpeg)` and
+    the `--splitter` equality checks with explicit, exhaustive handling.
 
 ### Fixed
 

@@ -20,9 +20,9 @@
 
 use anyhow::Result;
 
-use crate::ebook::model::{EncodedPage, ScribeHalf};
+use crate::ebook::model::{ChapterName, EncodedPage, PageName, ScribeHalf};
 use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
-use crate::ebook::processing::cover;
+use crate::ebook::processing::cover::{self, Cover};
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
 use crate::units::Bytes;
 
@@ -74,17 +74,12 @@ pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<Processed
         split_chapters(chapters, target)
     };
 
-    assemble(
-        book.cover,
-        book.cover_smart_crop,
-        tome_chapters,
-        &options.processing,
-    )
+    assemble(book.cover, tome_chapters, &options.processing)
 }
 
 /// The number of path segments of an encoded page (`Images/<name>` → `split('/')`).
 fn depth(page: &EncodedPage) -> usize {
-    page.name.split('/').count()
+    page.name.as_str().split('/').count()
 }
 
 /// KCC's `level`: the shared page depth, or `(_, true)` when depths differ.
@@ -112,7 +107,7 @@ fn flatten(book: &mut ProcessedBook) {
     let mut pages = Vec::new();
     for chapter in &mut book.chapters {
         for mut page in chapter.pages.drain(..) {
-            page.name = basename(&page.name).to_string();
+            page.name = PageName::new(basename(page.name.as_str()).to_string());
             pages.push(page);
         }
     }
@@ -120,7 +115,7 @@ fn flatten(book: &mut ProcessedBook) {
         Vec::new()
     } else {
         vec![ProcessedChapter {
-            name: String::new(),
+            name: ChapterName::root(),
             pages,
         }]
     };
@@ -160,7 +155,7 @@ fn split_pages(chapters: Vec<ProcessedChapter>, target: Bytes) -> Vec<Vec<Proces
         .iter()
         .find(|chapter| !chapter.pages.is_empty())
         .map(|chapter| chapter.name.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(ChapterName::root);
     let pages = chapters.into_iter().flat_map(|chapter| chapter.pages);
     pack_units(page_units(pages), target)
         .into_iter()
@@ -247,7 +242,13 @@ fn per_top_level(chapters: Vec<ProcessedChapter>) -> Vec<Vec<ProcessedChapter>> 
         .into_iter()
         .filter(|chapter| !chapter.pages.is_empty())
     {
-        let top = chapter.name.split('/').next().unwrap_or("").to_string();
+        let top = chapter
+            .name
+            .as_str()
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
         if current.as_deref() != Some(top.as_str()) {
             tomes.push(Vec::new());
             current = Some(top);
@@ -264,31 +265,31 @@ fn per_top_level(chapters: Vec<ProcessedChapter>) -> Vec<Vec<ProcessedChapter>> 
 
 /// Turn the per-tome chapter lists into [`ProcessedBook`]s, labelling each cover.
 fn assemble(
-    cover: Option<EncodedPage>,
-    cover_smart_crop: bool,
+    cover: Option<Cover>,
     tome_chapters: Vec<Vec<ProcessedChapter>>,
     options: &ProcessingOptions,
 ) -> Result<Vec<ProcessedBook>> {
     let total = tome_chapters.len();
+    let mut cover = cover;
     let mut tomes = Vec::with_capacity(total);
     for (index, chapters) in tome_chapters.into_iter().enumerate() {
         let page_count = chapters.iter().map(|chapter| chapter.pages.len()).sum();
         // Every tome of a split book gets the label (KCC increments `tomeid`
-        // before saving); a single tome keeps its cover untouched.
-        let cover = match &cover {
-            Some(page) if total > 1 => Some(cover::labelled(
-                page,
-                index + 1,
-                total,
-                options.jpeg_quality,
-            )?),
-            Some(page) => Some(page.clone()),
-            None => None,
+        // before saving); a single tome keeps its cover and moves it through.
+        let cover = if total > 1 {
+            match &cover {
+                Some(existing) => Some(Cover {
+                    page: cover::labelled(&existing.page, index + 1, total, options.jpeg_quality)?,
+                    smart_cropped: existing.smart_cropped,
+                }),
+                None => None,
+            }
+        } else {
+            cover.take()
         };
         tomes.push(ProcessedBook {
             chapters,
             cover,
-            cover_smart_crop,
             page_count,
         });
     }
@@ -303,12 +304,14 @@ fn basename(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ebook::model::{MediaType, OrderClass, PageFlags, ScribeHalf};
+    use crate::ebook::model::{
+        ChapterName, MediaType, OrderClass, PageFlags, PageName, ScribeHalf,
+    };
     use crate::units::Size;
 
     fn page(name: &str, len: usize) -> EncodedPage {
         EncodedPage {
-            name: name.to_string(),
+            name: PageName::new(name),
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: vec![0; len],
@@ -319,7 +322,7 @@ mod tests {
 
     fn chapter(name: &str, pages: Vec<EncodedPage>) -> ProcessedChapter {
         ProcessedChapter {
-            name: name.to_string(),
+            name: ChapterName::new(name),
             pages,
         }
     }
@@ -373,12 +376,11 @@ mod tests {
                 chapter("Chapter 1/Sub", vec![page("Chapter 1/Sub/b.jpg", 1)]),
             ],
             cover: None,
-            cover_smart_crop: false,
             page_count: 2,
         };
         flatten(&mut book);
         assert_eq!(book.chapters.len(), 1);
-        assert_eq!(book.chapters[0].name, "");
+        assert!(book.chapters[0].name.is_root());
         let names: Vec<&str> = book.chapters[0]
             .pages
             .iter()
@@ -395,7 +397,6 @@ mod tests {
                 chapter("Chapter 1", vec![page("Chapter 1/b.jpg", 1)]),
             ],
             cover: None,
-            cover_smart_crop: false,
             page_count: 2,
         };
         assert!(image_level(&book).1);

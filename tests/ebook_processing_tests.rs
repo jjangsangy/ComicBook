@@ -73,8 +73,8 @@ fn fixture_book_snapshot() -> Result<()> {
         .flat_map(|chapter| chapter.pages.iter())
         .collect();
     assert_eq!(book.chapters.len(), 1);
-    assert_eq!(
-        book.chapters[0].name, "",
+    assert!(
+        book.chapters[0].name.is_root(),
         "all pages are in the root chapter"
     );
 
@@ -167,9 +167,9 @@ fn no_processing_copies_source_bytes_verbatim() -> Result<()> {
 
     let mut tree = load_tree(&archive, &options(&[])?)?;
     let pristine = tree.chapters[0].pages[0]
-        .raw
-        .clone()
-        .context("the source page keeps its bytes")?;
+        .source_bytes()
+        .context("the source page keeps its bytes")?
+        .to_vec();
 
     let options = options(&["-p", "KoE", "--no-processing"])?;
     let book = process_tree(&mut tree, &options)?;

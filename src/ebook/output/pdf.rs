@@ -38,8 +38,8 @@ pub fn build_pdf(
     // the sorted walk makes it the first PDF page (see docs/output.md).
     let mut pages: Vec<&EncodedPage> = Vec::new();
     if let Some(cover) = &book.cover {
-        if book.cover_smart_crop || prepared.cover_override.is_some() {
-            pages.push(cover);
+        if cover.smart_cropped || prepared.cover_override.is_some() {
+            pages.push(&cover.page);
         }
     }
     for chapter in &book.chapters {

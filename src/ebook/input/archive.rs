@@ -22,7 +22,9 @@ use std::path::Path;
 
 use crate::archive::{is_os_metadata, open_reader, ArchiveKind, EntryContent};
 
-use crate::ebook::model::{Chapter, ComicTree, CoverSource, MediaType, Page};
+use crate::ebook::model::{
+    Chapter, ChapterName, ComicTree, MediaType, Page, PageData, RelPath, Source, SourceName,
+};
 use crate::units::Size;
 
 /// Image extensions accepted as comic pages.
@@ -90,13 +92,14 @@ pub fn load(source: &Path, kind: ArchiveKind) -> Result<ComicTree> {
 /// A page decoded from a source entry, before chapter grouping.
 ///
 /// Shared by every input adapter (archive, EPUB, PDF) so they all feed the same
-/// chapter-grouping/natural-ordering logic.
+/// chapter-grouping/natural-ordering logic. It is [`Page`]'s book-relative name
+/// plus the `PageData`/dimensions carrier, moved into a `Page` unchanged.
 pub(crate) struct LoadedPage {
     /// Book-relative source path (before redundant-root stripping).
-    pub(crate) name: String,
-    pub(crate) media_type: Option<MediaType>,
-    /// Encoded source bytes, retained for the lazy decode and `--no-processing`.
-    pub(crate) raw: Vec<u8>,
+    pub(crate) name: SourceName,
+    /// Encoded source bytes and media type, retained for the lazy decode and
+    /// `--no-processing`.
+    pub(crate) data: PageData,
     /// Dimensions read from the codec header, without a full decode.
     pub(crate) dimensions: Size,
 }
@@ -110,10 +113,15 @@ pub(crate) struct LoadedPage {
 pub(crate) fn load_page(name: &str, data: &[u8]) -> Result<LoadedPage> {
     let dimensions = image_dimensions(data)
         .with_context(|| format!("Image file {name} could not be decoded"))?;
+    // Every caller gates on `is_ebook_image`, so the extension is known; the JPEG
+    // default keeps the (unreachable) unknown-extension case byte-identical to the
+    // old lazy `unwrap_or(MediaType::Jpeg)`.
+    let media_type = image_extension(name)
+        .and_then(|ext| MediaType::from_extension(&ext))
+        .unwrap_or(MediaType::Jpeg);
     Ok(LoadedPage {
-        name: name.to_string(),
-        media_type: image_extension(name).and_then(|ext| MediaType::from_extension(&ext)),
-        raw: data.to_vec(),
+        name: SourceName::new(name),
+        data: PageData::Encoded(Source::new(data.to_vec(), media_type)),
         dimensions,
     })
 }
@@ -155,7 +163,6 @@ pub(crate) fn build_tree(
     }
     ComicTree {
         chapters: group_into_chapters(pages),
-        cover: Some(CoverSource::FirstPage),
         comicinfo,
     }
 }
@@ -192,7 +199,7 @@ fn is_comicinfo(name: &str) -> bool {
 fn strip_common_root(pages: &mut [LoadedPage]) {
     let mut root: Option<&str> = None;
     for page in pages.iter() {
-        let mut components = page.name.split('/');
+        let mut components = page.name.as_str().split('/');
         let first = components.next().unwrap_or("");
         if first.is_empty() || components.next().is_none() {
             // A file sitting directly at the root, so there is no wrapper folder.
@@ -209,7 +216,8 @@ fn strip_common_root(pages: &mut [LoadedPage]) {
         // Safe to slice: `root` ends on a char boundary and is followed by '/'.
         let prefix_len = root.len() + 1;
         for page in pages.iter_mut() {
-            page.name = page.name[prefix_len..].to_string();
+            let stripped = page.name.as_str()[prefix_len..].to_string();
+            page.name = SourceName::new(stripped);
         }
     }
 }
@@ -217,29 +225,27 @@ fn strip_common_root(pages: &mut [LoadedPage]) {
 /// Group pages (already book-relative) into naturally ordered chapters.
 fn group_into_chapters(mut pages: Vec<LoadedPage>) -> Vec<Chapter> {
     pages.sort_by(|a, b| {
-        let (dir_a, file_a) = split_dir_file(&a.name);
-        let (dir_b, file_b) = split_dir_file(&b.name);
+        let (dir_a, file_a) = split_dir_file(a.name.as_str());
+        let (dir_b, file_b) = split_dir_file(b.name.as_str());
         compare_dir_paths(dir_a, dir_b).then_with(|| natord::compare_ignore_case(file_a, file_b))
     });
 
     let mut chapters: Vec<Chapter> = Vec::new();
     for loaded in pages {
-        let (dir, file) = split_dir_file(&loaded.name);
-        let (dir_name, file_name) = (dir.to_string(), file.to_string());
+        let (dir, file) = split_dir_file(loaded.name.as_str());
+        let chapter_name = ChapterName::new(dir);
+        let rel_path = RelPath::new(file);
         let page = Page {
             source_name: loaded.name,
-            rel_path: file_name,
-            image: None,
+            rel_path,
+            data: loaded.data,
             dimensions: loaded.dimensions,
             background: Default::default(),
-            flags: Default::default(),
-            raw: Some(loaded.raw),
-            source_media_type: loaded.media_type,
         };
         match chapters.last_mut() {
-            Some(chapter) if chapter.name == dir_name => chapter.pages.push(page),
+            Some(chapter) if chapter.name == chapter_name => chapter.pages.push(page),
             _ => chapters.push(Chapter {
-                name: dir_name,
+                name: chapter_name,
                 pages: vec![page],
             }),
         }

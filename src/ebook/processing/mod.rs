@@ -17,11 +17,11 @@ pub mod webtoon;
 
 pub use page::process_page;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use image::DynamicImage;
 use rayon::prelude::*;
 
-use crate::ebook::model::{ComicTree, EncodedPage, Page};
+use crate::ebook::model::{ChapterName, ComicTree, EncodedPage, Page};
 use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
 use crate::units::{Fraction, Size};
@@ -30,22 +30,20 @@ use crate::units::{Fraction, Size};
 const INTER_PANEL_KEEP: Fraction = Fraction::new(0.04);
 
 /// The encoded pages of one chapter, in reading order.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessedChapter {
     /// The chapter's source directory path (before slugification).
-    pub name: String,
+    pub name: ChapterName,
     pub pages: Vec<EncodedPage>,
 }
 
 /// Everything the processing stage produces for one book.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessedBook {
     pub chapters: Vec<ProcessedChapter>,
-    /// The processed cover, set by [`crate::ebook::convert_source`].
-    pub cover: Option<EncodedPage>,
-    /// Whether `--smart-cover-crop` actually cropped the cover (KCC's
-    /// `Cover.smartcover`), which CBZ/PDF output tests before writing a cover.
-    pub cover_smart_crop: bool,
+    /// The processed cover (its [`cover::Cover::smart_cropped`] flag gates the
+    /// CBZ/PDF cover write), set by [`crate::ebook::convert_source`].
+    pub cover: Option<cover::Cover>,
     /// Total encoded pages, which may exceed the source page count when spreads
     /// were bisected.
     pub page_count: usize,
@@ -110,7 +108,6 @@ pub fn process_tree_with(
     Ok(ProcessedBook {
         chapters,
         cover: None,
-        cover_smart_crop: false,
         page_count,
     })
 }
@@ -138,15 +135,12 @@ fn process_page_owned(
 /// untouched, and webtoon mode skips the margin/page-number crops but still runs
 /// the inter-panel pass, exactly as the reference does.
 fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Result<()> {
-    page.ensure_decoded()?;
-    let image = match page.image.as_mut() {
-        Some(image) => image,
-        None => bail!("page has no decoded image to prepare"),
-    };
+    // Detect the fill from the decoded pixels; `ensure_decoded` is the state
+    // transition, so no defensive "is there an image" guard is needed.
+    let background = fill::fill_check(page.ensure_decoded()?);
+    page.background = background;
 
-    page.background = fill::fill_check(image);
-    let background = page.background;
-
+    let image = page.ensure_decoded()?;
     if is_first_page && is_colour_page(image, options) {
         return Ok(());
     }
@@ -223,7 +217,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     for chapter in &tree.chapters {
         for page in &chapter.pages {
             any_page = true;
-            if !already_processed && file_stem(&page.rel_path).contains("-kcc") {
+            if !already_processed && file_stem(page.rel_path.as_str()).contains("-kcc") {
                 already_processed = true;
             }
             let size = page.dimensions();

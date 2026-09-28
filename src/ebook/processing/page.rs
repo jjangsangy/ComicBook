@@ -31,8 +31,8 @@ use super::color::{
     color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb, Detected, OutputColor,
 };
 use crate::ebook::model::{
-    Background, EncodedPage, MediaType, OrderClass, Orientation, Page, PageFlags, ResolvedFill,
-    ScribeHalf,
+    Background, EncodedPage, MediaType, OrderClass, Orientation, Page, PageFlags, PageName,
+    ResolvedFill, ScribeHalf,
 };
 use crate::ebook::options::{
     Autocontrast, BorderColor, Gamma, Geometry, Layout, Options, OutputEncoding, Splitter,
@@ -95,9 +95,11 @@ pub(crate) fn process_decoded(
 
 /// `--no-processing`: emit the source unchanged, ignoring the profile entirely.
 fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
-    let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
-    let bytes = match &page.raw {
-        Some(raw) => raw.clone(),
+    let media_type = page
+        .media_type()
+        .context("page has no media type to pass through")?;
+    let bytes = match page.source_bytes() {
+        Some(raw) => raw.to_vec(),
         // Trees built without a source payload (webtoon strips) still round-trip
         // through the codec.
         None => {
@@ -115,8 +117,10 @@ fn passthrough(page: &Page, options: &Options) -> Result<Vec<EncodedPage>> {
 /// archive is not duplicated while the output is assembled (see
 /// docs/architecture.md).
 pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result<Vec<EncodedPage>> {
-    let media_type = page.source_media_type.unwrap_or(MediaType::Jpeg);
-    let bytes = match page.raw.take() {
+    let media_type = page
+        .media_type()
+        .context("page has no media type to pass through")?;
+    let bytes = match page.take_source() {
         Some(raw) => raw,
         None => {
             let image = page
@@ -134,7 +138,7 @@ pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result
 /// no `-kcc-x` order suffix (see docs/porting.md).
 fn passthrough_page(page: &Page, media_type: MediaType, bytes: Vec<u8>) -> EncodedPage {
     EncodedPage {
-        name: unsuffixed_name(&page.source_name, media_type),
+        name: PageName::new(unsuffixed_name(page.source_name.as_str(), media_type)),
         order_class: OrderClass::Normal,
         media_type,
         bytes,
@@ -173,36 +177,19 @@ fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payloa
             orientation: Orientation::Upright,
         }];
     }
-    if landscape_mismatch
-        && width <= size.height
-        && height <= size.width
-        && options.processing.splitter == Splitter::Rotate
-    {
-        return vec![rotate_payload(image, options)];
-    }
-    if landscape_mismatch && f64::from(width) / f64::from(height) > SPLIT_THRESHOLD {
+    if landscape_mismatch {
         let ratio = f64::from(width) / f64::from(height);
-        let mut payloads = Vec::new();
-
-        if options.processing.splitter != Splitter::Rotate && ratio < BISECT_THRESHOLD {
-            let (first, second) = bisect(&image, right_to_left);
-            payloads.push(Payload {
-                order: OrderClass::SplitLeft,
-                image: first,
-                orientation: Orientation::Upright,
-            });
-            payloads.push(Payload {
-                order: OrderClass::SplitRight,
-                image: second,
-                orientation: Orientation::Upright,
-            });
+        // A spread wider than the split threshold is bisected and/or rotated,
+        // per `--splitter`; a narrower one that only fits once rotated is only
+        // rotated, and only under `--splitter rotate`.
+        if ratio > SPLIT_THRESHOLD {
+            return split_payloads(image, options, right_to_left, ratio);
         }
-        if options.processing.splitter != Splitter::Split
-            || (options.processing.splitter == Splitter::Split && ratio >= BISECT_THRESHOLD)
-        {
-            payloads.push(rotate_payload(image, options));
+        if width <= size.height && height <= size.width {
+            if let Splitter::Rotate = options.processing.splitter {
+                return vec![rotate_payload(image, options)];
+            }
         }
-        return payloads;
     }
 
     vec![Payload {
@@ -210,6 +197,54 @@ fn split_check(image: DynamicImage, options: &Options, size: Size) -> Vec<Payloa
         image,
         orientation: Orientation::Upright,
     }]
+}
+
+/// The payloads for a landscape spread wider than [`SPLIT_THRESHOLD`].
+///
+/// `--splitter` chooses: `Split` bisects while the ratio is under
+/// [`BISECT_THRESHOLD`] and rotates otherwise; `Rotate` always rotates; `Both`
+/// bisects (when under the threshold) *and* rotates.
+fn split_payloads(
+    image: DynamicImage,
+    options: &Options,
+    right_to_left: bool,
+    ratio: f64,
+) -> Vec<Payload> {
+    let mut payloads = Vec::new();
+    match options.processing.splitter {
+        Splitter::Split => {
+            if ratio < BISECT_THRESHOLD {
+                payloads.extend(bisect_payloads(&image, right_to_left));
+            } else {
+                payloads.push(rotate_payload(image, options));
+            }
+        }
+        Splitter::Rotate => payloads.push(rotate_payload(image, options)),
+        Splitter::Both => {
+            if ratio < BISECT_THRESHOLD {
+                payloads.extend(bisect_payloads(&image, right_to_left));
+            }
+            payloads.push(rotate_payload(image, options));
+        }
+    }
+    payloads
+}
+
+/// Bisect a spread into its `-kcc-b`/`-kcc-c` reading-order halves.
+fn bisect_payloads(image: &DynamicImage, right_to_left: bool) -> [Payload; 2] {
+    let (first, second) = bisect(image, right_to_left);
+    [
+        Payload {
+            order: OrderClass::SplitLeft,
+            image: first,
+            orientation: Orientation::Upright,
+        },
+        Payload {
+            order: OrderClass::SplitRight,
+            image: second,
+            orientation: Orientation::Upright,
+        },
+    ]
 }
 
 /// Turn a 1×4 strip into a 2×2 one by stacking the two halves (KCC's
@@ -327,7 +362,6 @@ fn encode_payload(
     )?;
 
     let flags = |half: ScribeHalf| PageFlags {
-        order_class: payload.order,
         orientation: payload.orientation,
         background: ResolvedFill::new(fill),
         half,
@@ -347,12 +381,12 @@ fn encode_payload(
             let (below_type, below_bytes) = encode_image(&below, options, color_output)?;
             return Ok(vec![
                 EncodedPage {
-                    name: split_name(
-                        &page.source_name,
+                    name: PageName::new(split_name(
+                        page.source_name.as_str(),
                         payload.order,
                         PagePart::Above,
                         above_type,
-                    ),
+                    )),
                     order_class: payload.order,
                     media_type: above_type,
                     bytes: above_bytes,
@@ -360,12 +394,12 @@ fn encode_payload(
                     flags: flags(ScribeHalf::Above),
                 },
                 EncodedPage {
-                    name: split_name(
-                        &page.source_name,
+                    name: PageName::new(split_name(
+                        page.source_name.as_str(),
                         payload.order,
                         PagePart::Below,
                         below_type,
-                    ),
+                    )),
                     order_class: payload.order,
                     media_type: below_type,
                     bytes: below_bytes,
@@ -377,12 +411,12 @@ fn encode_payload(
 
         let (media_type, bytes) = encode_image(&image, options, color_output)?;
         return Ok(vec![EncodedPage {
-            name: split_name(
-                &page.source_name,
+            name: PageName::new(split_name(
+                page.source_name.as_str(),
                 payload.order,
                 PagePart::Whole,
                 media_type,
-            ),
+            )),
             order_class: payload.order,
             media_type,
             bytes,
@@ -395,7 +429,11 @@ fn encode_payload(
     let image_size = Size::from_dimensions(image.dimensions());
 
     Ok(vec![EncodedPage {
-        name: output_name(&page.source_name, payload.order, media_type),
+        name: PageName::new(output_name(
+            page.source_name.as_str(),
+            payload.order,
+            media_type,
+        )),
         order_class: payload.order,
         media_type,
         bytes,
@@ -1295,6 +1333,7 @@ fn named_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ebook::model::{PageData, RelPath, Source, SourceName};
     use crate::ebook::options::Options;
     use crate::units::Size;
     use clap::Parser;
@@ -1313,18 +1352,14 @@ mod tests {
     /// A page of a solid colour.
     fn page(width: u32, height: u32, color: [u8; 3]) -> Page {
         Page {
-            source_name: "page.png".to_string(),
-            rel_path: "page.png".to_string(),
-            image: Some(DynamicImage::ImageRgb8(RgbImage::from_pixel(
-                width,
-                height,
-                Rgb(color),
-            ))),
+            source_name: SourceName::new("page.png"),
+            rel_path: RelPath::new("page.png"),
+            data: PageData::Pixels(
+                MediaType::Png,
+                DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(color))),
+            ),
             dimensions: Size::new(width, height),
             background: Background::White,
-            flags: PageFlags::default(),
-            raw: None,
-            source_media_type: Some(MediaType::Png),
         }
     }
 
@@ -1522,7 +1557,7 @@ mod tests {
     #[test]
     fn no_processing_copies_the_source_bytes() -> Result<()> {
         let mut source = page(10, 10, [1, 2, 3]);
-        source.raw = Some(vec![1, 2, 3, 4]);
+        source.data = PageData::Encoded(Source::new(vec![1, 2, 3, 4], MediaType::Png));
         let options = options(&["--no-processing"])?;
         let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded[0].bytes, vec![1, 2, 3, 4]);

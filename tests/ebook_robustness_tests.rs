@@ -236,18 +236,19 @@ fn hostile_archive_entry_names_are_neutralized() -> Result<()> {
 
     for chapter in &tree.chapters {
         assert!(
-            !chapter.name.starts_with('/') && !chapter.name.contains(".."),
+            !chapter.name.as_str().starts_with('/') && !chapter.name.as_str().contains(".."),
             "chapter escaped the root: {:?}",
             chapter.name
         );
         for page in &chapter.pages {
             assert!(
-                !page.source_name.starts_with('/') && !page.source_name.contains(".."),
+                !page.source_name.as_str().starts_with('/')
+                    && !page.source_name.as_str().contains(".."),
                 "page escaped the root: {:?}",
                 page.source_name
             );
             assert!(
-                !page.source_name.contains('\\'),
+                !page.source_name.as_str().contains('\\'),
                 "page name kept a backslash: {:?}",
                 page.source_name
             );
