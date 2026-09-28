@@ -21,7 +21,7 @@ pub use formats::{
 };
 pub use kind::{
     detect_archive_kind, detect_archive_kind_from_bytes, detect_archive_kind_from_type,
-    parse_target_extension, ArchiveKind,
+    parse_target_extension, ArchiveFormat, ArchiveKind,
 };
 pub use ops::{
     compress_archive, convert_archive, convert_archive_ext, extract_archive,

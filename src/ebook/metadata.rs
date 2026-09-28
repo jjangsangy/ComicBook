@@ -17,7 +17,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
 use crate::ebook::model::ComicTree;
-use crate::ebook::options::{Format, Options};
+use crate::ebook::options::{Format, MetadataTitle, Options};
 
 /// The ComicInfo.xml elements KCC reads (its `MetadataParser.data` keys).
 const SINGLE_FIELDS: [&str; 9] = [
@@ -193,25 +193,31 @@ pub fn resolve_with(
     let mut comicinfo_xml = None;
 
     if let Some(info) = &comicinfo {
-        if options.metadata_title == 2 {
-            title = info.title.clone();
-        } else if book_default_title {
-            if !info.series.is_empty() {
-                title = info.series.clone();
-            }
-            if !info.volume.is_empty() {
-                title.push_str(" Vol. ");
-                title.push_str(&zfill(&info.volume, 2));
-                volume = info.volume.clone();
-            }
-            if !info.number.is_empty() {
-                title.push_str(" #");
-                title.push_str(&zfill(&info.number, 3));
-                number = info.number.clone();
-            }
-            if options.metadata_title == 1 && !info.title.is_empty() {
-                title.push_str(": ");
-                title.push_str(&info.title);
+        // `Only` takes the embedded title verbatim; `Default`/`Combine` fold the
+        // embedded series/volume/number into the default schema, but only when the
+        // user did not pass an explicit title.
+        match options.metadata_title {
+            MetadataTitle::Only => title = info.title.clone(),
+            mode @ (MetadataTitle::Default | MetadataTitle::Combine) => {
+                if book_default_title {
+                    if !info.series.is_empty() {
+                        title = info.series.clone();
+                    }
+                    if !info.volume.is_empty() {
+                        title.push_str(" Vol. ");
+                        title.push_str(&zfill(&info.volume, 2));
+                        volume = info.volume.clone();
+                    }
+                    if !info.number.is_empty() {
+                        title.push_str(" #");
+                        title.push_str(&zfill(&info.number, 3));
+                        number = info.number.clone();
+                    }
+                    if matches!(mode, MetadataTitle::Combine) && !info.title.is_empty() {
+                        title.push_str(": ");
+                        title.push_str(&info.title);
+                    }
+                }
             }
         }
 

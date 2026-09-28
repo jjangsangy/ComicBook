@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use clap_complete::Shell;
+use comic_book::archive::ArchiveFormat;
 use comic_book::clamp::Approach;
 use comic_book::cli::{generate_completions, Cli, Commands};
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ fn test_cli_convert_parsing() -> Result<()> {
         directories,
         vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
     );
-    assert_eq!(to, "cbz");
+    assert_eq!(to, ArchiveFormat::Cbz);
     Ok(())
 }
 
@@ -28,7 +29,7 @@ fn test_cli_convert_file_parsing() -> Result<()> {
         bail!("Expected Convert command");
     };
     assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
-    assert_eq!(to, "cbr");
+    assert_eq!(to, ArchiveFormat::Cbr);
     Ok(())
 }
 
@@ -40,7 +41,29 @@ fn test_cli_convert_to_dir_parsing() -> Result<()> {
         bail!("Expected Convert command");
     };
     assert_eq!(directories, vec![PathBuf::from("issue1.cbz")]);
-    assert_eq!(to, "dir");
+    assert_eq!(to, ArchiveFormat::Dir);
+    Ok(())
+}
+
+#[test]
+fn test_cli_convert_parses_each_target_format() -> Result<()> {
+    for (value, expected) in [
+        ("cbz", ArchiveFormat::Cbz),
+        ("zip", ArchiveFormat::Zip),
+        ("cbr", ArchiveFormat::Cbr),
+        ("rar", ArchiveFormat::Rar),
+        ("cb7", ArchiveFormat::Cb7),
+        ("7z", ArchiveFormat::SevenZ),
+        ("cbt", ArchiveFormat::Cbt),
+        ("tar", ArchiveFormat::Tar),
+        ("dir", ArchiveFormat::Dir),
+    ] {
+        let cli = Cli::try_parse_from(["comic-book", "convert", "in.cbz", "--to", value])?;
+        let Commands::Convert { to, .. } = cli.command else {
+            bail!("Expected Convert command");
+        };
+        assert_eq!(to, expected, "--to {value}");
+    }
     Ok(())
 }
 

@@ -21,7 +21,7 @@ use pdfboss_render::{extract_page_images, render_page, Pixmap};
 use std::path::Path;
 
 use crate::ebook::model::{ComicTree, MediaType};
-use crate::ebook::options::Options;
+use crate::ebook::options::{Cropping, Options};
 
 use super::archive::{build_tree, LoadedPage, RootStrip};
 
@@ -83,9 +83,9 @@ fn render_target(options: &Options) -> (f32, f32) {
     let width = options.profile_data.width as f32;
     let height = options.profile_data.height as f32;
     match options.cropping {
-        1 => (width * 1.2, height * 1.2),
-        2 => (width * 1.25, height * 1.25),
-        _ => (width, height),
+        Cropping::Margins => (width * 1.2, height * 1.2),
+        Cropping::PageNumbers => (width * 1.25, height * 1.25),
+        Cropping::Off => (width, height),
     }
 }
 

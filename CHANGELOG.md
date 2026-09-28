@@ -24,6 +24,18 @@ release when a version tag is pushed.
     instead of a `strip_root: bool`.
   - `get_images_from_source` returns `Vec<DecodedImage>` (`name: BaseName`, `image`) instead of
     `Vec<(String, DynamicImage)>`.
+- Typed the `comic-book` command-line values so invalid modes are rejected by `clap` instead of
+  being re-interpreted from bare integers (the CLI step of the type-safety refactor tracked in
+  `REFACTOR.md`):
+  - `ebook --splitter`, `--cropping`, `--inter-panel-crop`, `--metadata-title` and `--batch-split`
+    now accept named values (`--splitter split`, `--cropping pages`, `--inter-panel-crop both`,
+    `--metadata-title combine`, `--batch-split per-subdir`) as well as their previous `0`/`1`/`2`
+    spellings, which are kept as aliases.
+  - `ebook --borders <white|black>` replaces `--black-borders`/`--white-borders`; the two old flags
+    are hidden aliases for `--borders white`/`--borders black` and conflict with each other (passing
+    both is now a `clap` error rather than silently letting white win).
+  - `convert --to` is now a validated `ValueEnum` (`cbz`, `zip`, `cbr`, `rar`, `cb7`, `7z`, `cbt`,
+    `tar`, `dir`), so an unsupported target is rejected while parsing.
 
 ### Fixed
 

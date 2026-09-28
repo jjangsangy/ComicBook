@@ -5,7 +5,10 @@ use anyhow::{anyhow, bail, Result};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use comic_book::cli::{Cli, Commands};
-use comic_book::ebook::options::{DocType, Format, Options};
+use comic_book::ebook::options::{
+    BatchSplit, BorderColor, Cropping, DocType, Format, InterPanelCrop, MetadataTitle, Options,
+    Splitter,
+};
 use comic_book::ebook::profiles::{DeviceKind, Profile, ALL_PROFILES, PROFILE_TABLE};
 
 /// Parse `comic-book ebook <args>` and resolve it.
@@ -161,6 +164,124 @@ fn profile_table_is_consistent_with_the_variant_list() {
 }
 
 #[test]
+fn processing_mode_enums_accept_names_and_numeric_aliases() -> Result<()> {
+    // Every named value and its legacy numeric alias resolve to the same mode.
+    for (values, expected) in [
+        (["split", "0"], Splitter::Split),
+        (["rotate", "1"], Splitter::Rotate),
+        (["both", "2"], Splitter::Both),
+    ] {
+        for value in values {
+            let options = resolve(&["book.cbz", "-p", "KV", "--splitter", value])?;
+            assert_eq!(options.splitter, expected, "--splitter {value}");
+        }
+    }
+
+    for (values, expected) in [
+        (["off", "0"], Cropping::Off),
+        (["margins", "1"], Cropping::Margins),
+        (["pages", "2"], Cropping::PageNumbers),
+    ] {
+        for value in values {
+            let options = resolve(&["book.cbz", "-p", "KV", "-c", value])?;
+            assert_eq!(options.cropping, expected, "--cropping {value}");
+        }
+    }
+
+    for (values, expected) in [
+        (["off", "0"], InterPanelCrop::Off),
+        (["horizontal", "1"], InterPanelCrop::Horizontal),
+        (["both", "2"], InterPanelCrop::Both),
+    ] {
+        for value in values {
+            let options = resolve(&["book.cbz", "-p", "KV", "--inter-panel-crop", value])?;
+            assert_eq!(
+                options.inter_panel_crop, expected,
+                "--inter-panel-crop {value}"
+            );
+        }
+    }
+
+    for (values, expected) in [
+        (["default", "0"], MetadataTitle::Default),
+        (["combine", "1"], MetadataTitle::Combine),
+        (["only", "2"], MetadataTitle::Only),
+    ] {
+        for value in values {
+            let options = resolve(&["book.cbz", "-p", "KV", "--metadata-title", value])?;
+            assert_eq!(options.metadata_title, expected, "--metadata-title {value}");
+        }
+    }
+
+    // A Kobo EPUB is used so the MOBI-only "always split" rule does not mask the
+    // requested mode.
+    for (values, expected) in [
+        (["none", "0"], BatchSplit::None),
+        (["auto", "1"], BatchSplit::Auto),
+        (["per-subdir", "2"], BatchSplit::PerSubdirectory),
+    ] {
+        for value in values {
+            let options = resolve(&["book.cbz", "-p", "KoE", "-b", value])?;
+            assert_eq!(options.batch_split, expected, "--batch-split {value}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn border_flags_map_to_colours_and_are_exclusive() -> Result<()> {
+    assert_eq!(
+        resolve(&["book.cbz", "-p", "KV", "--borders", "black"])?.borders_color,
+        Some(BorderColor::Black)
+    );
+    assert_eq!(
+        resolve(&["book.cbz", "-p", "KV", "--borders", "white"])?.borders_color,
+        Some(BorderColor::White)
+    );
+
+    // The legacy spellings keep working as hidden aliases for the two colours.
+    assert_eq!(
+        resolve(&["book.cbz", "-p", "KV", "--black-borders"])?.borders_color,
+        Some(BorderColor::Black)
+    );
+    assert_eq!(
+        resolve(&["book.cbz", "-p", "KV", "--white-borders"])?.borders_color,
+        Some(BorderColor::White)
+    );
+
+    // Requesting two colours at once is a clap error, whether new or legacy.
+    assert!(Cli::try_parse_from([
+        "comic-book",
+        "ebook",
+        "book.cbz",
+        "--borders",
+        "black",
+        "--borders",
+        "white"
+    ])
+    .is_err());
+    assert!(Cli::try_parse_from([
+        "comic-book",
+        "ebook",
+        "book.cbz",
+        "--black-borders",
+        "--white-borders"
+    ])
+    .is_err());
+    assert!(Cli::try_parse_from([
+        "comic-book",
+        "ebook",
+        "book.cbz",
+        "--borders",
+        "black",
+        "--white-borders"
+    ])
+    .is_err());
+    Ok(())
+}
+
+#[test]
 fn defaults_resolve_to_kindle_mobi() -> Result<()> {
     let options = resolve(&["book.cbz"])?;
     assert_eq!(options.profile, Profile::Kv);
@@ -169,7 +290,11 @@ fn defaults_resolve_to_kindle_mobi() -> Result<()> {
     assert_eq!(options.format, Format::Mobi);
     assert_eq!(options.jpeg_quality, 85);
     assert_eq!(options.target_size, None);
-    assert_eq!(options.batch_split, 1, "MOBI output always splits");
+    assert_eq!(
+        options.batch_split,
+        BatchSplit::Auto,
+        "MOBI output always splits"
+    );
     assert!(options.kindle_azw3);
     assert!(!options.kepub);
     Ok(())
@@ -244,7 +369,7 @@ fn two_hundred_megabyte_presets_expand() -> Result<()> {
     let epub = resolve(&["book.cbz", "-f", "epub-200mb"])?;
     assert_eq!(epub.format, Format::Epub);
     assert_eq!(epub.target_size, Some(195));
-    assert_eq!(epub.batch_split, 1);
+    assert_eq!(epub.batch_split, BatchSplit::Auto);
 
     let pdf = resolve(&["book.cbz", "-f", "pdf-200mb"])?;
     assert_eq!(pdf.format, Format::Pdf);

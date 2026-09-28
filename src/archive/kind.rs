@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use std::path::Path;
 
 /// Supported comic book archive formats and directories.
@@ -8,6 +9,65 @@ pub enum ArchiveKind {
     Cb7,
     Cbt,
     Directory,
+}
+
+/// Target format for `comic-book convert --to` (see docs/convert.md).
+///
+/// A plain archive and its comic-book spelling (e.g. `zip`/`cbz`) share an
+/// [`ArchiveKind`] but differ in the output extension, so both live here as
+/// variants. `ValueEnum` keeps the accepted spellings in sync with the help text
+/// and rejects anything else before the pipeline runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
+pub enum ArchiveFormat {
+    /// Comic-book ZIP (`.cbz`).
+    Cbz,
+    /// Plain ZIP (`.zip`).
+    Zip,
+    /// Comic-book RAR (`.cbr`).
+    Cbr,
+    /// Plain RAR (`.rar`).
+    Rar,
+    /// Comic-book 7-Zip (`.cb7`).
+    Cb7,
+    /// Plain 7-Zip (`.7z`).
+    #[value(name = "7z")]
+    SevenZ,
+    /// Comic-book tar (`.cbt`).
+    Cbt,
+    /// Plain tar (`.tar`).
+    Tar,
+    /// Uncompressed directory of images.
+    #[value(name = "dir")]
+    Dir,
+}
+
+impl ArchiveFormat {
+    /// The canonical output extension (`dir` is the accepted spelling for a
+    /// directory target, whose output name carries no extension).
+    pub fn extension(self) -> &'static str {
+        match self {
+            ArchiveFormat::Cbz => "cbz",
+            ArchiveFormat::Zip => "zip",
+            ArchiveFormat::Cbr => "cbr",
+            ArchiveFormat::Rar => "rar",
+            ArchiveFormat::Cb7 => "cb7",
+            ArchiveFormat::SevenZ => "7z",
+            ArchiveFormat::Cbt => "cbt",
+            ArchiveFormat::Tar => "tar",
+            ArchiveFormat::Dir => "dir",
+        }
+    }
+
+    /// The archive container this format writes.
+    pub fn kind(self) -> ArchiveKind {
+        match self {
+            ArchiveFormat::Cbz | ArchiveFormat::Zip => ArchiveKind::Cbz,
+            ArchiveFormat::Cbr | ArchiveFormat::Rar => ArchiveKind::Cbr,
+            ArchiveFormat::Cb7 | ArchiveFormat::SevenZ => ArchiveKind::Cb7,
+            ArchiveFormat::Cbt | ArchiveFormat::Tar => ArchiveKind::Cbt,
+            ArchiveFormat::Dir => ArchiveKind::Directory,
+        }
+    }
 }
 
 impl ArchiveKind {
@@ -69,16 +129,6 @@ pub fn detect_archive_kind_from_bytes(bytes: &[u8]) -> Option<ArchiveKind> {
 /// Parse a target extension or format name into its canonical extension string and `ArchiveKind`.
 pub fn parse_target_extension(ext: &str) -> Option<(&'static str, ArchiveKind)> {
     let clean = ext.trim_start_matches('.').to_ascii_lowercase();
-    match clean.as_str() {
-        "cbz" => Some(("cbz", ArchiveKind::Cbz)),
-        "zip" => Some(("zip", ArchiveKind::Cbz)),
-        "cbr" => Some(("cbr", ArchiveKind::Cbr)),
-        "rar" => Some(("rar", ArchiveKind::Cbr)),
-        "cb7" => Some(("cb7", ArchiveKind::Cb7)),
-        "7z" => Some(("7z", ArchiveKind::Cb7)),
-        "cbt" => Some(("cbt", ArchiveKind::Cbt)),
-        "tar" => Some(("tar", ArchiveKind::Cbt)),
-        "dir" => Some(("dir", ArchiveKind::Directory)),
-        _ => None,
-    }
+    let format = ArchiveFormat::from_str(&clean, true).ok()?;
+    Some((format.extension(), format.kind()))
 }

@@ -363,14 +363,54 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 2 — Typed CLI values
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
+
 - **Findings:** B1, B2, B6, A20.
 - **Scope:** `src/cli.rs`, `src/convert.rs`, `ebook/cli.rs` and the parse boundary.
 - **Deliverable:** `ValueEnum`s `Splitter`, `Cropping`, `InterPanelCrop`, `MetadataTitle`,
   `BatchSplit`, `ArchiveFormat`; `--borders <white|black>` replacing the two border bools.
   Numeric aliases (`#[value(alias = "0")]`, …) keep `--splitter 1` parsing.
 - **Gate:** CLI parsing tests; existing output tests must not change.
-- **Note:** this is the only phase that alters the *accepted input surface*; see
+**Note:** this is the only phase that alters the *accepted input surface*; see
   [§6.1](#61-command-line-surface).
+
+  **Completed notes.**
+
+  - **Delivered as planned:** `ValueEnum`s `Splitter` (`Split`/`Rotate`/`Both`), `Cropping`
+    (`Off`/`Margins`/`PageNumbers`), `InterPanelCrop` (`Off`/`Horizontal`/`Both`), `MetadataTitle`
+    (`Default`/`Combine`/`Only`), `BatchSplit` (`None`/`Auto`/`PerSubdirectory`) and `ArchiveFormat`;
+    `--borders <white|black>` replacing the two border bools. Every consumer of the old `u8` modes
+    (`input/pdf.rs`, `processing/mod.rs`, `processing/page.rs`, `metadata.rs`, `output/epub/mod.rs`,
+    `chunk.rs`) now matches the enum exhaustively (B2).
+  - **Placement.** The five ebook enums live in `ebook/options.rs` beside `Format`/`DocType`;
+    `ArchiveFormat` lives in `archive/kind.rs` beside `ArchiveKind`, and `parse_target_extension` now
+    delegates to `ArchiveFormat::from_str`, so there is a single source of the accepted spellings
+    (B6). `BorderColor` gained the derive.
+  - **Numeric aliases.** Each mode variant carries its old digit as `#[value(alias = …)]`, so
+    `--splitter 1`, `--cropping 2`, `--inter-panel-crop 2`, `--metadata-title 2` and
+    `--batch-split 2` keep parsing; `Cropping::PageNumbers` and `BatchSplit::PerSubdirectory` use
+    `#[value(name = …)]` so the canonical names are `pages`/`per-subdir`. Defaults keep their `0`/`2`
+    spellings, so `--help` shows the same `[default: …]` as before.
+  - **A20 implementation.** `--borders` is the new flag; `--black-borders`/`--white-borders` are kept
+    as hidden bool aliases that conflict with each other and with `--borders`, so `--black-borders`
+    and `--white-borders` still work but passing both (or mixing a legacy flag with `--borders`) is a
+    `clap` error. This is the one accepted-input change; it is recorded in the changelog.
+  - **Behaviour-preserving elsewhere.** `run_convert` takes the typed `ArchiveFormat` and derives its
+    extension/kind, so the duplicated accepted-list and error string are gone; the test helper
+    `tests/common::run_convert` parses its `&str` target through the same `ValueEnum`, keeping the
+    `integration_tests` call sites (and the unsupported-target test) unchanged.
+  - **Scope grew slightly** past the four named files: the six mode consumers above and
+    `archive/mod.rs` (re-export). `src/cli.rs`/`convert.rs` switched `Convert.to` to `ArchiveFormat`,
+    which forced the three `cli_tests` assertions on that field onto the enum (the only test edits
+    beyond new cases).
+  - **New tests:** `ebook_tests` `processing_mode_enums_accept_names_and_numeric_aliases` and
+    `border_flags_map_to_colours_and_are_exclusive`; `cli_tests`
+    `test_cli_convert_parses_each_target_format`. The existing
+    `ebook_robustness_tests::out_of_range_processing_modes_are_rejected` still pins that `0`/`1`/`2`
+    parse and `3`/`255`/`-1` do not.
+  - **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+    clean · `cargo nextest run` → **354 passed, 13 skipped** (was 351; +3 new).
+  - **Changelog:** `## [Unreleased] → Changed` entry added for the CLI-surface change.
 
 ### Phase 3 — Resolved configuration sum types
 

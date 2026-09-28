@@ -29,7 +29,7 @@ use std::borrow::Cow;
 
 use super::color::{color_check, luma601, luma_view, rgb_to_ycbcr, to_luma601, ycbcr_to_rgb};
 use crate::ebook::model::{Background, EncodedPage, MediaType, OrderClass, Page, PageFlags};
-use crate::ebook::options::{BorderColor, Format, Options};
+use crate::ebook::options::{BorderColor, Format, Options, Splitter};
 use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
 
@@ -178,14 +178,18 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
             rotated: false,
         }];
     }
-    if landscape_mismatch && width <= dst_height && height <= dst_width && options.splitter == 1 {
+    if landscape_mismatch
+        && width <= dst_height
+        && height <= dst_width
+        && options.splitter == Splitter::Rotate
+    {
         return vec![rotate_payload(image, options)];
     }
     if landscape_mismatch && f64::from(width) / f64::from(height) > SPLIT_THRESHOLD {
         let ratio = f64::from(width) / f64::from(height);
         let mut payloads = Vec::new();
 
-        if options.splitter != 1 && ratio < BISECT_THRESHOLD {
+        if options.splitter != Splitter::Rotate && ratio < BISECT_THRESHOLD {
             let (first, second) = bisect(&image, right_to_left);
             payloads.push(Payload {
                 order: OrderClass::SplitLeft,
@@ -198,7 +202,9 @@ fn split_check(image: DynamicImage, options: &Options, size: (u32, u32)) -> Vec<
                 rotated: false,
             });
         }
-        if options.splitter > 0 || (options.splitter == 0 && ratio >= BISECT_THRESHOLD) {
+        if options.splitter != Splitter::Split
+            || (options.splitter == Splitter::Split && ratio >= BISECT_THRESHOLD)
+        {
             payloads.push(rotate_payload(image, options));
         }
         return payloads;

@@ -66,11 +66,89 @@ pub enum DocType {
     Pdoc,
 }
 
-/// Page background override from `--black-borders` / `--white-borders`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Page background override from `--borders` (also the legacy
+/// `--black-borders` / `--white-borders`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum BorderColor {
+    /// Force white borders.
     White,
+    /// Force black borders.
     Black,
+}
+
+/// Double-page parsing mode (`-r, --splitter`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum Splitter {
+    /// Always split a spread into two pages (KCC's `0`).
+    #[default]
+    #[value(alias = "0")]
+    Split,
+    /// Always rotate a spread upright (KCC's `1`).
+    #[value(alias = "1")]
+    Rotate,
+    /// Split narrow spreads and rotate wide ones (KCC's `2`).
+    #[value(alias = "2")]
+    Both,
+}
+
+/// Cropping mode (`-c, --cropping`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum Cropping {
+    /// Cropping disabled (KCC's `0`).
+    #[value(alias = "0")]
+    Off,
+    /// Crop the page margins (KCC's `1`).
+    #[value(alias = "1")]
+    Margins,
+    /// Crop margins and page numbers (KCC's `2`, the default).
+    #[default]
+    #[value(name = "pages", alias = "2")]
+    PageNumbers,
+}
+
+/// Empty-section cropping (`--inter-panel-crop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum InterPanelCrop {
+    /// Disabled (KCC's `0`, the default).
+    #[default]
+    #[value(alias = "0")]
+    Off,
+    /// Crop horizontal (column) gutters (KCC's `1`).
+    #[value(alias = "1")]
+    Horizontal,
+    /// Crop both horizontal and vertical gutters (KCC's `2`).
+    #[value(alias = "2")]
+    Both,
+}
+
+/// How a resolved title uses embedded ComicInfo metadata (`--metadata-title`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum MetadataTitle {
+    /// Use the default title schema only (KCC's `0`, the default).
+    #[default]
+    #[value(alias = "0")]
+    Default,
+    /// Append the embedded title to the default schema (KCC's `1`).
+    #[value(alias = "1")]
+    Combine,
+    /// Use the embedded title only (KCC's `2`).
+    #[value(alias = "2")]
+    Only,
+}
+
+/// Output splitting mode (`-b, --batch-split`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum BatchSplit {
+    /// Keep everything in one output file (KCC's `0`, the default).
+    #[default]
+    #[value(alias = "0")]
+    None,
+    /// Split automatically to respect the size cap (KCC's `1`).
+    #[value(alias = "1")]
+    Auto,
+    /// Give each top-level directory its own output file (KCC's `2`).
+    #[value(name = "per-subdir", alias = "2")]
+    PerSubdirectory,
 }
 
 /// A fully resolved `comic-book ebook` run.
@@ -105,16 +183,16 @@ pub struct Options {
 
     // Processing
     pub no_processing: bool,
-    pub splitter: u8,
+    pub splitter: Splitter,
     pub gamma: f32,
     pub auto_level: bool,
     pub no_auto_contrast: bool,
     pub color_auto_contrast: bool,
-    pub cropping: u8,
+    pub cropping: Cropping,
     pub cropping_power: f32,
     pub cropping_minimum: f32,
     pub preserve_margin: u32,
-    pub inter_panel_crop: u8,
+    pub inter_panel_crop: InterPanelCrop,
     pub borders_color: Option<BorderColor>,
     pub force_color: bool,
     pub erase_rainbow: bool,
@@ -140,13 +218,13 @@ pub struct Options {
     // Output
     pub output: Option<PathBuf>,
     pub title: Option<String>,
-    pub metadata_title: u8,
+    pub metadata_title: MetadataTitle,
     pub keep_comicinfo: bool,
     pub author: Option<String>,
     pub language: String,
     pub format: Format,
     pub doc_type: DocType,
-    pub batch_split: u8,
+    pub batch_split: BatchSplit,
     pub spread_shift: bool,
     pub one_page_landscape: bool,
     pub no_kepub: bool,
@@ -201,23 +279,23 @@ impl Options {
             Format::Pdf200mb => {
                 target_size = Some(195);
                 format = Format::Pdf;
-                if batch_split != 2 {
-                    batch_split = 1;
+                if batch_split != BatchSplit::PerSubdirectory {
+                    batch_split = BatchSplit::Auto;
                 }
             }
             Format::Epub200mb => {
                 target_size = Some(195);
                 format = Format::Epub;
-                if batch_split != 2 {
-                    batch_split = 1;
+                if batch_split != BatchSplit::PerSubdirectory {
+                    batch_split = BatchSplit::Auto;
                 }
             }
             Format::MobiEpub200mb => {
                 keep_epub = true;
                 target_size = Some(195);
                 format = Format::Mobi;
-                if batch_split != 2 {
-                    batch_split = 1;
+                if batch_split != BatchSplit::PerSubdirectory {
+                    batch_split = BatchSplit::Auto;
                 }
             }
             _ => {}
@@ -245,17 +323,17 @@ impl Options {
             };
         }
 
-        let borders_color = if args.processing.white_borders {
-            Some(BorderColor::White)
-        } else if args.processing.black_borders {
-            Some(BorderColor::Black)
-        } else {
-            None
-        };
+        let borders_color = args
+            .processing
+            .borders
+            .or_else(|| args.processing.white_borders.then_some(BorderColor::White))
+            .or_else(|| args.processing.black_borders.then_some(BorderColor::Black));
 
         // Splitting MOBI is not optional.
-        if matches!(format, Format::Mobi | Format::Kfx) && batch_split != 2 {
-            batch_split = 1;
+        if matches!(format, Format::Mobi | Format::Kfx)
+            && batch_split != BatchSplit::PerSubdirectory
+        {
+            batch_split = BatchSplit::Auto;
         }
 
         // Older Kindle models don't support Panel View.

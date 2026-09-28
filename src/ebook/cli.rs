@@ -7,7 +7,9 @@
 use clap::{Args, ValueHint};
 use std::path::PathBuf;
 
-use super::options::{DocType, Format};
+use super::options::{
+    BatchSplit, BorderColor, Cropping, DocType, Format, InterPanelCrop, MetadataTitle, Splitter,
+};
 use super::profiles::Profile;
 
 /// Convert comic archives and folders into e-book formats.
@@ -103,15 +105,15 @@ pub struct ProcessingArgs {
     #[arg(short = 'n', long = "no-processing")]
     pub no_processing: bool,
 
-    /// Double page parsing mode: 0 split, 1 rotate, 2 both
+    /// Double page parsing mode: split, rotate, or both
     #[arg(
         short = 'r',
         long = "splitter",
+        value_enum,
         default_value = "0",
-        value_parser = clap::value_parser!(u8).range(0..=2),
-        value_name = "0|1|2"
+        value_name = "split|rotate|both"
     )]
-    pub splitter: u8,
+    pub splitter: Splitter,
 
     /// Apply gamma correction to linearize the image (auto when 0)
     #[arg(
@@ -122,15 +124,15 @@ pub struct ProcessingArgs {
     )]
     pub gamma: f32,
 
-    /// Cropping mode: 0 disabled, 1 margins, 2 margins + page numbers
+    /// Cropping mode: off, margins, or margins + page numbers
     #[arg(
         short = 'c',
         long = "cropping",
+        value_enum,
         default_value = "2",
-        value_parser = clap::value_parser!(u8).range(0..=2),
-        value_name = "0|1|2"
+        value_name = "off|margins|pages"
     )]
-    pub cropping: u8,
+    pub cropping: Cropping,
 
     /// Cropping power
     #[arg(long = "cropping-power", default_value = "1.0", value_name = "FLOAT")]
@@ -144,21 +146,30 @@ pub struct ProcessingArgs {
     #[arg(long = "preserve-margin", default_value = "0", value_name = "PERCENT")]
     pub preserve_margin: u32,
 
-    /// Crop empty sections: 0 disabled, 1 horizontally, 2 both
+    /// Crop empty sections: off, horizontal, or both
     #[arg(
         long = "inter-panel-crop",
+        value_enum,
         default_value = "0",
-        value_parser = clap::value_parser!(u8).range(0..=2),
-        value_name = "0|1|2"
+        value_name = "off|horizontal|both"
     )]
-    pub inter_panel_crop: u8,
+    pub inter_panel_crop: InterPanelCrop,
 
-    /// Disable border autodetection and force black borders
-    #[arg(long = "black-borders")]
+    /// Force the page border colour instead of autodetecting it
+    #[arg(
+        long = "borders",
+        value_enum,
+        value_name = "white|black",
+        conflicts_with_all = ["black_borders", "white_borders"]
+    )]
+    pub borders: Option<BorderColor>,
+
+    /// Deprecated alias for `--borders black`
+    #[arg(long = "black-borders", hide = true, conflicts_with = "white_borders")]
     pub black_borders: bool,
 
-    /// Disable border autodetection and force white borders
-    #[arg(long = "white-borders")]
+    /// Deprecated alias for `--borders white`
+    #[arg(long = "white-borders", hide = true, conflicts_with = "black_borders")]
     pub white_borders: bool,
 
     /// Don't convert images to grayscale
@@ -273,14 +284,14 @@ pub struct OutputArgs {
     #[arg(short = 't', long = "title", value_name = "TITLE")]
     pub title: Option<String>,
 
-    /// Write title using embedded metadata: 1 combine with the default schema, 2 use it only
+    /// Write title using embedded metadata: combine with the default schema, or use it only
     #[arg(
         long = "metadata-title",
+        value_enum,
         default_value = "0",
-        value_parser = clap::value_parser!(u8).range(0..=2),
-        value_name = "0|1|2"
+        value_name = "default|combine|only"
     )]
-    pub metadata_title: u8,
+    pub metadata_title: MetadataTitle,
 
     /// Keep any original ComicInfo.xml files
     #[arg(long = "keep-comicinfo")]
@@ -312,15 +323,15 @@ pub struct OutputArgs {
     #[arg(long = "kepub-short-ext")]
     pub kepub_short_ext: bool,
 
-    /// Split output into multiple files: 0 none, 1 automatic, 2 per subdirectory
+    /// Split output into multiple files: none, automatic, or per subdirectory
     #[arg(
         short = 'b',
         long = "batch-split",
+        value_enum,
         default_value = "0",
-        value_parser = clap::value_parser!(u8).range(0..=2),
-        value_name = "0|1|2"
+        value_name = "none|auto|per-subdir"
     )]
-    pub batch_split: u8,
+    pub batch_split: BatchSplit,
 
     /// Shift the first page to the opposite side in landscape for spread alignment
     #[arg(long = "spread-shift")]

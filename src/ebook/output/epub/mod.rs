@@ -23,7 +23,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::ebook::model::{EncodedPage, MediaType, PageFlags};
-use crate::ebook::options::Options;
+use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
 
@@ -235,13 +235,14 @@ fn modified_timestamp() -> String {
 fn bookmark_entries(
     filelist: &[PageRef<'_>],
     bookmarks: &[(usize, String)],
-    splitter: u8,
+    splitter: Splitter,
     page_titles: &mut HashMap<String, String>,
 ) -> Vec<usize> {
     let diff_delta = match splitter {
-        0 => 1,
-        2 => 2,
-        _ => 0,
+        Splitter::Split => 1,
+        Splitter::Both => 2,
+        // Rotated spreads keep their original indices.
+        Splitter::Rotate => 0,
     };
     let mut entries = Vec::new();
     let mut global_diff = 0usize;

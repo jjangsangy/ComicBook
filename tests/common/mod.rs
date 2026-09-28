@@ -12,7 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use clap::ValueEnum;
+use comic_book::archive::ArchiveFormat;
 use comic_book::clamp::Approach;
 
 /// Discards everything written directly to stderr for the rest of the process.
@@ -39,9 +41,14 @@ fn silence_progress_bars() {
 fn silence_progress_bars() {}
 
 /// Silences progress output, then converts archives. See module docs.
+///
+/// `target_ext` is parsed exactly as the CLI parses `--to`, so a test can keep
+/// naming the format as a string while the library takes the typed value.
 pub fn run_convert(paths: &[PathBuf], target_ext: &str) -> Result<()> {
     silence_progress_bars();
-    comic_book::convert::run_convert(paths, target_ext)
+    let format = ArchiveFormat::from_str(target_ext, true)
+        .map_err(|_| anyhow!("'{target_ext}' is not a supported archive format"))?;
+    comic_book::convert::run_convert(paths, format)
 }
 
 /// Silences progress output, then clamps images. See module docs.

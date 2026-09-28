@@ -1,4 +1,4 @@
-use crate::archive::{detect_archive_kind, parse_target_extension, ArchiveKind, RootStripPolicy};
+use crate::archive::{detect_archive_kind, ArchiveFormat, ArchiveKind, RootStripPolicy};
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -297,21 +297,14 @@ fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     println!("Conversion complete.");
 }
 
-pub fn run_convert(paths: &[PathBuf], target_ext_raw: &str) -> Result<()> {
+pub fn run_convert(paths: &[PathBuf], target: ArchiveFormat) -> Result<()> {
     if paths.is_empty() {
         return Err(anyhow!("No files or directories specified for conversion."));
     }
 
-    let (target_ext_clean, target_kind) = parse_target_extension(target_ext_raw).ok_or_else(|| {
-        anyhow!(
-            "Target extension '{}' is not supported. Supported: cbz, zip, cbr, rar, cb7, 7z, cbt, tar, dir",
-            target_ext_raw
-        )
-    })?;
-
     let target = TargetFormat {
-        kind: target_kind,
-        ext: target_ext_clean,
+        kind: target.kind(),
+        ext: target.extension(),
     };
 
     let mut tasks = Vec::new();

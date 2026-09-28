@@ -22,7 +22,7 @@ use image::DynamicImage;
 use rayon::prelude::*;
 
 use crate::ebook::model::{ComicTree, EncodedPage, Page};
-use crate::ebook::options::Options;
+use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
 
 /// Fraction of each inter-panel gutter KCC retains after cropping.
@@ -154,18 +154,22 @@ fn prepare_page(page: &mut Page, options: &Options, is_first_page: bool) -> Resu
     let minimum = f64::from(options.cropping_minimum);
     if !options.webtoon {
         match options.cropping {
-            2 => crop::crop_page_number(image, power, minimum, options.preserve_margin, background),
-            1 => crop::crop_margin(image, power, minimum, options.preserve_margin, background),
-            _ => {}
+            Cropping::PageNumbers => {
+                crop::crop_page_number(image, power, minimum, options.preserve_margin, background)
+            }
+            Cropping::Margins => {
+                crop::crop_margin(image, power, minimum, options.preserve_margin, background)
+            }
+            Cropping::Off => {}
         }
     }
 
-    if options.inter_panel_crop > 0 {
-        let direction = if options.inter_panel_crop == 1 {
-            interpanel::Direction::Horizontal
-        } else {
-            interpanel::Direction::Both
-        };
+    let direction = match options.inter_panel_crop {
+        InterPanelCrop::Off => None,
+        InterPanelCrop::Horizontal => Some(interpanel::Direction::Horizontal),
+        InterPanelCrop::Both => Some(interpanel::Direction::Both),
+    };
+    if let Some(direction) = direction {
         let cropped =
             interpanel::crop_empty_inter_panel(image, direction, INTER_PANEL_KEEP, background);
         *image = cropped;

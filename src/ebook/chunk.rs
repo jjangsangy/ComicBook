@@ -21,7 +21,7 @@
 use anyhow::Result;
 
 use crate::ebook::model::EncodedPage;
-use crate::ebook::options::Options;
+use crate::ebook::options::{BatchSplit, Options};
 use crate::ebook::processing::cover;
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
 
@@ -36,7 +36,7 @@ const MEGABYTE: u64 = 1_048_576;
 /// Returns the book as a single tome when chunking was not requested, and always
 /// at least one tome.
 pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<ProcessedBook>> {
-    if options.batch_split == 0 && options.target_size.is_none() {
+    if options.batch_split == BatchSplit::None && options.target_size.is_none() {
         return Ok(vec![book]);
     }
     if book.chapters.iter().all(|chapter| chapter.pages.is_empty()) {
@@ -53,10 +53,11 @@ pub fn split(mut book: ProcessedBook, options: &Options) -> Result<Vec<Processed
 
     let target = target_size(options);
     let mut mode = level;
-    if options.batch_split == 2 && mode == 2 {
+    if options.batch_split == BatchSplit::PerSubdirectory && mode == 2 {
         mode = 3;
     }
-    if options.batch_split == 1 && mode == 2 && chapters_exceed_target(&book, target) {
+    if options.batch_split == BatchSplit::Auto && mode == 2 && chapters_exceed_target(&book, target)
+    {
         // A chapter that is itself over the cap cannot be split as a whole.
         flatten(&mut book);
         mode = 1;

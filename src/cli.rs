@@ -3,6 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
+use crate::archive::ArchiveFormat;
 use crate::clamp::{self, Approach};
 use crate::convert;
 use crate::ebook::{self, EbookArgs};
@@ -29,8 +30,8 @@ pub enum Commands {
         directories: Vec<PathBuf>,
 
         /// Target format or extension (e.g. cbz, cbr, cb7, cbt, zip, rar, 7z, tar, dir)
-        #[arg(long = "to", value_parser = ["cbz", "zip", "cbr", "rar", "cb7", "7z", "cbt", "tar", "dir"])]
-        to: String,
+        #[arg(long = "to", value_enum, value_name = "FORMAT")]
+        to: ArchiveFormat,
     },
 
     /// Clamp image sizes in comic archives to all be under a size threshold
@@ -106,7 +107,7 @@ pub fn run_completions(shell: Option<Shell>, shell_flag: Option<Shell>) -> Resul
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::Convert { directories, to } => convert::run_convert(&directories, &to),
+        Commands::Convert { directories, to } => convert::run_convert(&directories, to),
         Commands::Clamp {
             input_dir,
             output_dir,
