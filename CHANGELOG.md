@@ -85,6 +85,12 @@ release when a version tag is pushed.
   re-open an empty `## [Unreleased]` heading above the dated release, so the default branch keeps a
   section for the next release's entries instead of losing it on roll-over.
 
+### Docs
+
+- Corrected the lint command in `AGENTS.md`, `REFACTOR.md`, `docs/development.md` and
+  `docs/porting.md` to `cargo clippy --all-targets --all-features -- -D warnings` (the missing `--`
+  made cargo reject `-D warnings` as an unexpected argument).
+
 ## [0.2.7] - 2026-09-27
 
 ### Added

@@ -234,38 +234,20 @@ fn crop_main_cover(image: &mut DynamicImage, right_to_left: bool) -> bool {
     let (w, h) = (f64::from(width), f64::from(height));
     let ratio = w / h;
 
-    let bbox = if ratio > 2.0 {
-        if right_to_left {
-            BBox::new(w / 6.0, 0.0, w / 2.0 - w * 0.02, h)
-        } else {
-            BBox::new(w / 2.0 + w * 0.02, 0.0, 5.0 / 6.0 * w, h)
-        }
-    } else if ratio > 1.83 {
-        if right_to_left {
-            BBox::new(w * 0.19, 0.0, w * 0.575, h)
-        } else {
-            BBox::new(w * 0.425, 0.0, 0.81 * w, h)
-        }
-    } else if ratio > 1.7 {
-        if right_to_left {
-            BBox::new(w * 0.2, 0.0, w * 0.583, h)
-        } else {
-            BBox::new(w * 0.417, 0.0, 0.8 * w, h)
-        }
-    } else if ratio > 1.34 {
-        if right_to_left {
-            BBox::new(0.0, 0.0, w / 2.0 - w * 0.03, h)
-        } else {
-            BBox::new(w / 2.0 + w * 0.03, 0.0, w, h)
-        }
-    } else if ratio > 1.0 {
-        if right_to_left {
-            BBox::new(w * 0.36, 0.0, w, h)
-        } else {
-            BBox::new(0.0, 0.0, 0.64 * w, h)
-        }
-    } else {
-        return false;
+    // One row per aspect-ratio band, widest first; the arm matching `ratio`
+    // wins before narrower bands get a chance.
+    let bbox = match (ratio, right_to_left) {
+        (r, true) if r > 2.0 => BBox::new(w / 6.0, 0.0, w / 2.0 - w * 0.02, h),
+        (r, false) if r > 2.0 => BBox::new(w / 2.0 + w * 0.02, 0.0, 5.0 / 6.0 * w, h),
+        (r, true) if r > 1.83 => BBox::new(w * 0.19, 0.0, w * 0.575, h),
+        (r, false) if r > 1.83 => BBox::new(w * 0.425, 0.0, 0.81 * w, h),
+        (r, true) if r > 1.7 => BBox::new(w * 0.2, 0.0, w * 0.583, h),
+        (r, false) if r > 1.7 => BBox::new(w * 0.417, 0.0, 0.8 * w, h),
+        (r, true) if r > 1.34 => BBox::new(0.0, 0.0, w / 2.0 - w * 0.03, h),
+        (r, false) if r > 1.34 => BBox::new(w / 2.0 + w * 0.03, 0.0, w, h),
+        (r, true) if r > 1.0 => BBox::new(w * 0.36, 0.0, w, h),
+        (r, false) if r > 1.0 => BBox::new(0.0, 0.0, 0.64 * w, h),
+        _ => return false,
     };
 
     *image = crop::crop_rounded(image, bbox);

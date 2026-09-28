@@ -15,7 +15,7 @@ undocumented.
   (`cargo install cargo-nextest --locked`) is the standard runner here: each test runs in its
   own process, failures are clearer, and parallelisation is better. There are no doctests, so
   nextest covers the whole suite; use `cargo test` only where nextest cannot run a target.
-- **Quality gates:** `cargo fmt` and `cargo clippy --all-targets --all-features -D warnings`
+- **Quality gates:** `cargo fmt` and `cargo clippy --all-targets --all-features -- -D warnings`
   must stay green.
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,

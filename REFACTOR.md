@@ -305,7 +305,7 @@ must be applied in a specific restricted way, to honour the constraints in
 ## 5. Ordered refactor plan
 
 The phases run strictly top to bottom. Each is a self-contained, behaviour-preserving unit
-that lands green (`cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
+that lands green (`cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`,
 `cargo nextest run`) before the next begins. A phase assumes every earlier phase has
 landed; explicit dependencies are called out. The finished shape is described in
 [§6](#6-completed-state-flags-and-options).
@@ -887,7 +887,7 @@ before starting the next:
 
 ```bash
 cargo fmt
-cargo clippy --all-targets --all-features -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run
 ```
 
@@ -1027,7 +1027,7 @@ Existing always-on tests already pin two contracts the refactor must not break:
 ### 7.8 Process notes
 
 - **Per-step commands** (from `AGENTS.md`): `cargo fmt`, then
-  `cargo clippy --all-targets --all-features -D warnings`, then `cargo nextest run` — after
+  `cargo clippy --all-targets --all-features -- -D warnings`, then `cargo nextest run` — after
   every phase, before starting the next.
 - **One finding class is behaviour-visible.** A20 (`--black-borders --white-borders`
   becomes a clap conflict) rejects input that previously ran. That is the only place a

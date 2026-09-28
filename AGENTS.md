@@ -23,7 +23,7 @@ The design and specifications live in [`docs/`](docs/):
 ```bash
 cargo build --release
 cargo fmt
-cargo clippy --all-targets --all-features -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run          # standard test runner; use `cargo test` only where nextest can't
 ```
 

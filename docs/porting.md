@@ -6,7 +6,7 @@ built and where it deliberately differs from KCC. The user-facing behaviour is s
 
 ## Phase history
 
-Each phase ended with `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings` and
+Each phase ended with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings` and
 `cargo nextest run` green on the CI matrix.
 
 | Phase | Scope | Where it landed |
