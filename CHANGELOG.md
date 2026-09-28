@@ -10,6 +10,8 @@ release when a version tag is pushed.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-09-28
+
 ### Changed
 
 - Hardened the `archive` public API so that invalid archive states are unrepresentable (the
@@ -504,7 +506,8 @@ First tagged pre-release of the initial `comic-book` CLI.
 
 <!-- Links -->
 
-[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/jjangsangy/ComicBook/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/jjangsangy/ComicBook/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/jjangsangy/ComicBook/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/jjangsangy/ComicBook/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jjangsangy/ComicBook/compare/v0.2.4...v0.2.5
