@@ -24,8 +24,15 @@ The design and specifications live in [`docs/`](docs/):
 cargo build --release
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run          # standard test runner; use `cargo test` only where nextest can't
+# standard test runner; use `cargo test` only where nextest can't
+cargo nextest run 2>&1 | tail -n 20
 ```
+
+**Always pipe `cargo nextest` through `tail`.** A full run prints hundreds of lines, and only
+whether the run passed and which cases failed matter — both are in the trailing summary. `2>&1`
+is required because nextest writes to stderr; without it `tail` sees nothing. `tail -n 20`
+captures the summary plus the failing cases; raise the count only when a run has more failures
+than fit. Never dump the whole suite output (see [REFACTOR.md §7.1](REFACTOR.md)).
 
 ## Hard rules
 

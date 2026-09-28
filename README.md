@@ -627,10 +627,11 @@ comic-book completions powershell >> $PROFILE
 ## Development & Testing
 
 Run unit and integration tests with [cargo-nextest](https://nexte.st/) (install once with
-`cargo install cargo-nextest --locked`):
+`cargo install cargo-nextest --locked`). Pipe the run through `tail` so only the pass/fail
+summary and the failing cases survive:
 
 ```bash
-cargo nextest run
+cargo nextest run 2>&1 | tail -n 20
 ```
 
 Check code style and linter warnings:

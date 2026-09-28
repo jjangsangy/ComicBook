@@ -1027,8 +1027,15 @@ before starting the next:
 ```bash
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run
+cargo nextest run 2>&1 | tail -n 20
 ```
+
+**Always pipe `cargo nextest` through `tail`.** A full run prints hundreds of lines, and only
+whether the run passed and which cases failed matter — both are in the trailing summary. `2>&1`
+is required because nextest writes to stderr; without it `tail` sees nothing. `tail -n 20`
+captures the summary plus the failing cases; raise the count only when a run has more failures
+than fit. Never dump the whole suite output — it swamps the terminal and the agent's context
+for no benefit.
 
 ### 7.2 Test suite map
 
@@ -1084,14 +1091,17 @@ compiles them, new tests must satisfy the same lint contract as library code (§
 
 ```bash
 # Default: the fast set; #[ignore]d slow/memory/conformance tests are skipped.
-cargo nextest run
+cargo nextest run 2>&1 | tail -n 20
 
 # One suite, including its ignored tests.
-cargo nextest run --run-ignored all --test ebook_webtoon_tests
+cargo nextest run --run-ignored all --test ebook_webtoon_tests 2>&1 | tail -n 20
 
 # Only the ignored tests (slow set + stress + epubcheck; epubcheck needs it on PATH).
-cargo nextest run --run-ignored ignored-only
+cargo nextest run --run-ignored ignored-only 2>&1 | tail -n 20
 ```
+
+Every invocation is piped through `tail` (see §7.1): only the pass/fail summary and the
+failing cases are worth reading.
 
 Long-running and memory tests are `#[ignore]`d because the unoptimised CI build is slow;
 they are listed with timings in `docs/development.md`. They must be run explicitly for the
@@ -1166,8 +1176,9 @@ Existing always-on tests already pin two contracts the refactor must not break:
 ### 7.8 Process notes
 
 - **Per-step commands** (from `AGENTS.md`): `cargo fmt`, then
-  `cargo clippy --all-targets --all-features -- -D warnings`, then `cargo nextest run` — after
-  every phase, before starting the next.
+  `cargo clippy --all-targets --all-features -- -D warnings`, then
+  `cargo nextest run 2>&1 | tail -n 20` — after every phase, before starting the next. The
+  `tail` pipe is mandatory (§7.1): read the trailing summary and the failing cases, nothing else.
 - **One finding class is behaviour-visible.** A20 (`--black-borders --white-borders`
   becomes a clap conflict) rejects input that previously ran. That is the only place a
   fix changes accepted input; if the maintainer wants the old tolerance, keep the flags

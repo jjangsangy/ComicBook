@@ -141,6 +141,10 @@ release when a version tag is pushed.
 - Corrected the lint command in `AGENTS.md`, `REFACTOR.md`, `docs/development.md` and
   `docs/porting.md` to `cargo clippy --all-targets --all-features -- -D warnings` (the missing `--`
   made cargo reject `-D warnings` as an unexpected argument).
+- Required piping `cargo nextest` through `tail` (`cargo nextest run 2>&1 | tail -n 20`) in
+  `AGENTS.md`, `REFACTOR.md`, `docs/development.md`, `CONTRIBUTING.md`, `README.md` and the pull
+  request template: only the pass/fail summary and the names of the failing cases matter, so the
+  full run output is not echoed. CI keeps the unfiltered `cargo nextest run --no-fail-fast`.
 
 ## [0.2.7] - 2026-09-27
 
