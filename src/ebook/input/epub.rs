@@ -24,6 +24,7 @@ use std::sync::Arc;
 use crate::archive::{open_reader, ArchiveKind, EntryContent};
 use crate::ebook::model::ComicTree;
 use crate::ebook::options::{Layout, Options};
+use crate::path_text;
 
 use super::archive::{build_tree, load_page, LoadedPage, RootStrip};
 
@@ -219,18 +220,14 @@ fn normalize(path: &str) -> String {
 
 /// The directory part of a container path (`""` for a root-level file).
 fn dir_of(path: &str) -> String {
-    match path.rfind('/') {
-        Some(index) => path[..index].to_string(),
-        None => String::new(),
-    }
+    path_text::directory(path).to_string()
 }
 
 /// The extension of a path, including the leading dot (`""` when none).
 fn extension_of(path: &str) -> String {
-    let base = path.rsplit('/').next().unwrap_or(path);
-    match base.rfind('.') {
-        Some(index) if index > 0 => base[index..].to_string(),
-        _ => String::new(),
+    match path_text::extension(path) {
+        Some(ext) => format!(".{ext}"),
+        None => String::new(),
     }
 }
 

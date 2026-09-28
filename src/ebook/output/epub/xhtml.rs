@@ -75,12 +75,7 @@ pub(crate) fn build_xhtml(page: &PageRef<'_>, options: &Options) -> Result<Vec<u
     // exists; the absent case is an empty, never-referenced `String`.
     let below_src = match below {
         Some(image) => {
-            let file = image
-                .name
-                .as_str()
-                .rsplit('/')
-                .next()
-                .unwrap_or(image.name.as_str());
+            let file = crate::path_text::file_name(image.name.as_str());
             format!("{}Images/{postfix}{file}", "../".repeat(backref))
         }
         None => String::new(),

@@ -94,52 +94,35 @@ pub enum Profile {
 
 /// Every profile, in [`PROFILE_TABLE`] order.
 ///
-/// This drives the `--profile` value list. It is kept separate from the table
-/// because [`ValueEnum::value_variants`] must return a slice; a unit test keeps
-/// the two in sync.
-pub static ALL_PROFILES: [Profile; 41] = [
-    Profile::K1,
-    Profile::K2,
-    Profile::Kdx,
-    Profile::K34,
-    Profile::K57,
-    Profile::Kpw,
-    Profile::Kv,
-    Profile::Kpw34,
-    Profile::K810,
-    Profile::Ko,
-    Profile::K11,
-    Profile::Kpw5,
-    Profile::Kpw6,
-    Profile::Ks1860,
-    Profile::Ks1920,
-    Profile::Ks1240,
-    Profile::Ks1324,
-    Profile::Ks,
-    Profile::Kcs,
-    Profile::Ks3,
-    Profile::Kscs,
-    Profile::KoMt,
-    Profile::KoG,
-    Profile::KoGhd,
-    Profile::KoA,
-    Profile::KoAhd,
-    Profile::KoAh2o,
-    Profile::KoAo,
-    Profile::KoN,
-    Profile::KoC,
-    Profile::KoCc,
-    Profile::KoL,
-    Profile::KoLc,
-    Profile::KoF,
-    Profile::KoS,
-    Profile::KoE,
-    Profile::Rmk1,
-    Profile::Rmk2,
-    Profile::RmkPp,
-    Profile::RmkPpMove,
-    Profile::Other,
-];
+/// Derived from the table's own `profile` tags, so there is no second hand-kept list
+/// of variants to drift out of sync; it drives the `--profile` value list.
+pub static ALL_PROFILES: [Profile; PROFILE_ROWS.len()] = profile_variants(&PROFILE_ROWS);
+
+/// The profile tag of each row, in row order (the seed is overwritten in full).
+const fn profile_variants<const N: usize>(rows: &[ProfileEntry; N]) -> [Profile; N] {
+    let mut variants = [Profile::Other; N];
+    let mut index = 0;
+    while index < N {
+        variants[index] = rows[index].profile;
+        index += 1;
+    }
+    variants
+}
+
+/// Fails the build unless every row sits at its own [`Profile`] discriminant, which
+/// is what lets [`Profile::entry`] index [`PROFILE_TABLE`] directly.
+const _: () = check_rows_match_discriminants(&PROFILE_ROWS);
+
+const fn check_rows_match_discriminants<const N: usize>(rows: &[ProfileEntry; N]) {
+    let mut index = 0;
+    while index < N {
+        assert!(
+            rows[index].profile as usize == index,
+            "PROFILE_ROWS must list each profile at its discriminant index"
+        );
+        index += 1;
+    }
+}
 
 /// One row of the device profile table.
 #[derive(Debug, Clone, Copy)]
@@ -155,8 +138,9 @@ pub struct ProfileEntry {
     pub palette: &'static [u8],
 }
 
-/// The device profile table (see docs/cli.md), in [`ALL_PROFILES`] order.
-pub static PROFILE_TABLE: [ProfileEntry; 41] = [
+/// The device profile rows, defined once as a `const` so [`ALL_PROFILES`] and the
+/// discriminant check can be derived from them at compile time.
+const PROFILE_ROWS: [ProfileEntry; 41] = [
     ProfileEntry {
         profile: Profile::K1,
         code: "K1",
@@ -528,6 +512,9 @@ pub static PROFILE_TABLE: [ProfileEntry; 41] = [
     },
 ];
 
+/// The device profile table (see docs/cli.md), in [`ALL_PROFILES`] order.
+pub static PROFILE_TABLE: [ProfileEntry; PROFILE_ROWS.len()] = PROFILE_ROWS;
+
 /// Resolved profile geometry for a run.
 ///
 /// This is the Rust counterpart of KCC's `options.profileData` tuple: the
@@ -546,14 +533,12 @@ pub struct ProfileData {
 impl Profile {
     /// The table row describing this profile.
     ///
-    /// `ALL_PROFILES` and `PROFILE_TABLE` are kept in lock-step (see the
-    /// `profiles` unit test), so the lookup always succeeds; fall back to the first
-    /// row rather than panicking if that invariant is ever broken.
+    /// The discriminant indexes [`PROFILE_TABLE`] directly (O(1), no fallback row and
+    /// no per-variant match); the `PROFILE_ROWS` check above proves every row sits at
+    /// its own variant's discriminant, so the index is in range by construction
+    /// (REFACTOR.md E11).
     pub fn entry(self) -> &'static ProfileEntry {
-        match ALL_PROFILES.iter().position(|&profile| profile == self) {
-            Some(index) => &PROFILE_TABLE[index],
-            None => &PROFILE_TABLE[0],
-        }
+        &PROFILE_TABLE[self as usize]
     }
 
     /// Canonical KCC profile code (e.g. `KV`).

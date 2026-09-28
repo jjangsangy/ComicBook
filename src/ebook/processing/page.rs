@@ -39,6 +39,7 @@ use crate::ebook::options::{
 };
 use crate::ebook::processing::kernels;
 use crate::ebook::profiles::Profile;
+use crate::path_text;
 use crate::units::{Quality, Range, Size};
 
 /// Split a page wider than this multiple of the target aspect ratio (see docs/processing.md).
@@ -1306,14 +1307,8 @@ fn named_page(
     order: Option<OrderClass>,
     part: Option<&str>,
 ) -> String {
-    let (directory, file_name) = match source_name.rsplit_once('/') {
-        Some((directory, file_name)) => (Some(directory), file_name),
-        None => (None, source_name),
-    };
-    let stem = match file_name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
-        _ => file_name,
-    };
+    let (directory, file_name) = path_text::split_dir_file(source_name);
+    let stem = path_text::stem(file_name);
     let mut name = stem.to_string();
     if let Some(order) = order {
         name.push_str(&format!("-kcc-{}", order.suffix()));
@@ -1324,9 +1319,10 @@ fn named_page(
     }
     name.push('.');
     name.push_str(media_type.extension());
-    match directory {
-        Some(directory) => format!("{directory}/{name}"),
-        None => name,
+    if directory.is_empty() {
+        name
+    } else {
+        format!("{directory}/{name}")
     }
 }
 

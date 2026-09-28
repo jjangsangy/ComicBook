@@ -24,6 +24,7 @@ use rayon::prelude::*;
 use crate::ebook::model::{ChapterName, ComicTree, EncodedPage, Page};
 use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
+use crate::path_text;
 use crate::units::{Fraction, Size};
 
 /// Fraction of each inter-panel gutter KCC retains after cropping.
@@ -217,7 +218,9 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     for chapter in &tree.chapters {
         for page in &chapter.pages {
             any_page = true;
-            if !already_processed && file_stem(page.rel_path.as_str()).contains("-kcc") {
+            if !already_processed
+                && path_text::stem(path_text::file_name(page.rel_path.as_str())).contains("-kcc")
+            {
                 already_processed = true;
             }
             let size = page.dimensions();
@@ -255,13 +258,4 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     }
 
     warnings
-}
-
-/// A page file name without its final extension.
-fn file_stem(name: &str) -> &str {
-    let base = name.rsplit('/').next().unwrap_or(name);
-    match base.rfind('.') {
-        Some(index) if index > 0 => &base[..index],
-        _ => base,
-    }
 }

@@ -19,18 +19,59 @@ use quick_xml::reader::Reader;
 use crate::ebook::model::ComicTree;
 use crate::ebook::options::{MetadataTitle, OutputEncoding, OutputOptions};
 
-/// The ComicInfo.xml elements KCC reads (its `MetadataParser.data` keys).
-const SINGLE_FIELDS: [&str; 9] = [
-    "Series",
-    "Volume",
-    "Number",
-    "Summary",
-    "Title",
-    "Writer",
-    "Penciller",
-    "Inker",
-    "Colorist",
-];
+/// A ComicInfo.xml element KCC reads into a single field (its `MetadataParser.data`
+/// keys).
+///
+/// The spelling of each name lives in one place ([`Field::name`]), with
+/// [`Field::from_name`] as its inverse, so the parse, capture and removal passes can
+/// no longer spell the nine names differently (REFACTOR.md B16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Field {
+    Series,
+    Volume,
+    Number,
+    Summary,
+    Title,
+    Writer,
+    Penciller,
+    Inker,
+    Colorist,
+}
+
+impl Field {
+    /// Every field, in the order KCC reads them.
+    const ALL: [Field; 9] = [
+        Field::Series,
+        Field::Volume,
+        Field::Number,
+        Field::Summary,
+        Field::Title,
+        Field::Writer,
+        Field::Penciller,
+        Field::Inker,
+        Field::Colorist,
+    ];
+
+    /// The element's local name.
+    fn name(self) -> &'static str {
+        match self {
+            Field::Series => "Series",
+            Field::Volume => "Volume",
+            Field::Number => "Number",
+            Field::Summary => "Summary",
+            Field::Title => "Title",
+            Field::Writer => "Writer",
+            Field::Penciller => "Penciller",
+            Field::Inker => "Inker",
+            Field::Colorist => "Colorist",
+        }
+    }
+
+    /// The field matching an element's local name, if any.
+    fn from_name(name: &str) -> Option<Field> {
+        Field::ALL.into_iter().find(|field| field.name() == name)
+    }
+}
 
 /// The metadata KCC's `MetadataParser` extracts from a `ComicInfo.xml`.
 ///
@@ -62,17 +103,17 @@ impl ComicInfo {
     pub fn parse(xml: &[u8]) -> Result<ComicInfo> {
         let mut reader = Reader::from_reader(xml);
         let mut info = ComicInfo::default();
-        let mut found: HashMap<&'static str, String> = HashMap::new();
-        let mut capture: Option<&'static str> = None;
+        let mut found: HashMap<Field, String> = HashMap::new();
+        let mut capture: Option<Field> = None;
         let mut text = String::new();
 
         loop {
             match reader.read_event().context("Invalid ComicInfo.xml")? {
                 Event::Start(event) => {
                     let qname = event.name();
-                    let name = local_name(qname.as_ref());
-                    if let Some(field) = single_field(name) {
-                        if !found.contains_key(field) {
+                    let name = local_name(qname.as_ref())?;
+                    if let Some(field) = Field::from_name(name) {
+                        if !found.contains_key(&field) {
                             capture = Some(field);
                             text.clear();
                         }
@@ -82,8 +123,8 @@ impl ComicInfo {
                 }
                 Event::Empty(event) => {
                     let qname = event.name();
-                    let name = local_name(qname.as_ref());
-                    if let Some(field) = single_field(name) {
+                    let name = local_name(qname.as_ref())?;
+                    if let Some(field) = Field::from_name(name) {
                         found.entry(field).or_default();
                     } else if name == "Page" {
                         parse_page(&event, &mut info)?;
@@ -97,7 +138,7 @@ impl ComicInfo {
                 Event::End(event) => {
                     let qname = event.name();
                     if let Some(field) = capture {
-                        if local_name(qname.as_ref()) == field {
+                        if local_name(qname.as_ref())? == field.name() {
                             found.insert(field, std::mem::take(&mut text));
                             capture = None;
                         }
@@ -108,18 +149,20 @@ impl ComicInfo {
             }
         }
 
-        info.series = found.remove("Series").unwrap_or_default();
-        info.volume = found.remove("Volume").unwrap_or_default();
-        info.number = found.remove("Number").unwrap_or_default();
-        info.summary = found.remove("Summary").unwrap_or_default();
-        info.title = found.remove("Title").unwrap_or_default();
-        for (element, target) in [
-            ("Writer", &mut info.writers),
-            ("Penciller", &mut info.pencillers),
-            ("Inker", &mut info.inkers),
-            ("Colorist", &mut info.colorists),
-        ] {
-            *target = split_people(found.remove(element).unwrap_or_default());
+        // Drain every field through one exhaustive `match`, so a field added to the
+        // enum above cannot be silently dropped here (REFACTOR.md B16).
+        for (field, value) in found {
+            match field {
+                Field::Series => info.series = value,
+                Field::Volume => info.volume = value,
+                Field::Number => info.number = value,
+                Field::Summary => info.summary = value,
+                Field::Title => info.title = value,
+                Field::Writer => info.writers = split_people(value),
+                Field::Penciller => info.pencillers = split_people(value),
+                Field::Inker => info.inkers = split_people(value),
+                Field::Colorist => info.colorists = split_people(value),
+            }
         }
 
         Ok(info)
@@ -289,7 +332,7 @@ fn parse_page(event: &BytesStart<'_>, info: &mut ComicInfo) -> Result<()> {
         let value = attribute
             .unescape_value()
             .context("Invalid ComicInfo.xml attribute value")?;
-        match local_name(attribute.key.as_ref()) {
+        match local_name(attribute.key.as_ref())? {
             "Image" => {
                 image = Some(
                     value
@@ -315,17 +358,16 @@ fn split_people(value: String) -> Vec<String> {
 }
 
 /// The element's local name (the part after any namespace prefix).
-fn local_name(name: &[u8]) -> &str {
+///
+/// A name that is not valid UTF-8 makes the whole document an error, so `parse`
+/// applies its "discard malformed ComicInfo" rule instead of silently failing every
+/// comparison for that element (REFACTOR.md E14).
+fn local_name(name: &[u8]) -> Result<&str> {
     let name = match name.iter().rposition(|byte| *byte == b':') {
         Some(index) => &name[index + 1..],
         None => name,
     };
-    std::str::from_utf8(name).unwrap_or("")
-}
-
-/// The static field name matching `name`, if any.
-fn single_field(name: &str) -> Option<&'static str> {
-    SINGLE_FIELDS.iter().copied().find(|field| *field == name)
+    std::str::from_utf8(name).context("Invalid ComicInfo.xml element name")
 }
 
 /// Python's `str.zfill`: pad with leading zeros, keeping a leading sign.
@@ -412,6 +454,21 @@ mod tests {
         let info = ComicInfo::parse(xml.as_bytes())?;
         assert_eq!(info.writers, vec!["A", "B"]);
         Ok(())
+    }
+
+    #[test]
+    fn every_field_name_round_trips() {
+        for field in Field::ALL {
+            assert_eq!(Field::from_name(field.name()), Some(field));
+        }
+        assert_eq!(Field::from_name("NotAField"), None);
+    }
+
+    #[test]
+    fn an_invalid_utf8_element_name_discards_the_document() {
+        // XML forbids this, but a malformed document must be discarded outright
+        // rather than silently ignoring the affected element (REFACTOR.md E14).
+        assert!(ComicInfo::parse(b"<ComicInfo><\xff/></ComicInfo>").is_err());
     }
 
     #[test]

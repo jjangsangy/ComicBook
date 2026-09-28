@@ -207,6 +207,20 @@ fn profile_table_is_consistent_with_the_variant_list() {
 }
 
 #[test]
+fn every_profile_resolves_to_its_own_table_row() {
+    for (index, profile) in ALL_PROFILES.iter().enumerate() {
+        // `Profile::entry` indexes `PROFILE_TABLE` by the discriminant; the `PROFILE_ROWS`
+        // compile-time check pins the row order and `ALL_PROFILES` is derived from those
+        // rows, so this is a runtime sanity check on top of that guarantee.
+        assert_eq!(
+            *profile as usize, index,
+            "the enum declaration order must match ALL_PROFILES"
+        );
+        assert_eq!(profile.entry().profile, *profile);
+    }
+}
+
+#[test]
 fn processing_mode_enums_accept_names_and_numeric_aliases() -> Result<()> {
     // Every named value and its legacy numeric alias resolve to the same mode.
     for (values, expected) in [

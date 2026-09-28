@@ -21,6 +21,7 @@ use regex::Regex;
 
 use crate::ebook::model::{ChapterName, ComicTree, MediaType, Page, RelPath, SourceName};
 use crate::ebook::options::{Options, OutputEncoding};
+use crate::path_text;
 
 /// KCC's deterministic page-name prefix (`kcc-0001`).
 const PAGE_PREFIX: &str = "kcc";
@@ -151,7 +152,7 @@ fn slugify_directories(
     // Parent path → immediate child basenames.
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     for directory in &directories {
-        let (parent, base) = split_dir_file(directory);
+        let (parent, base) = path_text::split_dir_file(directory);
         children
             .entry(parent.to_string())
             .or_default()
@@ -353,28 +354,18 @@ fn read_names(directory: &Path) -> Vec<String> {
 
 /// Whether `name` has one of the cover image extensions.
 fn is_cover_image(name: &str) -> bool {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => {
-            COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
-        }
-        _ => false,
-    }
+    path_text::extension(name)
+        .is_some_and(|ext| COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// The lower-cased image extension of a page's source name.
 fn page_extension(page: &Page) -> String {
-    let file = page
-        .source_name
-        .as_str()
-        .rsplit('/')
-        .next()
-        .unwrap_or(page.source_name.as_str());
-    match file.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
+    match path_text::extension(page.source_name.as_str()) {
+        Some(ext) => ext.to_ascii_lowercase(),
         // A name with no extension: fall back to the payload's media type. A
         // `Consumed` page has none, but it cannot reach the naming pass, which
         // runs before decoding; keep the historical default rather than fail.
-        _ => match page.media_type() {
+        None => match page.media_type() {
             Some(media_type) => media_type.extension().to_string(),
             None => MediaType::Jpeg.extension().to_string(),
         },
@@ -388,14 +379,6 @@ fn kobo_name(name: &str) -> String {
         return name.to_string();
     };
     pattern.replace_all(name, "_").into_owned()
-}
-
-/// Split a book-relative path into `(directory, base)`; the root is `""`.
-fn split_dir_file(path: &str) -> (&str, &str) {
-    match path.rfind('/') {
-        Some(index) => (&path[..index], &path[index + 1..]),
-        None => ("", path),
-    }
 }
 
 /// Join a directory and a name, skipping the separator at the root.

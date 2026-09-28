@@ -1,7 +1,7 @@
 use crate::archive::{detect_archive_kind, ArchiveFormat, ArchiveKind, RootStripPolicy};
 use crate::image_ops::is_image_file;
 use anyhow::{anyhow, Result};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -254,13 +254,10 @@ fn collect_path_tasks(
 
 fn execute_conversion_tasks(tasks: &[ConvertTask], target_kind: ArchiveKind) {
     let pb = ProgressBar::new(tasks.len() as u64);
-    let style = ProgressStyle::default_bar().template(
+    pb.set_style(crate::progress_style::bar_with_chars(
         "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}",
-    );
-    pb.set_style(match style {
-        Ok(style) => style.progress_chars("#->"),
-        Err(_) => ProgressStyle::default_bar(),
-    });
+        "#->",
+    ));
 
     let policy = if target_kind == ArchiveKind::Directory {
         RootStripPolicy::Always

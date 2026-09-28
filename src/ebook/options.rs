@@ -157,6 +157,16 @@ pub enum BatchSplit {
     PerSubdirectory,
 }
 
+impl BatchSplit {
+    /// Force automatic splitting unless the user already asked for per-directory splitting
+    /// (KCC's preset expansion).
+    pub fn ensure_splitting(&mut self) {
+        if *self != BatchSplit::PerSubdirectory {
+            *self = BatchSplit::Auto;
+        }
+    }
+}
+
 /// The reader family a resolved run targets (KCC's `iskindle` / `isKobo`).
 ///
 /// `Kobo` is KCC's `isKobo`, which really means *not* Kindle: it also covers
@@ -279,13 +289,6 @@ enum ResolvedFormat {
     Azw3,
     Cbz,
     Pdf,
-}
-
-/// Force automatic splitting unless the user already asked for per-directory splitting.
-fn force_split(batch_split: &mut BatchSplit) {
-    if *batch_split != BatchSplit::PerSubdirectory {
-        *batch_split = BatchSplit::Auto;
-    }
 }
 
 /// Colour handling (`--force-color` / `--color-autocontrast`).
@@ -507,7 +510,7 @@ impl Options {
             // splits), PDF for reMarkable, else EPUB.
             Format::Auto if profile == Profile::Kdx => ResolvedFormat::Cbz,
             Format::Auto if profile.is_kindle() => {
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Mobi
             }
             Format::Auto if profile.is_remarkable() => ResolvedFormat::Pdf,
@@ -519,13 +522,13 @@ impl Options {
             }
             Format::Azw3 => ResolvedFormat::Azw3,
             Format::Mobi => {
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Mobi
             }
             // `mobi+epub` keeps the intermediate EPUB.
             Format::MobiEpub => {
                 keep_epub = true;
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Mobi
             }
             Format::Cbz => ResolvedFormat::Cbz,
@@ -534,24 +537,24 @@ impl Options {
             Format::Kfx => {
                 target_size = Some(195);
                 kfx = true;
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Epub
             }
             // Size-capped presets expand to their base format and force splitting.
             Format::Epub200mb => {
                 target_size = Some(195);
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Epub
             }
             Format::Pdf200mb => {
                 target_size = Some(195);
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Pdf
             }
             Format::MobiEpub200mb => {
                 keep_epub = true;
                 target_size = Some(195);
-                force_split(&mut batch_split);
+                batch_split.ensure_splitting();
                 ResolvedFormat::Mobi
             }
         };

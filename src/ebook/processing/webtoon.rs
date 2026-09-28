@@ -29,6 +29,7 @@ use crate::ebook::options::Options;
 use crate::ebook::processing::color::to_luma601;
 use crate::ebook::processing::kernels;
 use crate::ebook::processing::page::{self, Method};
+use crate::path_text;
 use crate::units::{Pixels, Size};
 
 /// The reference caps the virtual page width at 1072 px (`max_width`), regardless of
@@ -77,7 +78,7 @@ pub fn transform(tree: &mut ComicTree, options: &Options) -> Result<()> {
         // The merged strip is written back under the first page's sanitized stem
         // (`os.path.splitext(first)[0]`), then saved as PNG; the virtual pages keep
         // that stem and get a `-NNNN` suffix.
-        let stem = split_stem(chapter.pages[0].source_name.as_str());
+        let stem = path_text::stem(chapter.pages[0].source_name.as_str()).to_string();
         chapter.pages = split_chapter(merged, &stem, options)?;
     }
     Ok(())
@@ -161,14 +162,6 @@ fn most_common_width(pages: &[Page]) -> u32 {
     best
 }
 
-/// The merged strip's stem: the first page's path with its extension removed.
-fn split_stem(source_name: &str) -> String {
-    match source_name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem.to_string(),
-        _ => source_name.to_string(),
-    }
-}
-
 /// Split a merged strip into virtual pages (KCC's `splitImage`).
 ///
 /// Takes the strip by value so the short-strip path can move it into its single
@@ -182,14 +175,14 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
             SourceName::new(format!("{stem}.png")),
         )]);
     }
-    if width < MIN_STRIP_WIDTH {
+    let Some(strip_width) = StripWidth::new(width) else {
         bail!(
             "Webtoon strip is only {width} px wide (needs at least {MIN_STRIP_WIDTH} px); \
              try the legacy extract option"
         );
-    }
+    };
 
-    let panels = detect_panels(&merged);
+    let panels = detect_panels(&merged, strip_width);
     let virtual_height = virtual_height(width, options);
     let split = split_panels(&panels, virtual_height);
     let units = pack_pages(&split, virtual_height);
@@ -227,12 +220,7 @@ fn split_chapter(merged: DynamicImage, stem: &str, options: &Options) -> Result<
 /// PNGs the reference would have packaged (`imgDirectoryProcessing` is skipped there);
 /// the normal path re-encodes the pixels through the per-page pipeline.
 fn page_from(image: DynamicImage, source_name: SourceName) -> Page {
-    let rel_path = RelPath::new(
-        source_name
-            .as_str()
-            .rsplit_once('/')
-            .map_or_else(|| source_name.as_str(), |(_, file)| file),
-    );
+    let rel_path = RelPath::new(path_text::file_name(source_name.as_str()));
     let dimensions = Size::from_dimensions(image.dimensions());
     Page {
         source_name,
@@ -259,55 +247,100 @@ fn virtual_height(strip_width: u32, options: &Options) -> u32 {
     (base * f64::from(virtual_width)) as u32
 }
 
+/// A merged strip's width, validated wide enough for the panel scan.
+///
+/// The scan advances [`StripWidth::step`] rows per iteration; a strip narrow enough
+/// for that step to round to zero would spin forever. Building the width once, through
+/// [`StripWidth::new`], makes that state unrepresentable instead of re-guarding it at
+/// the loop (REFACTOR.md C11).
+#[derive(Clone, Copy)]
+struct StripWidth(u32);
+
+impl StripWidth {
+    /// The only constructor: `None` when `width` is too narrow to scan safely
+    /// (narrower than [`MIN_STRIP_WIDTH`]).
+    fn new(width: u32) -> Option<Self> {
+        (width >= MIN_STRIP_WIDTH).then_some(Self(width))
+    }
+
+    /// The strip width in pixels.
+    fn get(self) -> u32 {
+        self.0
+    }
+
+    /// `width / 80`, rounded up to even: the band height the scan samples.
+    fn v_pad(self) -> u32 {
+        let pad = self.0 / 80;
+        if pad % 2 == 1 {
+            pad + 1
+        } else {
+            pad
+        }
+    }
+
+    /// `width / 20`: the horizontal padding excluded from each band.
+    fn h_pad(self) -> u32 {
+        self.0 / 20
+    }
+
+    /// The rows the scan advances per iteration. Non-zero by construction: `new`
+    /// requires at least [`MIN_STRIP_WIDTH`], whose `v_pad` rounds up to `4`.
+    fn step(self) -> u32 {
+        self.v_pad() / 2
+    }
+}
+
 /// Find the panels in a merged strip (KCC's panel scan).
 ///
 /// The strip is thresholded into an edge map, then scanned top to bottom in
 /// `v_pad / 2` steps; a band that contains no edge is "solid". A panel is a maximal
 /// run of non-solid bands, and a short panel that starts in the first `2 * v_pad`
-/// rows is discarded.
-fn detect_panels(image: &DynamicImage) -> Vec<Panel> {
-    let (width, height) = image.dimensions();
-    let h_pad = width / 20;
-    let mut v_pad = width / 80;
-    if v_pad % 2 == 1 {
-        v_pad += 1;
-    }
+/// rows is discarded. The width comes from a [`StripWidth`], so the scan's step is
+/// known non-zero without a guard.
+fn detect_panels(image: &DynamicImage, strip_width: StripWidth) -> Vec<Panel> {
+    let width = strip_width.get();
+    let (_, height) = image.dimensions();
+    let h_pad = strip_width.h_pad();
+    let v_pad = strip_width.v_pad();
     let mask = edge_mask(image);
 
     let mut panels = Vec::new();
     let mut y_work = 0u32;
-    let mut panel_detected = false;
-    let mut panel_top = 0u32;
-    let step = v_pad / 2;
+    // The open panel's top, or `None` between panels. One `Option` replaces the old
+    // `panel_detected`/`panel_top` pair, which had to be mutated in lockstep and could
+    // drift (REFACTOR.md C11).
+    let mut open_panel: Option<u32> = None;
+    let step = strip_width.step();
 
     while y_work < height {
         let solid = band_is_solid(&mask, h_pad, y_work, width - h_pad, y_work + v_pad, height);
 
-        if !solid && !panel_detected {
-            panel_detected = true;
-            panel_top = y_work;
+        if !solid && open_panel.is_none() {
+            open_panel = Some(y_work);
         }
 
         // The bottom edge: close a panel that runs off the end of the strip.
-        if height - y_work <= v_pad / 2 && !solid && panel_detected {
-            panel_detected = false;
-            panels.push(Panel {
-                top: panel_top,
-                bottom: height,
-            });
+        if height - y_work <= v_pad / 2 && !solid {
+            if let Some(top) = open_panel.take() {
+                panels.push(Panel {
+                    top,
+                    bottom: height,
+                });
+            }
         }
 
-        if solid && panel_detected {
-            panel_detected = false;
-            let panel = Panel {
-                top: panel_top,
-                bottom: y_work,
-            };
-            // Skip a short panel hugging the top of the strip.
-            if panel.top < v_pad * 2 && panel.height() < v_pad * 2 {
-                // dropped
-            } else {
-                panels.push(panel);
+        if solid {
+            if let Some(top) = open_panel.take() {
+                let panel = Panel {
+                    top,
+                    bottom: y_work,
+                };
+                // Skip a short panel hugging the top of the strip.
+                if panel.top < v_pad * 2 && panel.height() < v_pad * 2 {
+                    // dropped
+                } else {
+                    panels.push(panel);
+                }
             }
         }
 
@@ -631,5 +664,14 @@ mod tests {
             vec!["Chapter 1/kcc-0001-0001.png", "Chapter 1/kcc-0001-0002.png",]
         );
         Ok(())
+    }
+
+    #[test]
+    fn strip_width_rejects_too_narrow_strips_and_keeps_the_step_non_zero() {
+        // `new` is the gate: below `MIN_STRIP_WIDTH` it yields `None`, and at the
+        // boundary the scan step is guaranteed non-zero so the loop always advances
+        // (REFACTOR.md C11).
+        assert!(StripWidth::new(MIN_STRIP_WIDTH - 1).is_none());
+        assert!(StripWidth::new(MIN_STRIP_WIDTH).is_some_and(|width| width.step() > 0));
     }
 }

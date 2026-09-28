@@ -70,6 +70,8 @@ src/
   lib.rs, cli.rs               # root Cli; `ebook` subcommand dispatch
   archive/                     # archive reader/writer (reused)
   units.rs                     # zero-cost geometry/unit newtypes (Size, BBox, IndexBox, Range, ...)
+  path_text.rs                 # `/`-separated path helpers (file_name/directory/stem/extension)
+  progress_style.rs            # shared indicatif bar/spinner styles
   ebook/
     mod.rs                     # run_ebook(); orchestration (makeBook equivalent)
     cli.rs                     # clap structs for every option group
@@ -159,6 +161,12 @@ struct Cover { page: EncodedPage, smart_cropped: bool }
   shape is the `Tomes` enum rather than a `drop_bookmarks` boolean. These render through
   `Display`/askama exactly as the values they replaced, so the OPF/NCX/NAV/XHTML and MOBI/PDF bytes
   are unchanged.
+- The path/stem plumbing shared by the archive, naming, chunk, webtoon, page and EPUB layers is
+  the stateless [`path_text`](../../src/path_text.rs) helpers (`file_name`/`directory`/
+  `split_dir_file`/`stem`/`extension`), and the `indicatif` styles are the shared
+  [`progress_style`](../../src/progress_style.rs) helpers. `ComicInfo`'s nine single-value fields
+  are keyed on a `Field` enum (one spelling per name), and the batch `Reporter` holds one
+  `Mode` (`Batch`/`Standalone`) rather than parallel `Option` fields.
 - `Chapter::name` is the directory path relative to the image root (`Root`, `Dir("Chapter 1")`,
   `Dir("Chapter 1/Sub")`, …); each path component is slugified on output.
 - `Page::source_name` is book-relative after an archive's single redundant root directory is

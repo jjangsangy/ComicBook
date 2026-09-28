@@ -86,15 +86,15 @@ pub fn run_ebook(args: EbookArgs) -> Result<()> {
         progress::Reporter::standalone()
     };
 
-    for source in options.inputs.clone() {
-        let written = convert_source_with(&source, &options, &reporter)?;
+    for source in &options.inputs {
+        let written = convert_source_with(source, &options, &reporter)?;
         for path in &written {
             reporter.println(format!("Created {}", path.display()));
         }
         reporter.inc();
 
         if options.session.delete {
-            delete_source(&source)?;
+            delete_source(source)?;
         }
     }
     reporter.finish();

@@ -28,6 +28,7 @@ use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags, ScribeH
 use crate::ebook::options::{Options, Splitter};
 use crate::ebook::processing::ProcessedBook;
 use crate::ebook::PreparedBook;
+use crate::path_text;
 use crate::units::Size;
 
 /// A page's chapter directory relative to `OEBPS/Images` (`""` at the root).
@@ -162,7 +163,7 @@ pub(crate) fn build_entries<'a>(
     tomes: Tomes,
 ) -> Result<EpubEntries<'a>> {
     let uuid = Uuid::new_v4().to_string();
-    let modified = modified_timestamp();
+    let modified = modified_timestamp()?;
 
     // Flatten the processed chapters into the page list KCC's `os.walk` produces.
     // A Scribe `-below` image is skipped: it is only referenced from its `-above`
@@ -302,11 +303,19 @@ pub(crate) fn build_entries<'a>(
 }
 
 /// The current UTC time as KCC's `dcterms:modified` (`%Y-%m-%dT%H:%M:%SZ`).
-fn modified_timestamp() -> String {
+///
+/// The format is a compile-time constant (`format_description!`), so formatting can
+/// only fail on an allocation failure; that is surfaced as an error rather than hidden
+/// behind an epoch-literal fallback (REFACTOR.md E12).
+fn modified_timestamp() -> Result<String> {
+    format_modified(OffsetDateTime::now_utc())
+}
+
+/// Format an instant as KCC's `dcterms:modified`, split out so the constant format can
+/// be pinned by a test.
+fn format_modified(now: OffsetDateTime) -> Result<String> {
     let format = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
-    OffsetDateTime::now_utc()
-        .format(format)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+    Ok(now.format(format)?)
 }
 
 /// Rebuild the navigation entries from `ComicInfo.xml` bookmarks.
@@ -362,24 +371,14 @@ fn bookmark_entries(
     entries
 }
 
-/// The last `/`-separated segment of a page name.
-///
-/// `rsplit_once` returns `None` only when there is no `/`, so no dead `unwrap_or`
-/// fallback is needed (REFACTOR.md E5).
+/// The last `/`-separated segment of a page name, as a [`FileName`].
 fn file_name(name: &str) -> FileName<'_> {
-    match name.rsplit_once('/') {
-        Some((_, file)) => FileName::new(file),
-        None => FileName::new(name),
-    }
+    FileName::new(path_text::file_name(name))
 }
 
 /// A file name without its extension (Python's `os.path.splitext(...)[0]`).
 fn stem_of(file: FileName<'_>) -> Stem<'_> {
-    let name = file.as_str();
-    match name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => Stem::new(stem),
-        _ => Stem::new(name),
-    }
+    Stem::new(path_text::stem(file.as_str()))
 }
 
 /// `OEBPS/Images` or `OEBPS/Images/<chapter>`.
@@ -452,5 +451,12 @@ mod tests {
             text_dir(ImageDir::new("Chapter 1/Sub")),
             "Text/Chapter 1/Sub"
         );
+    }
+
+    #[test]
+    fn modified_timestamp_uses_the_constant_format() -> Result<()> {
+        let now = time::macros::datetime!(2024-01-02 03:04:05 UTC);
+        assert_eq!(format_modified(now)?, "2024-01-02T03:04:05Z");
+        Ok(())
     }
 }

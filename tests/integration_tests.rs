@@ -84,7 +84,7 @@ fn test_image_split_already_under_threshold() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1000, 1000));
-    let resized = resize_image_by_total_pixels(img, Pixels::new(250_000));
+    let resized = resize_image_by_total_pixels(img, Pixels::new(250_000))?;
     let (w, h) = resized.dimensions();
     assert!((w as u64) * (h as u64) <= 250_000);
     assert_eq!(w, 500);
@@ -95,7 +95,7 @@ fn test_image_resize_total_pixels() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(200, 300));
-    let resized = resize_image_by_total_pixels(img, Pixels::new(100_000));
+    let resized = resize_image_by_total_pixels(img, Pixels::new(100_000))?;
     assert_eq!(resized.dimensions(), (200, 300));
     Ok(())
 }
@@ -103,7 +103,7 @@ fn test_image_resize_total_pixels_already_smaller() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(1200, 800));
-    let resized = resize_image_by_width(img, Pixels::new(600));
+    let resized = resize_image_by_width(img, Pixels::new(600))?;
     let (w, h) = resized.dimensions();
     assert_eq!(w, 600);
     assert_eq!(h, 400);
@@ -113,7 +113,7 @@ fn test_image_resize_max_width() -> anyhow::Result<()> {
 #[test]
 fn test_image_resize_max_width_already_smaller() -> anyhow::Result<()> {
     let img = DynamicImage::ImageRgb8(RgbImage::new(400, 800));
-    let resized = resize_image_by_width(img, Pixels::new(600));
+    let resized = resize_image_by_width(img, Pixels::new(600))?;
     assert_eq!(resized.dimensions(), (400, 800));
     Ok(())
 }

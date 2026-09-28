@@ -15,7 +15,7 @@
 //! match the reference while the exact glyph shapes do not (see docs/porting.md).
 
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, GenericImageView, GrayImage, RgbImage};
 use std::path::Path;
 
 use crate::ebook::model::{ComicTree, EncodedPage, MediaType, OrderClass, PageFlags, PageName};
@@ -128,14 +128,10 @@ pub fn labelled(
         .context("Failed to decode the cover for the tome label")?;
     // `Cover.process` leaves the cover as 8-bit grey (or RGB under `--force-color`),
     // so keep whichever of the two the JPEG carried.
-    let mut image = if matches!(decoded, DynamicImage::ImageLuma8(_)) {
-        decoded
-    } else {
-        DynamicImage::ImageRgb8(decoded.into_rgb8())
-    };
-    draw_label(&mut image, &format!("{tome}/{total}"));
-    let page_size = Size::from_dimensions(image.dimensions());
-    let bytes = page::encode_jpeg(&image, quality)?;
+    let mut pixels = CoverPixels::from_image(decoded);
+    draw_label(&mut pixels, &format!("{tome}/{total}"));
+    let page_size = pixels.dimensions();
+    let bytes = page::encode_jpeg(&pixels.into_image(), quality)?;
 
     Ok(EncodedPage {
         name: cover.name.clone(),
@@ -147,19 +143,69 @@ pub fn labelled(
     })
 }
 
+/// The two pixel layouts a decoded cover is ever held in: 8-bit grey (the usual
+/// `Cover.process` result) or RGB (`--force-color`).
+///
+/// Carrying the concrete buffer makes `DynamicImage`'s other variants unrepresentable
+/// here, so the drawing helpers need no wildcard arm (REFACTOR.md E9).
+enum CoverPixels {
+    Luma(GrayImage),
+    Rgb(RgbImage),
+}
+
+impl CoverPixels {
+    /// Normalise a decoded cover to the two layouts `Cover.process` can leave,
+    /// reproducing the old `matches!(decoded, ImageLuma8(_))` branch exactly: a
+    /// grey JPEG is kept as `Luma`, anything else is converted to RGB.
+    fn from_image(image: DynamicImage) -> Self {
+        match image {
+            DynamicImage::ImageLuma8(gray) => CoverPixels::Luma(gray),
+            other => CoverPixels::Rgb(other.into_rgb8()),
+        }
+    }
+
+    fn dimensions(&self) -> Size {
+        Size::from_dimensions(match self {
+            CoverPixels::Luma(gray) => gray.dimensions(),
+            CoverPixels::Rgb(rgb) => rgb.dimensions(),
+        })
+    }
+
+    fn width(&self) -> u32 {
+        match self {
+            CoverPixels::Luma(gray) => gray.width(),
+            CoverPixels::Rgb(rgb) => rgb.width(),
+        }
+    }
+
+    fn height(&self) -> u32 {
+        match self {
+            CoverPixels::Luma(gray) => gray.height(),
+            CoverPixels::Rgb(rgb) => rgb.height(),
+        }
+    }
+
+    fn into_image(self) -> DynamicImage {
+        match self {
+            CoverPixels::Luma(gray) => DynamicImage::ImageLuma8(gray),
+            CoverPixels::Rgb(rgb) => DynamicImage::ImageRgb8(rgb),
+        }
+    }
+}
+
 /// Pillow's `stroke_width` for the tome label (`Cover.save_to_folder`).
 const LABEL_STROKE: i64 = 25;
 
 /// Draw the label the way `ImageDraw.text(..., anchor='ms')` places it: centred
 /// horizontally, its baseline at `h * 0.85`, sized `h // 7`, in white with a black
 /// outline.
-fn draw_label(image: &mut DynamicImage, text: &str) {
-    let height = image.height();
+fn draw_label(pixels: &mut CoverPixels, text: &str) {
+    let height = pixels.height();
     let font_size = height / 7;
     let scale = (font_size / 8).max(1);
     let glyph = 8 * scale;
     let text_width = glyph * text.chars().count() as u32;
-    let x = (i64::from(image.width()) - i64::from(text_width)) / 2;
+    let x = (i64::from(pixels.width()) - i64::from(text_width)) / 2;
     let baseline = (f64::from(height) * 0.85) as i64;
     let y = baseline - i64::from(glyph);
 
@@ -170,14 +216,14 @@ fn draw_label(image: &mut DynamicImage, text: &str) {
             if dx == 0 && dy == 0 {
                 continue;
             }
-            draw_text(image, text, scale, x + dx, y + dy, [0, 0, 0]);
+            draw_text(pixels, text, scale, x + dx, y + dy, [0, 0, 0]);
         }
     }
-    draw_text(image, text, scale, x, y, [255, 255, 255]);
+    draw_text(pixels, text, scale, x, y, [255, 255, 255]);
 }
 
 /// Stamp `text` at `(x, y)`, each 8x8 glyph scaled by `scale`.
-fn draw_text(image: &mut DynamicImage, text: &str, scale: u32, x: i64, y: i64, color: [u8; 3]) {
+fn draw_text(pixels: &mut CoverPixels, text: &str, scale: u32, x: i64, y: i64, color: [u8; 3]) {
     use font8x8::{UnicodeFonts, BASIC_FONTS};
 
     let scale = i64::from(scale);
@@ -192,7 +238,7 @@ fn draw_text(image: &mut DynamicImage, text: &str, scale: u32, x: i64, y: i64, c
                     continue;
                 }
                 fill_block(
-                    image,
+                    pixels,
                     gx + i64::from(col) * scale,
                     y + row as i64 * scale,
                     scale as u32,
@@ -204,22 +250,21 @@ fn draw_text(image: &mut DynamicImage, text: &str, scale: u32, x: i64, y: i64, c
 }
 
 /// Fill a `size`x`size` square, clipped to the image bounds.
-fn fill_block(image: &mut DynamicImage, x: i64, y: i64, size: u32, color: [u8; 3]) {
-    let (width, height) = (i64::from(image.width()), i64::from(image.height()));
+fn fill_block(pixels: &mut CoverPixels, x: i64, y: i64, size: u32, color: [u8; 3]) {
+    let (width, height) = (i64::from(pixels.width()), i64::from(pixels.height()));
     let size = i64::from(size);
     for py in y.max(0)..(y + size).min(height) {
         for px in x.max(0)..(x + size).min(width) {
-            put_pixel(image, px as u32, py as u32, color);
+            put_pixel(pixels, px as u32, py as u32, color);
         }
     }
 }
 
 /// Write one pixel into a grey or RGB cover.
-fn put_pixel(image: &mut DynamicImage, x: u32, y: u32, color: [u8; 3]) {
-    match image {
-        DynamicImage::ImageLuma8(buffer) => buffer.put_pixel(x, y, image::Luma([color[0]])),
-        DynamicImage::ImageRgb8(buffer) => buffer.put_pixel(x, y, image::Rgb(color)),
-        _ => {}
+fn put_pixel(pixels: &mut CoverPixels, x: u32, y: u32, color: [u8; 3]) {
+    match pixels {
+        CoverPixels::Luma(buffer) => buffer.put_pixel(x, y, image::Luma([color[0]])),
+        CoverPixels::Rgb(buffer) => buffer.put_pixel(x, y, image::Rgb(color)),
     }
 }
 
@@ -399,6 +444,26 @@ mod tests {
         // A bright label pixel appears where the cover was uniformly dark.
         let decoded = image::load_from_memory(&first.bytes)?.to_luma8();
         assert!(decoded.pixels().any(|pixel| pixel[0] == 255));
+        Ok(())
+    }
+
+    #[test]
+    fn an_rgb_cover_is_labelled_and_stays_rgb() -> Result<()> {
+        // `--force-color` leaves the cover RGB, so this drives the `CoverPixels::Rgb`
+        // branch of the label drawing (REFACTOR.md E9).
+        let tree = tree_with_page(600, 900, [200, 30, 30]);
+        let cover = process(
+            &tree,
+            None,
+            &options(&["-f", "epub", "-p", "KoE", "--force-color"])?,
+        )?
+        .context("a cover is produced")?
+        .page;
+        let labelled = labelled(&cover, 1, 3, Quality::new(85)?)?;
+        assert!(matches!(
+            image::load_from_memory(&labelled.bytes)?,
+            DynamicImage::ImageRgb8(_)
+        ));
         Ok(())
     }
 }

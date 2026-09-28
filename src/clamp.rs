@@ -8,7 +8,7 @@ use crate::units::Pixels;
 use anyhow::{anyhow, Context, Result};
 use clap::ValueEnum;
 use image::DynamicImage;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar};
 use rayon::prelude::*;
 use std::ffi::OsStr;
 use std::fs;
@@ -61,11 +61,11 @@ impl Approach {
     }
 
     /// Rewrite an image that exceeds the threshold into one or more replacements.
-    fn clamp(self, img: DynamicImage, threshold: Pixels) -> Vec<DynamicImage> {
+    fn clamp(self, img: DynamicImage, threshold: Pixels) -> Result<Vec<DynamicImage>> {
         match self {
-            Approach::Split => split_image_iterative(img, threshold),
-            Approach::Resize => vec![resize_image_by_total_pixels(img, threshold)],
-            Approach::MaxWidth => vec![resize_image_by_width(img, threshold)],
+            Approach::Split => Ok(split_image_iterative(img, threshold)),
+            Approach::Resize => Ok(vec![resize_image_by_total_pixels(img, threshold)?]),
+            Approach::MaxWidth => Ok(vec![resize_image_by_width(img, threshold)?]),
         }
     }
 
@@ -207,11 +207,13 @@ fn clamp_images(
     approach: Approach,
     images: Vec<DecodedImage>,
     threshold: Pixels,
-) -> Vec<DynamicImage> {
+) -> Result<Vec<DynamicImage>> {
     images
         .into_iter()
-        .flat_map(|decoded| approach.clamp(decoded.image, threshold))
-        .collect()
+        .try_fold(Vec::new(), |mut output, decoded| {
+            output.extend(approach.clamp(decoded.image, threshold)?);
+            Ok(output)
+        })
 }
 
 /// Encode each clamped image as a numbered WebP inside `output_chapter_dir`.
@@ -261,14 +263,14 @@ fn process_chapter(
     }
 
     fs::create_dir_all(&output_chapter_dir)?;
-    let clamped = clamp_images(approach, images, threshold);
+    let clamped = clamp_images(approach, images, threshold)?;
     let bar = progress.insert_after(overall_bar, chapter_progress_bar(clamped.len() as u64));
     write_clamped_images(&clamped, &output_chapter_dir, &chapter_name, &bar)
 }
 
 fn overall_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(progress_style(
+    bar.set_style(crate::progress_style::bar_with_chars(
         "{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} ({eta}) {msg}",
         "#->",
     ));
@@ -278,20 +280,11 @@ fn overall_progress_bar(total: u64) -> ProgressBar {
 
 fn chapter_progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
-    bar.set_style(progress_style(
+    bar.set_style(crate::progress_style::bar_with_chars(
         "  -> {msg} [{bar:30.cyan/blue}] {pos}/{len}",
         "=>-",
     ));
     bar
-}
-
-/// Build a bar style from a constant template, falling back to indicatif's
-/// default style on the (impossible) template error rather than panicking.
-fn progress_style(template: &str, chars: &str) -> ProgressStyle {
-    match ProgressStyle::default_bar().template(template) {
-        Ok(style) => style.progress_chars(chars),
-        Err(_) => ProgressStyle::default_bar(),
-    }
 }
 
 pub fn run_clamp(

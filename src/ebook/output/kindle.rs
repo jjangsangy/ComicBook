@@ -190,7 +190,7 @@ fn doc_type_tag(doc_type: DocType) -> Option<String> {
 fn create_scratch(source: &Path, session: &SessionOptions) -> Result<tempfile::TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix("comic-book-kindle-");
-    let scratch = match session.temp_dir.then(|| source.parent()).flatten() {
+    let scratch = match source.parent().filter(|_| session.temp_dir) {
         Some(parent) if !parent.as_os_str().is_empty() => builder.tempdir_in(parent),
         _ => builder.tempdir(),
     };

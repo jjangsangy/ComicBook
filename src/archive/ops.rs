@@ -40,6 +40,24 @@ pub enum RootStripPolicy {
     IfMatchingDestination,
 }
 
+/// A wrapper folder to collapse on extraction: its normalized name and the `"<name>/"`
+/// prefix every member shares.
+///
+/// The two were previously separate `Option`s (`root_to_strip` and a derived
+/// `root_prefix`) whose mixed `(Some, None)` state could not occur but was still
+/// representable in the type (REFACTOR.md E3).
+struct RootStrip {
+    name: String,
+    prefix: String,
+}
+
+impl RootStrip {
+    fn new(name: String) -> Self {
+        let prefix = format!("{name}/");
+        RootStrip { name, prefix }
+    }
+}
+
 /// Stream or read archive entries in memory without extracting loose files to the filesystem.
 ///
 /// This allocates a throwaway scratch buffer for the duration of the call. Callers that process
@@ -148,24 +166,26 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
     let mut reader = open_reader(src_kind, src)?;
 
     // A wrapper folder can only be collapsed when extracting an archive into a directory.
-    let root_to_strip: Option<String> = match policy {
+    let root_strip: Option<RootStrip> = match policy {
         RootStripPolicy::Never => None,
-        _ if target_kind != ArchiveKind::Directory || src_kind == ArchiveKind::Directory => None,
-        RootStripPolicy::Always => single_root_dir(reader.as_mut()),
-        RootStripPolicy::IfMatchingDestination => single_root_dir(reader.as_mut())
-            .filter(|root| is_matching_root(root, dest_name, src_stem)),
+        RootStripPolicy::Always => {
+            single_collapsible_root(reader.as_mut(), target_kind, src_kind).map(RootStrip::new)
+        }
+        RootStripPolicy::IfMatchingDestination => {
+            single_collapsible_root(reader.as_mut(), target_kind, src_kind)
+                .filter(|root| is_matching_root(root, dest_name, src_stem))
+                .map(RootStrip::new)
+        }
     };
-
-    let root_prefix = root_to_strip.as_ref().map(|root| format!("{}/", root));
 
     let mut writer = ArchiveWriter::new(target_kind, dest)?;
     let result = (|| -> Result<()> {
         reader.read_entries(scratch, &mut |name, content| {
-            if let (Some(root), Some(prefix)) = (root_to_strip.as_ref(), root_prefix.as_ref()) {
-                if name.as_str() == root.as_str() {
+            if let Some(strip) = root_strip.as_ref() {
+                if name.as_str() == strip.name {
                     return Ok(());
                 }
-                if let Some(stripped) = name.strip_prefix(prefix) {
+                if let Some(stripped) = name.strip_prefix(&strip.prefix) {
                     // `name` and `prefix` are normalized, so `stripped` is too, and it is
                     // never empty (the bare-root entry is returned early above).
                     return writer.add_entry_normalized(&stripped, content);
@@ -183,6 +203,20 @@ pub(crate) fn convert_archive_ext_with_scratch<P: AsRef<Path>, Q: AsRef<Path>>(
     }
 
     result
+}
+
+/// The archive's single wrapper directory, when the destination layout can collapse it
+/// (an archive extracted into a directory). `None` otherwise, without listing.
+fn single_collapsible_root(
+    reader: &mut dyn ArchiveReader,
+    target_kind: ArchiveKind,
+    src_kind: ArchiveKind,
+) -> Option<String> {
+    if !target_kind.is_archive() && src_kind.is_archive() {
+        single_root_dir(reader)
+    } else {
+        None
+    }
 }
 
 /// The archive's single wrapper directory, if listing succeeds.
@@ -229,12 +263,7 @@ pub fn get_images_from_source<P: AsRef<Path>>(
             if is_image_file(name.as_str()) {
                 let image = image::load_from_memory(data)
                     .with_context(|| format!("Failed to decode image {name}"))?;
-                let basename = name
-                    .as_str()
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(name.as_str())
-                    .to_string();
+                let basename = crate::path_text::file_name(name.as_str()).to_string();
                 images.push(DecodedImage {
                     name: BaseName(basename),
                     image,

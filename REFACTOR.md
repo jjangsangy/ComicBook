@@ -823,6 +823,8 @@ landed; explicit dependencies are called out. The finished shape is described in
 
 ### Phase 8 — Remaining guards, wildcards, and duplication
 
+**Status:** ✅ **Complete** — landed on `rusty-refactor`.
+
 - **Findings:** E3, E9, E10, E11, E12, E13, E14, E15, E16, F3, F4, C6, C11, B16, A21
   (duplication), G1, G3, G5, G6, G7.
 - **Scope:** `archive/ops.rs`, `ebook/{progress,metadata,naming,mod}.rs`,
@@ -832,6 +834,57 @@ landed; explicit dependencies are called out. The finished shape is described in
   `Reporter` mode enum, `Metadata Field` enum, `detect_panels` `Option` state, shared
   `style()`/`file_name()`/`stem()` helpers.
 - **Gate:** full suite plus clippy `-D warnings`.
+
+**Completed notes.**
+
+- **Delivered as planned:** the `RootStrip` struct (E3), `CoverPixels` (E9), the infallible
+  `rgb_to_luma` (E10), `Profile::entry` (E11), the `Result` `modified_timestamp` (E12), the
+  `create_scratch` `and_then` (E13), the fallible `local_name` (E14), the `Result`
+  `resize_lanczos3`/`resize_image_by_*` (E15), the `path_extension` helper (E16), the
+  `Option<u32>` panel state and validated `StripWidth` (C11), the `Metadata Field` enum (B16),
+  the `Reporter::Mode` enum (C6), the shared `progress_style`/`path_text` helpers (G5/G6/E5),
+  and `BatchSplit::ensure_splitting` (G7); F4 dropped the `options.inputs.clone()`.
+- **A21/G1/G3/E6/E7/E8/F3 were already closed** by Phases 3 and 7 (verified, not re-done):
+  `Geometry`, the once-computed spread XOR, the deleted dead `OpfItem` trio, the exhaustive
+  `SpineAttr::page_spread`/`write_tome`, and the intentionally kept `EncodedPage: Clone`.
+- **`Profile::entry` is O(1) with no fallback row**: the rows are one `const`
+  (`PROFILE_ROWS`) that both `ALL_PROFILES` (the `--profile` list) and a compile-time
+  discriminant check are derived from, so there is no hand-kept variant list and no
+  per-variant match to drift; the check fails the build if a row is not at its own
+  variant's discriminant.
+- **`path_text` is one module** (`file_name`/`directory`/`split_dir_file`/`stem`/`extension`)
+  replacing the copied `.rsplit(['/','\\']).next().unwrap_or(..)` ladders (`rsplit` always yields
+  an item, so every fallback was dead); the reader names are already forward-slash normalized,
+  so a `/`-only implementation is exact. Every claimed migration site uses it, including the
+  cover-name classifier and the `strip_common_root` component scan. `archive::is_os_metadata` —
+  the one public, backslash-aware classifier — keeps its own split, as its site comment now
+  explains.
+- **`progress_style` is one module** (`bar`/`bar_with_chars`/`spinner`); the templates stay
+  per-site (the `convert` bar is `cyan`, the `ebook`/`clamp` bars are `green`).
+- **Wildcard review.** The remaining `_` arms in `output/epub/{opf,xhtml}` (`spread_properties`'s
+  `(_, RotateFirst | RotateLast)`/`(_, Normal)`, `PanelGrid::order`'s irrelevant-axis arms)
+  wildcard a `bool` that the arm proves irrelevant (or uses inside the body), so the enum axis
+  stays exhaustive and a new variant is a compile error; they are honest, not silent absorption,
+  and are left as-is. The `path_text::stem` catch-all merges `None` with an empty stem, matching
+  `os.path.splitext`. The `_` arms over the external, `#[non_exhaustive]` `image::ColorType`
+  (`output/pdf.rs`) and the `DynamicImage` pass-through in `output/lightnovel.rs` are likewise
+  required by the foreign enum and are documented in place.
+- **Behaviour note:** E15 and E16 are the two fixes with an observable effect. E15 removes three
+  hidden `DynamicImage::clone` fallbacks in favour of `Result`; E16's `path_extension` no longer
+  recovers a leading-dot (`.png`) or non-UTF-8 extension, so `convert`/`clamp` stop treating
+  those names as images. Both are recorded in the changelog; every other change is byte-identical.
+- **New tests:** `path_text::tests` (4), `metadata::tests::every_field_name_round_trips` and
+  `an_invalid_utf8_element_name_discards_the_document`, `ebook_tests`'
+  `every_profile_resolves_to_its_own_table_row`, `epub`'s
+  `modified_timestamp_uses_the_constant_format`, `cover`'s
+  `an_rgb_cover_is_labelled_and_stays_rgb` (the previously untested `CoverPixels::Rgb` path), and
+  `webtoon`'s `strip_width_rejects_too_narrow_strips_and_keeps_the_step_non_zero` —
+  10 new.
+- **Gate:** `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings`
+  clean · `cargo nextest run` → **386 passed, 13 skipped**; `--run-ignored all` → **399 passed,
+  0 skipped** (the memory ceilings and the Scribe/webtoon ignored tests included).
+- **Changelog:** `## [Unreleased] → Changed` entry added; `docs/architecture.md`'s crate layout
+  lists the `path_text`/`progress_style` helper modules.
 
 ### Phase 9 — Close-out
 
@@ -851,7 +904,7 @@ landed; explicit dependencies are called out. The finished shape is described in
 | 5 Processing ✅ | 4 | processing hot paths | medium (perf) |
 | 6 Page state ✅ | 4 | `model` + input/processing | **high (memory)** |
 | 7 Output ✅ | 2, 3, 6 | `output/**` + templates | high (output bytes) |
-| 8 Sweep | 1–7 | cross-cutting | low |
+| 8 Sweep ✅ | 1–7 | cross-cutting | low |
 | 9 Close-out | 1–8 | docs | low |
 
 ---
@@ -1224,7 +1277,7 @@ before merging.
 | 5 Processing ✅ | `ebook_processing_tests`, `ebook_crop_tests`, `ebook_epub_tests` | `scribe_profile_splits_a_tall_page_into_above_and_below` | `ScribeHalf`/`Axis` behaviour equivalence |
 | 6 Page state ✅ | `ebook_input_tests`, `ebook_input_epub_pdf_tests`, `ebook_processing_tests`, `ebook_robustness_tests` | `ingest_and_repack_stay_far_below_the_decoded_book_size`, `a_large_book_converts_under_a_memory_ceiling`, `huge_book_stress` | `--no-processing` still never decodes; decoded page still retains its encoded bytes |
 | 7 Output | `ebook_epub_tests`, `ebook_golden_tests`, `ebook_output_tests`, `ebook_kindle_tests` | `light_novel_...`, `smart_cover_crop_...`, `two_panel_and_vertical_4_panel_...` | none needed — the byte-exact goldens are the gate |
-| 8 Sweep | full suite + clippy | as touched | metadata field identity; exhaustive `Profile::entry`; `file_name` helper |
+| 8 Sweep ✅ | full suite + clippy | as touched | metadata field identity; exhaustive `Profile::entry`; `file_name` helper |
 | 9 Close-out | full suite | — | none |
 
 Existing always-on tests already pin two contracts the refactor must not break:
@@ -1383,5 +1436,5 @@ memory footguns 4.
 The catalogue is executed in the phase order of [§5](#5-ordered-refactor-plan):
 archive tag union (1 ✅) → typed CLI values (2 ✅) → config sum types (3 ✅) → geometry newtypes
 (4 ✅) → processing enums (5 ✅) → page state machine (6 ✅) → output types (7 ✅) → guard/dedup
-sweep (8) → docs close-out (9). The optional
+sweep (8 ✅) → docs close-out (9). The optional
 [crate-backed path layer](#81-back-the-path-newtypes-with-relative-path) is a side quest after (6).

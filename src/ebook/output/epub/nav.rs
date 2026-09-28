@@ -31,7 +31,7 @@ fn entry_title<'a>(
             .unwrap_or(book_title);
     }
     let folder = text_dir(entry.image_dir);
-    let basename = folder.rsplit('/').next().unwrap_or(folder.as_str());
+    let basename = crate::path_text::file_name(&folder);
     if basename != "Text" {
         if let Some(title) = chapter_titles.get(basename) {
             return title;

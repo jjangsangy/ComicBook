@@ -84,7 +84,6 @@ impl ArchiveKind {
     }
 
     /// Returns `true` if this kind represents a compressed archive format rather than a directory.
-    #[allow(dead_code)]
     pub fn is_archive(&self) -> bool {
         !matches!(self, ArchiveKind::Directory)
     }

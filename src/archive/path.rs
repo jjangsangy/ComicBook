@@ -141,6 +141,11 @@ pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Resul
 ///
 /// `__MACOSX` is matched per path component and the dot-files by base name, so a
 /// nested `Chapter/._page.jpg` is caught as well as a root-level one.
+///
+/// Unlike the [`crate::path_text`] helpers, this deliberately keeps its own
+/// backslash-aware split: it also classifies raw host paths (e.g. a `\`-separated
+/// Windows name), which the normalised, forward-slash-only `path_text` layer never
+/// sees (REFACTOR.md E5).
 pub fn is_os_metadata(name: &str) -> bool {
     if name.split(['/', '\\']).any(|part| part == "__MACOSX") {
         return true;

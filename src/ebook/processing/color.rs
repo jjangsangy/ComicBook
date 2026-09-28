@@ -12,7 +12,7 @@
 
 use std::borrow::Cow;
 
-use image::{DynamicImage, GrayImage, RgbImage};
+use image::{DynamicImage, GrayImage, Luma, RgbImage};
 
 use crate::ebook::options::Options;
 use crate::ebook::processing::crop::trim_histogram_ends;
@@ -234,16 +234,20 @@ pub(crate) fn luma_view(image: &DynamicImage) -> Cow<'_, GrayImage> {
     }
 }
 
-/// Rec. 601 RGB → `L8`, written into an exactly-sized output buffer (no
-/// per-pixel allocation and no `Vec` growth, unlike `imageproc::map::map_pixels`).
+/// Rec. 601 RGB → `L8`, written into an exactly-sized output buffer (no per-pixel
+/// allocation and no `Vec` growth, unlike `imageproc::map::map_pixels`).
+///
+/// Iterates the source's raw triplets and the destination's pixels together, so there
+/// is no per-pixel bounds check, and constructs the output buffer infallibly — no
+/// `from_raw(..).unwrap_or_else(..)` blank-image fallback for a length that is
+/// `width * height` by construction (REFACTOR.md E10).
 fn rgb_to_luma(rgb: &RgbImage) -> GrayImage {
     let (width, height) = rgb.dimensions();
-    let raw = rgb.as_raw();
-    let mut out = Vec::with_capacity(raw.len() / 3);
-    for pixel in rgb.as_raw().as_chunks::<3>().0 {
-        out.push(luma601(pixel[0], pixel[1], pixel[2]));
+    let mut out = GrayImage::new(width, height);
+    for (target, pixel) in out.pixels_mut().zip(rgb.as_raw().as_chunks::<3>().0) {
+        *target = Luma([luma601(pixel[0], pixel[1], pixel[2])]);
     }
-    GrayImage::from_raw(width, height, out).unwrap_or_else(|| GrayImage::new(width, height))
+    out
 }
 
 fn clamp_u8(value: f64) -> u8 {

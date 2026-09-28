@@ -24,6 +24,7 @@ use crate::ebook::model::{ChapterName, EncodedPage, PageName, ScribeHalf};
 use crate::ebook::options::{BatchSplit, MainOptions, Options, ProcessingOptions};
 use crate::ebook::processing::cover::{self, Cover};
 use crate::ebook::processing::{ProcessedBook, ProcessedChapter};
+use crate::path_text;
 use crate::units::Bytes;
 
 /// KCC's default cap when neither `--target-size` nor webtoon mode applies (400 MB).
@@ -107,7 +108,7 @@ fn flatten(book: &mut ProcessedBook) {
     let mut pages = Vec::new();
     for chapter in &mut book.chapters {
         for mut page in chapter.pages.drain(..) {
-            page.name = PageName::new(basename(page.name.as_str()).to_string());
+            page.name = PageName::new(path_text::file_name(page.name.as_str()).to_string());
             pages.push(page);
         }
     }
@@ -294,11 +295,6 @@ fn assemble(
         });
     }
     Ok(tomes)
-}
-
-/// The final path component (`os.path.basename`).
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
 }
 
 #[cfg(test)]

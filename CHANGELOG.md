@@ -149,6 +149,42 @@ release when a version tag is pushed.
   - The fifteen-positional-bool `kindling` call is a named `MobiFlags` struct; `PdfImage`'s
     `gray: bool` and `jpeg_components() -> Option<u8>` are a `ColorSpace` enum; and the threaded
     `drop_bookmarks: bool` is a `Tomes` (`Single`/`Split`) enum.
+- Removed the remaining runtime guards, `_` wildcards and duplicated helpers across the codebase
+  (the sweep step of the type-safety refactor tracked in `REFACTOR.md`). Emitted bytes are
+  unchanged:
+  - `archive::ops` collapses a wrapper folder through one `RootStrip { name, prefix }` value (its
+    `RootStripPolicy` match is exhaustive again, with no guarded `_` arm), and the repeated
+    basename/stem plumbing is now the shared `path_text::{file_name, directory, split_dir_file,
+    stem, extension}` helpers used by the archive, naming, chunk, webtoon, page and EPUB paths
+    (the dead `rsplit(..).next().unwrap_or(..)` fallbacks are gone, including the cover-name
+    classifier and the wrapper-root component scan).
+  - `metadata::ComicInfo` keys its nine single-value fields on a `Field` enum (one spelling of
+    each name, with `Field::from_name` as its inverse) and drains them through one exhaustive
+    `match`, replacing three separate string lists; a malformed (non-UTF-8) element name now
+    discards the document through the existing rule rather than silently failing every comparison.
+  - `ebook::progress::Reporter` holds one `Mode` (`Batch { .. }`/`Standalone`) instead of parallel
+    `Option<MultiProgress>`/`Option<ProgressBar>` fields, so a half-set reporter is unrepresentable;
+    the shared `progress_style::{bar, bar_with_chars, spinner}` helper replaces the copied
+    `ProgressStyle::default_bar().template(..)` idiom in `convert`/`clamp`/`ebook`.
+  - `processing::cover` draws the tome label through a `CoverPixels` (`Luma`/`Rgb`) enum, so the
+    pixel-writing helper no longer has a `_ => {}` wildcard that silently drops other pixel types;
+    `color::rgb_to_luma` builds its buffer infallibly (no `unwrap_or_else` blank-image fallback);
+    and `webtoon::detect_panels` tracks the open panel as a single `Option<u32>` instead of a
+    `bool`/`u32` pair mutated in lockstep, taking a validated `StripWidth` so the scan step can
+    never be zero.
+  - `Profile::entry` resolves its table row in O(1) with no fallback: the profile rows are one
+    `const` that both the `--profile` list and a compile-time discriminant check are derived from,
+    so there is no hand-kept variant list and no per-variant match; `BatchSplit::ensure_splitting`
+    replaces the free `force_split`; the EPUB `dcterms:modified` formatting returns `Result`
+    instead of an epoch-string `unwrap_or_else`; `output::kindle`'s `--temp-dir` lookup is an
+    `and_then` rather than a `then(..).flatten()`; and the `ebook` run no longer clones the input
+    `Vec` to iterate it.
+  - `image_ops::resize_lanczos3` (and the `resize_image_by_*` wrappers) return `Result` instead of
+    silently returning a full copy of the original image on an impossible buffer mismatch, removing
+    three hidden `DynamicImage::clone`s. `image_ops::is_image_file` is now built on a single
+    `image_ops::path_extension(&Path)` helper (no `to_string_lossy` ladder); as a consequence a
+    leading-dot name (`.png`) and a non-UTF-8 file name are no longer treated as images by
+    `convert`/`clamp`.
 
 ### Fixed
 
