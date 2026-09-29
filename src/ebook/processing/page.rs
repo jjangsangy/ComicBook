@@ -3,7 +3,7 @@
 //! This is the Rust counterpart of KCC's `ComicPageParser` + `ComicPage`:
 //!
 //! 1. [`split_check`] classifies a decoded page and, when it is a double-page
-//!    spread, produces the `-kcc-a/-kcc-b/-kcc-c/-kcc-d` payloads.
+//!    spread, produces the `-cb-a/-cb-b/-cb-c/-cb-d` payloads.
 //! 2. each payload runs through gamma → grayscale → autocontrast/autolevel →
 //!    resize → encode, in the same order KCC applies them.
 //!
@@ -35,6 +35,7 @@ use crate::ebook::model::{
     Background, EncodedPage, MediaType, OrderClass, Orientation, Page, PageFlags, PageName,
     ResolvedFill, ScribeHalf,
 };
+use crate::ebook::naming::PAGE_PREFIX;
 use crate::ebook::options::{
     Autocontrast, BorderColor, Gamma, Geometry, Layout, Options, OutputEncoding, Splitter,
 };
@@ -136,7 +137,7 @@ pub(crate) fn passthrough_in_place(page: &mut Page, options: &Options) -> Result
 /// The untouched-source [`EncodedPage`].
 ///
 /// Under `--no-processing` KCC never runs `ComicPage`, so the sanitized name keeps
-/// no `-kcc-x` order suffix (see docs/porting.md).
+/// no `-cb-x` order suffix (see docs/porting.md).
 fn passthrough_page(page: &Page, media_type: MediaType, bytes: Vec<u8>) -> EncodedPage {
     EncodedPage {
         name: PageName::new(unsuffixed_name(page.source_name.as_str(), media_type)),
@@ -231,7 +232,7 @@ fn split_payloads(
     payloads
 }
 
-/// Bisect a spread into its `-kcc-b`/`-kcc-c` reading-order halves.
+/// Bisect a spread into its `-cb-b`/`-cb-c` reading-order halves.
 fn bisect_payloads(image: &DynamicImage, right_to_left: bool) -> [Payload; 2] {
     let (first, second) = bisect(image, right_to_left);
     [
@@ -273,7 +274,7 @@ fn maximize_strips(image: &DynamicImage, right_to_left: bool) -> Payload {
     }
 }
 
-/// The rotated-spread payload (`-kcc-a`/`-kcc-d`).
+/// The rotated-spread payload (`-cb-a`/`-cb-d`).
 ///
 /// Takes the image by value: under `--no-rotate` the page is passed through
 /// unchanged, so it can be moved instead of copied.
@@ -301,7 +302,7 @@ fn rotate_payload(image: DynamicImage, options: &Options) -> Payload {
     }
 }
 
-/// Bisect a spread into two reading-order halves (`-kcc-b`, `-kcc-c`).
+/// Bisect a spread into two reading-order halves (`-cb-b`, `-cb-c`).
 fn bisect(image: &DynamicImage, right_to_left: bool) -> (DynamicImage, DynamicImage) {
     let (width, height) = image.dimensions();
     let (first, second) = if width > height {
@@ -1260,7 +1261,7 @@ fn encodable(image: &DynamicImage) -> std::borrow::Cow<'_, DynamicImage> {
 }
 
 /// The output file name for a payload, keeping the source directory and adding
-/// the `-kcc-<order>` suffix (see docs/architecture.md).
+/// the `-cb-<order>` suffix (see docs/architecture.md).
 fn output_name(source_name: &str, order: OrderClass, media_type: MediaType) -> String {
     named_page(source_name, media_type, Some(order), None)
 }
@@ -1289,7 +1290,7 @@ impl PagePart {
 }
 
 /// The output file name for a Kindle Scribe split half (`-above`/`-below`) or an
-/// unsplit `-whole` page: `kcc-0001-kcc-x-above.jpg` (KCC's `saveToDir`).
+/// unsplit `-whole` page: `cb-0001-cb-x-above.jpg` (KCC's `saveToDir`).
 fn split_name(
     source_name: &str,
     order: OrderClass,
@@ -1311,7 +1312,7 @@ fn named_page(
     let stem = path.file_stem().unwrap_or(source_name);
     let mut name = stem.to_string();
     if let Some(order) = order {
-        name.push_str(&format!("-kcc-{}", order.suffix()));
+        name.push_str(&format!("-{}-{}", PAGE_PREFIX, order.suffix()));
     }
     if let Some(part) = part {
         name.push('-');
@@ -1483,7 +1484,7 @@ mod tests {
         let encoded = process_page(&source, &options, options.profile_size())?;
         assert_eq!(encoded.len(), 1);
         assert_eq!(encoded[0].media_type, MediaType::Jpeg);
-        assert_eq!(encoded[0].name, "page-kcc-x.jpg");
+        assert_eq!(encoded[0].name, "page-cb-x.jpg");
         assert_eq!(encoded[0].size, Size::new(40, 40));
         Ok(())
     }
@@ -1647,39 +1648,35 @@ mod tests {
     #[test]
     fn page_names_add_the_order_and_part_suffixes() {
         assert_eq!(
-            output_name(
-                "Chapter 1/kcc-0001.png",
-                OrderClass::Normal,
-                MediaType::Jpeg
-            ),
-            "Chapter 1/kcc-0001-kcc-x.jpg"
+            output_name("Chapter 1/cb-0001.png", OrderClass::Normal, MediaType::Jpeg),
+            "Chapter 1/cb-0001-cb-x.jpg"
         );
         assert_eq!(
             split_name(
-                "kcc-0001.png",
+                "cb-0001.png",
                 OrderClass::RotateLast,
                 PagePart::Above,
                 MediaType::Jpeg
             ),
-            "kcc-0001-kcc-d-above.jpg"
+            "cb-0001-cb-d-above.jpg"
         );
         assert_eq!(
             split_name(
-                "kcc-0002.png",
+                "cb-0002.png",
                 OrderClass::Normal,
                 PagePart::Below,
                 MediaType::Gif
             ),
-            "kcc-0002-kcc-x-below.gif"
+            "cb-0002-cb-x-below.gif"
         );
         assert_eq!(
             split_name(
-                "kcc-0003.png",
+                "cb-0003.png",
                 OrderClass::Normal,
                 PagePart::Whole,
                 MediaType::Png
             ),
-            "kcc-0003-kcc-x-whole.png"
+            "cb-0003-cb-x-whole.png"
         );
     }
 
@@ -1694,8 +1691,8 @@ mod tests {
         let encoded = process_page(&tall, &options, size)?;
 
         assert_eq!(encoded.len(), 2);
-        assert_eq!(encoded[0].name, "page-kcc-x-above.jpg");
-        assert_eq!(encoded[1].name, "page-kcc-x-below.jpg");
+        assert_eq!(encoded[0].name, "page-cb-x-above.jpg");
+        assert_eq!(encoded[1].name, "page-cb-x-below.jpg");
         assert_eq!(encoded[0].size, Size::new(1653, SCRIBE_MAX_DIMENSION));
         assert_eq!(encoded[1].size, Size::new(1653, 560));
         assert_eq!(encoded[0].flags.half, ScribeHalf::Above);
@@ -1711,7 +1708,7 @@ mod tests {
         let encoded = process_page(&small, &options, size)?;
 
         assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].name, "page-kcc-x-whole.jpg");
+        assert_eq!(encoded[0].name, "page-cb-x-whole.jpg");
         assert_eq!(encoded[0].flags.half, ScribeHalf::NotSplit);
         Ok(())
     }

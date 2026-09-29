@@ -272,7 +272,7 @@ fn an_existing_kindle_file_is_overwritten() -> Result<()> {
     fs::write(tmp.path().join("book.azw3"), b"x")?;
 
     // Output names are deterministic, so the existing file is replaced rather than
-    // getting a `_kcc` counter.
+    // getting a `_cb` counter.
     let written = convert(&source, &["-f", "azw3", "-p", "KV"])?;
     assert_eq!(written, vec![tmp.path().join("book.azw3")]);
     assert_ne!(

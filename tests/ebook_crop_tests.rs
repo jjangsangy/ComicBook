@@ -39,7 +39,7 @@ fn options(args: &[&str]) -> Result<Options> {
 }
 
 #[test]
-fn margin_boxes_match_kcc() -> Result<()> {
+fn margin_boxes_match_cb() -> Result<()> {
     let page = fixture("margin-white.png")?;
 
     // Power 0 and 1 catch the 1px blur halo; higher power only keeps the core.
@@ -69,7 +69,7 @@ fn margin_boxes_match_kcc() -> Result<()> {
 }
 
 #[test]
-fn margin_crop_matches_kcc() -> Result<()> {
+fn margin_crop_matches_cb() -> Result<()> {
     let mut page = fixture("margin-white.png")?;
     crop::crop_margin(&mut page, 1.0, Fraction::new(0.0), None, Background::White);
     // Box (19, 29, 181, 271).
@@ -78,7 +78,7 @@ fn margin_crop_matches_kcc() -> Result<()> {
 }
 
 #[test]
-fn page_number_boxes_match_kcc() -> Result<()> {
+fn page_number_boxes_match_cb() -> Result<()> {
     let page = fixture("pagenum-white.png")?;
 
     assert_eq!(
@@ -101,7 +101,7 @@ fn page_number_boxes_match_kcc() -> Result<()> {
 }
 
 #[test]
-fn page_number_crop_matches_kcc() -> Result<()> {
+fn page_number_crop_matches_cb() -> Result<()> {
     let mut page = fixture("pagenum-white.png")?;
     crop::crop_page_number(&mut page, 1.0, Fraction::new(0.0), None, Background::White);
     assert_eq!(page.dimensions(), (642, 1002));
@@ -120,7 +120,7 @@ fn page_number_crop_matches_kcc() -> Result<()> {
 }
 
 #[test]
-fn black_background_page_number_boxes_match_kcc() -> Result<()> {
+fn black_background_page_number_boxes_match_cb() -> Result<()> {
     let page = fixture("pagenum-black.png")?;
 
     assert_eq!(
@@ -145,7 +145,7 @@ fn black_background_page_number_boxes_match_kcc() -> Result<()> {
 }
 
 #[test]
-fn inter_panel_crop_matches_kcc() -> Result<()> {
+fn inter_panel_crop_matches_cb() -> Result<()> {
     let page = fixture("interpanel-white.png")?;
 
     let horizontal = interpanel::crop_empty_inter_panel(

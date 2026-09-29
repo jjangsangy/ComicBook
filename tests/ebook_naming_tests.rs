@@ -66,17 +66,17 @@ fn chapters_and_pages_are_renamed() -> Result<()> {
     assert_eq!(
         shape(&tree),
         vec![
-            (String::new(), vec!["kcc-0001.png".to_string()]),
+            (String::new(), vec!["cb-0001.png".to_string()]),
             (
                 "chapter-1".to_string(),
                 vec![
-                    "chapter-1/kcc-0002.png".to_string(),
-                    "chapter-1/kcc-0003.png".to_string(),
+                    "chapter-1/cb-0002.png".to_string(),
+                    "chapter-1/cb-0003.png".to_string(),
                 ],
             ),
         ]
     );
-    assert_eq!(sanitized.cover_path.as_deref(), Some("kcc-0001.png"));
+    assert_eq!(sanitized.cover_path.as_deref(), Some("cb-0001.png"));
     assert_eq!(
         sanitized
             .chapter_titles
@@ -100,10 +100,10 @@ fn page_numbering_is_global_and_lowercases_the_extension() -> Result<()> {
     assert_eq!(
         shape(&tree),
         vec![
-            (String::new(), vec!["kcc-0001.png".to_string()]),
+            (String::new(), vec!["cb-0001.png".to_string()]),
             (
                 "chapter-1".to_string(),
-                vec!["chapter-1/kcc-0002.png".to_string()],
+                vec!["chapter-1/cb-0002.png".to_string()],
             ),
         ]
     );
@@ -482,7 +482,7 @@ fn comicinfo_bookmarks_are_parsed_through_prepare_book() -> Result<()> {
     assert_eq!(prepared.metadata.bookmarks, vec![(1, "Ch. 1".to_string())]);
     assert_eq!(
         prepared.sanitized.cover_path.as_deref(),
-        Some("kcc-0001.png")
+        Some("cb-0001.png")
     );
     assert_eq!(prepared.tree.chapters[1].name.as_str(), "chapter-1");
     let comicinfo = prepared

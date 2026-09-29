@@ -5,7 +5,7 @@
 //! copied byte-for-byte, and the whole book is repackaged as a CBZ with its
 //! **original** file structure. KCC runs this branch before
 //! `getMetadata`/`sanitizeTree`/`imgDirectoryProcessing`, so pages keep their
-//! source names (no chapter slugs and no `kcc-NNNN` renumbering), no cover is
+//! source names (no chapter slugs and no `cb-NNNN` renumbering), no cover is
 //! processed and `--no-processing` is irrelevant — the resize still happens.
 //!
 //! Two deliberate deviations, both because the in-memory [`ComicTree`] only carries

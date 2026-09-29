@@ -96,11 +96,11 @@ fn fixture_book_snapshot() -> Result<()> {
     assert_eq!(
         names,
         vec![
-            "01-normal-kcc-x.jpg",
-            "02-split-kcc-b.jpg",
-            "02-split-kcc-c.jpg",
-            "03-wide-kcc-d.jpg",
-            "04-black-kcc-x.jpg",
+            "01-normal-cb-x.jpg",
+            "02-split-cb-b.jpg",
+            "02-split-cb-c.jpg",
+            "03-wide-cb-d.jpg",
+            "04-black-cb-x.jpg",
         ]
     );
 
@@ -208,7 +208,7 @@ fn no_processing_keeps_the_sanitized_name() -> Result<()> {
         .flat_map(|chapter| chapter.pages.iter().map(|page| page.name.as_str()))
         .collect();
     // `--no-processing` emits the sanitized name without an order suffix.
-    assert_eq!(names, vec!["kcc-0001.png"]);
+    assert_eq!(names, vec!["cb-0001.png"]);
     Ok(())
 }
 
@@ -222,13 +222,13 @@ fn tree_of(root: &Path, pages: &[(&str, u32, u32)]) -> Result<ComicTree> {
 }
 
 #[test]
-fn kcc_made_sources_warn_about_quality_loss() -> Result<()> {
+fn cb_made_sources_warn_about_quality_loss() -> Result<()> {
     let tmp = tempdir()?;
-    let tree = tree_of(tmp.path(), &[("page-kcc-x.png", 2000, 3000)])?;
+    let tree = tree_of(tmp.path(), &[("page-cb-x.png", 2000, 3000)])?;
 
     let warnings = detect_suboptimal_processing(&tree, &options(&["--stretch"])?);
     assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("created by KCC"), "{warnings:?}");
+    assert!(warnings[0].contains("created by cb"), "{warnings:?}");
     Ok(())
 }
 

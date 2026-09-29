@@ -198,7 +198,7 @@ mod tests {
     use super::{tome_title, Tomes};
 
     #[test]
-    fn tome_titles_follow_kccs_numbering() {
+    fn tome_titles_follow_cbs_numbering() {
         assert_eq!(tome_title("Book", 1, 1, Tomes::from_count(1)), "Book");
         assert_eq!(tome_title("Book", 1, 2, Tomes::from_count(2)), "Book [1/2]");
         assert_eq!(tome_title("Book", 2, 9, Tomes::from_count(9)), "Book [2/9]");

@@ -10,6 +10,15 @@ release when a version tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+
+- Rebranded the `ebook` output from the old `kcc` identifiers to `cb`: when no `-a/--author` is
+  given the author is now `cb`, and sanitized page files are named `cb-NNNN-cb-<order>` (e.g.
+  `cb-0001-cb-x.xhtml`, `cb-0002-cb-d-above.jpg`) instead of `kcc-NNNN-kcc-<order>`. The page-name
+  prefix now lives in one place (`ebook::naming::PAGE_PREFIX`), and the "already processed" warning
+  refers to `cb`. Both the default author and the page filenames are user-visible, so the emitted
+  documents change; the golden fixtures were regenerated for the new names.
+
 ## [0.2.8] - 2026-09-28
 
 ### Changed

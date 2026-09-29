@@ -3,7 +3,7 @@
 //! The OPF is the device-sensitive heart of the EPUB: the Dublin Core block, the
 //! Kindle fixed-layout metas, the manifest and — most delicately — the spine's
 //! `page-spread-*` properties. That algorithm is ported verbatim: a forward pass
-//! that alternates left/right (honouring the `-kcc-a`…`-kcc-d` spread specials)
+//! that alternates left/right (honouring the `-cb-a`…`-cb-d` spread specials)
 //! followed by a backward fix-up pass that anchors the tail of the book, with
 //! `--spread-shift`, `--one-page-landscape` and the PDF/EPUB source flip applied
 //! as the reference does.
@@ -170,7 +170,7 @@ pub(crate) fn style_css(options: &Options) -> Result<String> {
 /// a split half ([`OrderClass::SplitLeft`]/[`OrderClass::SplitRight`]) pin its
 /// physical side. The backward pass then walks from the end, anchoring the tail so
 /// the last pages line up with the book's opening side. The pass is driven by the
-/// [`OrderClass`] variants rather than by re-parsing the `-kcc-*` name suffix, so it
+/// [`OrderClass`] variants rather than by re-parsing the `-cb-*` name suffix, so it
 /// is exhaustive over the classes and a new one is a compile error (docs/refactor.md B7).
 fn spread_properties(
     order: &[OrderClass],
@@ -335,7 +335,7 @@ mod tests {
         use crate::ebook::output::epub::ImageDir;
 
         let below = EncodedPage {
-            name: PageName::new("kcc-0001-kcc-x-below.jpg"),
+            name: PageName::new("cb-0001-cb-x-below.jpg"),
             order_class: OrderClass::Normal,
             media_type: MediaType::Jpeg,
             bytes: Vec::new(),
@@ -348,7 +348,7 @@ mod tests {
         };
         let entry = PageRef {
             image_dir: ImageDir::new("Chapter 1"),
-            file: FileName::new("kcc-0001-kcc-x-above.jpg"),
+            file: FileName::new("cb-0001-cb-x-above.jpg"),
             size: Size::new(100, 150),
             flags: PageFlags {
                 orientation: Orientation::Upright,
@@ -365,14 +365,14 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "page_Images_Chapter 1_kcc-0001-kcc-x-above",
-                "img_Images_Chapter 1_kcc-0001-kcc-x-above",
-                "img_Images_Chapter 1_kcc-0001-kcc-x-below",
+                "page_Images_Chapter 1_cb-0001-cb-x-above",
+                "img_Images_Chapter 1_cb-0001-cb-x-above",
+                "img_Images_Chapter 1_cb-0001-cb-x-below",
             ]
         );
         assert_eq!(
             items[2].href.as_str(),
-            "Images/Chapter 1/kcc-0001-kcc-x-below.jpg"
+            "Images/Chapter 1/cb-0001-cb-x-below.jpg"
         );
     }
 

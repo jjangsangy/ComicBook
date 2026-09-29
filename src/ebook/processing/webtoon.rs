@@ -11,7 +11,7 @@
 //! '-i', '-m', …])` invocation: [`merge_chapter`] merges a chapter's pages and
 //! [`split_chapter`] replaces them with the virtual pages. It runs *after*
 //! `sanitize_tree` (as the reference does), so the merged strip inherits the first
-//! page's sanitized `kcc-NNNN` name and the virtual pages are `kcc-NNNN-MMMM`.
+//! page's sanitized `cb-NNNN` name and the virtual pages are `cb-NNNN-MMMM`.
 //!
 //! The edge filter is `imageproc`'s 3x3 convolution (see docs/dependencies.md); it reproduces
 //! Pillow's `FIND_EDGES` except at the 1px border ring, which Pillow copies from the
@@ -543,25 +543,25 @@ mod tests {
     #[test]
     fn short_strip_is_one_page() -> Result<()> {
         let page = strip_page(
-            "kcc-0001.png",
+            "cb-0001.png",
             checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
         );
         let merged = merge_chapter(&mut [page])?;
-        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 500)]);
-        assert_eq!(pages[0].source_name, "kcc-0001.png");
+        assert_eq!(pages[0].source_name, "cb-0001.png");
         Ok(())
     }
 
     #[test]
     fn three_panels_pack_into_two_virtual_pages() -> Result<()> {
-        let page = strip_page("kcc-0001.png", checker_strip(800, SEGMENTS_A));
+        let page = strip_page("cb-0001.png", checker_strip(800, SEGMENTS_A));
         let merged = merge_chapter(&mut [page])?;
         assert_eq!(merged.dimensions(), (800, 2150));
-        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?)?;
         assert_eq!(split_sizes(&pages), vec![(800, 780), (800, 525)]);
-        assert_eq!(pages[0].source_name, "kcc-0001-0001.png");
-        assert_eq!(pages[1].source_name, "kcc-0001-0002.png");
+        assert_eq!(pages[0].source_name, "cb-0001-0001.png");
+        assert_eq!(pages[1].source_name, "cb-0001-0002.png");
         Ok(())
     }
 
@@ -569,11 +569,11 @@ mod tests {
     #[ignore = "slow: long webtoon panel; run with --run-ignored"]
     fn a_super_long_panel_splits_with_overlap() -> Result<()> {
         let page = strip_page(
-            "kcc-0001.png",
+            "cb-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
         let merged = merge_chapter(&mut [page])?;
-        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KV"])?)?;
+        let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?)?;
         // The KV profile (1072x1448) gives a virtual height of 1080, so the 2500px
         // panel becomes three 1080px parts.
         assert_eq!(
@@ -588,12 +588,12 @@ mod tests {
     #[ignore = "slow: webtoon virtual-page packing; run with --run-ignored"]
     fn wider_devices_use_the_1072_cap_for_the_virtual_height() -> Result<()> {
         let page = strip_page(
-            "kcc-0001.png",
+            "cb-0001.png",
             checker_strip(800, &[(100, 0), (2600, 2500), (100, 0)]),
         );
         let merged = merge_chapter(&mut [page])?;
         // KO is 1264px wide, so the virtual height is 1680 / 1072 * 800 = 1253.
-        let pages = split_chapter(merged, "kcc-0001", &options(&["-p", "KO"])?)?;
+        let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KO"])?)?;
         assert_eq!(
             split_sizes(&pages),
             vec![(800, 1253), (800, 1253), (800, 1253)]
@@ -612,15 +612,15 @@ mod tests {
         // from the original heights, so the last page is clipped (KCC's `mergeDirectory`).
         let mut pages = [
             strip_page(
-                "kcc-0001.png",
+                "cb-0001.png",
                 checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
             ),
             strip_page(
-                "kcc-0002.png",
+                "cb-0002.png",
                 checker_strip(600, &[(100, 0), (300, 200), (100, 0)]),
             ),
             strip_page(
-                "kcc-0003.png",
+                "cb-0003.png",
                 checker_strip(800, &[(100, 0), (300, 200), (100, 0)]),
             ),
         ];
@@ -642,9 +642,9 @@ mod tests {
                 Chapter {
                     name: ChapterName::new("Chapter 1"),
                     pages: vec![
-                        strip_page("Chapter 1/kcc-0001.png", checker_strip(800, SEGMENTS_A)),
+                        strip_page("Chapter 1/cb-0001.png", checker_strip(800, SEGMENTS_A)),
                         strip_page(
-                            "Chapter 1/kcc-0002.png",
+                            "Chapter 1/cb-0002.png",
                             checker_strip(800, &[(200, 0), (100, 50), (200, 0)]),
                         ),
                     ],
@@ -670,7 +670,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["Chapter 1/kcc-0001-0001.png", "Chapter 1/kcc-0001-0002.png",]
+            vec!["Chapter 1/cb-0001-0001.png", "Chapter 1/cb-0001-0002.png",]
         );
         Ok(())
     }

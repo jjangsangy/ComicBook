@@ -57,7 +57,7 @@ fn write_png(path: &Path, width: u32, height: u32, color: [u8; 3]) -> Result<()>
 /// quadrants to lay out (see the `kindle_panel` scenario).
 fn fixture(root: &Path, comicinfo: bool) -> Result<()> {
     write_png(&root.join("01-normal.png"), 800, 1200, [10, 10, 10])?;
-    // 2.5:1 exceeds the bisect threshold, so it rotates to `-kcc-d` (`center` spread).
+    // 2.5:1 exceeds the bisect threshold, so it rotates to `-cb-d` (`center` spread).
     write_png(&root.join("02-spread.png"), 500, 200, [255, 255, 255])?;
     write_png(&root.join("Chapter 1/01.png"), 100, 150, [10, 10, 10])?;
     write_png(&root.join("Chapter 1/02.png"), 100, 150, [200, 200, 200])?;

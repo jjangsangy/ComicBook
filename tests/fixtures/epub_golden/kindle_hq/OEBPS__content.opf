@@ -26,23 +26,23 @@
 <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 <item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>
 <item id="cover" href="Images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
-<item id="page_Images_kcc-0001-kcc-x" href="Text/kcc-0001-kcc-x.xhtml" media-type="application/xhtml+xml"/>
-<item id="img_Images_kcc-0001-kcc-x" href="Images/kcc-0001-kcc-x.jpg" media-type="image/jpeg"/>
-<item id="page_Images_kcc-0002-kcc-d" href="Text/kcc-0002-kcc-d.xhtml" media-type="application/xhtml+xml"/>
-<item id="img_Images_kcc-0002-kcc-d" href="Images/kcc-0002-kcc-d.jpg" media-type="image/jpeg"/>
-<item id="page_Images_chapter-1_kcc-0003-kcc-x" href="Text/chapter-1/kcc-0003-kcc-x.xhtml" media-type="application/xhtml+xml"/>
-<item id="img_Images_chapter-1_kcc-0003-kcc-x" href="Images/chapter-1/kcc-0003-kcc-x.jpg" media-type="image/jpeg"/>
-<item id="page_Images_chapter-1_kcc-0004-kcc-x" href="Text/chapter-1/kcc-0004-kcc-x.xhtml" media-type="application/xhtml+xml"/>
-<item id="img_Images_chapter-1_kcc-0004-kcc-x" href="Images/chapter-1/kcc-0004-kcc-x.jpg" media-type="image/jpeg"/>
-<item id="page_Images_chapter-2_kcc-0005-kcc-x" href="Text/chapter-2/kcc-0005-kcc-x.xhtml" media-type="application/xhtml+xml"/>
-<item id="img_Images_chapter-2_kcc-0005-kcc-x" href="Images/chapter-2/kcc-0005-kcc-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_cb-0001-cb-x" href="Text/cb-0001-cb-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_cb-0001-cb-x" href="Images/cb-0001-cb-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_cb-0002-cb-d" href="Text/cb-0002-cb-d.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_cb-0002-cb-d" href="Images/cb-0002-cb-d.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-1_cb-0003-cb-x" href="Text/chapter-1/cb-0003-cb-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-1_cb-0003-cb-x" href="Images/chapter-1/cb-0003-cb-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-1_cb-0004-cb-x" href="Text/chapter-1/cb-0004-cb-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-1_cb-0004-cb-x" href="Images/chapter-1/cb-0004-cb-x.jpg" media-type="image/jpeg"/>
+<item id="page_Images_chapter-2_cb-0005-cb-x" href="Text/chapter-2/cb-0005-cb-x.xhtml" media-type="application/xhtml+xml"/>
+<item id="img_Images_chapter-2_cb-0005-cb-x" href="Images/chapter-2/cb-0005-cb-x.jpg" media-type="image/jpeg"/>
 <item id="css" href="Text/style.css" media-type="text/css"/>
 </manifest>
 <spine page-progression-direction="ltr" toc="ncx">
-<itemref idref="page_Images_kcc-0001-kcc-x" linear="yes" properties="page-spread-right"/>
-<itemref idref="page_Images_kcc-0002-kcc-d" linear="yes" properties="page-spread-center"/>
-<itemref idref="page_Images_chapter-1_kcc-0003-kcc-x" linear="yes" properties="page-spread-left"/>
-<itemref idref="page_Images_chapter-1_kcc-0004-kcc-x" linear="yes" properties="page-spread-right"/>
-<itemref idref="page_Images_chapter-2_kcc-0005-kcc-x" linear="yes" properties="page-spread-left"/>
+<itemref idref="page_Images_cb-0001-cb-x" linear="yes" properties="page-spread-right"/>
+<itemref idref="page_Images_cb-0002-cb-d" linear="yes" properties="page-spread-center"/>
+<itemref idref="page_Images_chapter-1_cb-0003-cb-x" linear="yes" properties="page-spread-left"/>
+<itemref idref="page_Images_chapter-1_cb-0004-cb-x" linear="yes" properties="page-spread-right"/>
+<itemref idref="page_Images_chapter-2_cb-0005-cb-x" linear="yes" properties="page-spread-left"/>
 </spine>
 </package>

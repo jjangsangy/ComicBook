@@ -3,7 +3,7 @@
 //! `-f cbz` (and the Kindle DX `Auto` default) repackages the processed pages as
 //! a ZIP comic without any EPUB scaffolding, mirroring KCC's `makeZIP` over its
 //! `OEBPS/Images` tree (see docs/output.md). The processed pages already carry their
-//! sanitized `kcc-NNNN-kcc-<order>` names in their chapter directories, so the
+//! sanitized `cb-NNNN-cb-<order>` names in their chapter directories, so the
 //! archive entries are exactly what KCC's `ComicPage.saveToDir` left on disk.
 
 use std::path::Path;

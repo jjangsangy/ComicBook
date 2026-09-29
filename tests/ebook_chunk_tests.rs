@@ -119,8 +119,8 @@ fn batch_split_two_gives_each_subdirectory_its_own_tome() -> Result<()> {
 
     let first = zip_entries(&written[0])?;
     let second = zip_entries(&written[1])?;
-    assert!(first.contains_key("OEBPS/Images/chapter-1/kcc-0001-kcc-x.jpg"));
-    assert!(second.contains_key("OEBPS/Images/chapter-2/kcc-0002-kcc-x.jpg"));
+    assert!(first.contains_key("OEBPS/Images/chapter-1/cb-0001-cb-x.jpg"));
+    assert!(second.contains_key("OEBPS/Images/chapter-2/cb-0002-cb-x.jpg"));
 
     // Each tome carries its own `base [i/n]` title.
     let first_opf = String::from_utf8(first["OEBPS/content.opf"].clone())?;
@@ -267,8 +267,8 @@ fn fusion_merges_the_sources_into_one_book() -> Result<()> {
     assert!(output.is_file(), "{output:?}");
 
     let entries = zip_entries(&output)?;
-    assert!(entries.contains_key("OEBPS/Images/a/kcc-0001-kcc-x.jpg"));
-    assert!(entries.contains_key("OEBPS/Images/b/kcc-0002-kcc-x.jpg"));
+    assert!(entries.contains_key("OEBPS/Images/a/cb-0001-cb-x.jpg"));
+    assert!(entries.contains_key("OEBPS/Images/b/cb-0002-cb-x.jpg"));
     let opf = String::from_utf8(entries["OEBPS/content.opf"].clone())?;
     assert!(opf.contains("a [fused]"), "{opf}");
     Ok(())
@@ -298,8 +298,8 @@ fn fusion_keeps_the_user_order_when_it_differs_from_natural_sort() -> Result<()>
     run_ebook(cli)?;
 
     let entries = zip_entries(&tmp.path().join("b [fused].epub"))?;
-    assert!(entries.contains_key("OEBPS/Images/fusion-0001-b/kcc-0001-kcc-x.jpg"));
-    assert!(entries.contains_key("OEBPS/Images/fusion-0002-a/kcc-0002-kcc-x.jpg"));
+    assert!(entries.contains_key("OEBPS/Images/fusion-0001-b/cb-0001-cb-x.jpg"));
+    assert!(entries.contains_key("OEBPS/Images/fusion-0002-a/cb-0002-cb-x.jpg"));
     Ok(())
 }
 

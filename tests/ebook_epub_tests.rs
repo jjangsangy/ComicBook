@@ -41,7 +41,7 @@ fn write_png(path: &Path, width: u32, height: u32, color: [u8; 3]) -> Result<()>
 /// A folder with a root page, a split spread and two chapter directories.
 fn fixture(root: &Path) -> Result<()> {
     write_png(&root.join("01-normal.png"), 100, 150, [10, 10, 10])?;
-    // 2.5:1 exceeds the bisect threshold, so it rotates to `-kcc-d` (a `center`
+    // 2.5:1 exceeds the bisect threshold, so it rotates to `-cb-d` (a `center`
     // spread in the spine).
     write_png(&root.join("02-spread.png"), 500, 200, [255, 255, 255])?;
     write_png(&root.join("Chapter 1/01.png"), 100, 150, [10, 10, 10])?;
@@ -259,7 +259,7 @@ fn kindle_epub_has_fixed_layout_and_panel_view() -> Result<()> {
     assert!(opf.contains("properties=\"page-spread-center\""));
 
     // Panel View markup is present in every page.
-    let xhtml = epub.text("OEBPS/Text/kcc-0001-kcc-x.xhtml")?;
+    let xhtml = epub.text("OEBPS/Text/cb-0001-cb-x.xhtml")?;
     assert!(xhtml.contains("<div id=\"PV\">"));
     assert!(xhtml.contains("class=\"app-amzn-magnify\""));
     assert!(xhtml.contains("<div class=\"PV-P\""));
@@ -348,7 +348,7 @@ fn no_processing_copies_images_verbatim() -> Result<()> {
     let epub = Epub::open(&outputs[0])?;
 
     assert_eq!(
-        epub.bytes("OEBPS/Images/kcc-0001.png")
+        epub.bytes("OEBPS/Images/cb-0001.png")
             .context("the image is packaged")?,
         pristine.as_slice(),
         "--no-processing must emit the source bytes untouched"
@@ -414,23 +414,23 @@ fn scribe_profile_splits_a_tall_page_into_above_and_below() -> Result<()> {
     let epub = Epub::open(&outputs[0])?;
 
     // The tall page becomes two images; the unsplit name is never written.
-    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-above.jpg"));
-    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-below.jpg"));
-    assert!(!epub.has("OEBPS/Images/kcc-0001-kcc-x.jpg"));
+    assert!(epub.has("OEBPS/Images/cb-0001-cb-x-above.jpg"));
+    assert!(epub.has("OEBPS/Images/cb-0001-cb-x-below.jpg"));
+    assert!(!epub.has("OEBPS/Images/cb-0001-cb-x.jpg"));
 
     // The XHTML stacks both images and the viewport spans their combined height.
-    let xhtml = epub.text("OEBPS/Text/kcc-0001-kcc-x-above.xhtml")?;
+    let xhtml = epub.text("OEBPS/Text/cb-0001-cb-x-above.xhtml")?;
     assert!(xhtml.contains(
-        "<img width=\"1653\" height=\"1920\" src=\"../Images/kcc-0001-kcc-x-above.jpg\"/>"
+        "<img width=\"1653\" height=\"1920\" src=\"../Images/cb-0001-cb-x-above.jpg\"/>"
     ));
     assert!(xhtml.contains(
-        "<img style=\"top: 1920px\" width=\"1653\" height=\"560\" src=\"../Images/kcc-0001-kcc-x-below.jpg\"/>"
+        "<img style=\"top: 1920px\" width=\"1653\" height=\"560\" src=\"../Images/cb-0001-cb-x-below.jpg\"/>"
     ));
     assert!(xhtml.contains("content=\"width=1653, height=2480\""));
 
     let opf = epub.text("OEBPS/content.opf")?;
     // The `-below` image is in the manifest but never a spine item of its own.
-    assert!(opf.contains("href=\"Images/kcc-0001-kcc-x-below.jpg\""));
+    assert!(opf.contains("href=\"Images/cb-0001-cb-x-below.jpg\""));
     let spine = spine(&opf)?;
     assert_eq!(spine.len(), 1);
     assert!(spine[0].contains("above"));
@@ -452,8 +452,8 @@ fn scribe_profile_names_a_short_page_whole() -> Result<()> {
 
     let outputs = convert(&source, &["-f", "epub", "-p", "KS", "-c", "0"])?;
     let epub = Epub::open(&outputs[0])?;
-    assert!(epub.has("OEBPS/Images/kcc-0001-kcc-x-whole.jpg"));
-    assert!(!epub.has("OEBPS/Images/kcc-0001-kcc-x.jpg"));
+    assert!(epub.has("OEBPS/Images/cb-0001-cb-x-whole.jpg"));
+    assert!(!epub.has("OEBPS/Images/cb-0001-cb-x.jpg"));
     Ok(())
 }
 
@@ -604,7 +604,7 @@ fn two_panel_and_vertical_4_panel_reshape_the_panel_view() -> Result<()> {
             ],
         )?[0],
     )?;
-    let quad_xhtml = quad.text("OEBPS/Text/kcc-0001-kcc-x.xhtml")?;
+    let quad_xhtml = quad.text("OEBPS/Text/cb-0001-cb-x.xhtml")?;
     assert!(quad_xhtml.contains("<div id=\"PV-TL\">"));
     assert!(quad_xhtml.contains("<div id=\"PV-BR\">"));
 
@@ -628,7 +628,7 @@ fn two_panel_and_vertical_4_panel_reshape_the_panel_view() -> Result<()> {
             ],
         )?[0],
     )?;
-    let two_xhtml = two.text("OEBPS/Text/kcc-0001-kcc-x.xhtml")?;
+    let two_xhtml = two.text("OEBPS/Text/cb-0001-cb-x.xhtml")?;
     assert!(two_xhtml.contains("<div id=\"PV-T\">"));
     assert!(two_xhtml.contains("<div id=\"PV-B\">"));
     assert!(!two_xhtml.contains("PV-TL"));
@@ -716,7 +716,7 @@ fn cover_is_taken_from_the_uncropped_first_page() -> Result<()> {
 
     // The processed page itself was margin-cropped.
     let processed = image::load_from_memory(
-        epub.bytes("OEBPS/Images/kcc-0001-kcc-x.jpg")
+        epub.bytes("OEBPS/Images/cb-0001-cb-x.jpg")
             .context("the page is packaged")?,
     )?;
     assert!(processed.width() < 400);

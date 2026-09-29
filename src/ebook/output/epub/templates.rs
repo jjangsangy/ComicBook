@@ -61,7 +61,7 @@ fn normalize_lf(mut out: String) -> String {
 
 /// A page's physical side in the `page-spread-*` algorithm (KCC's `pageside`).
 ///
-/// `Center` is a distinct state (a `-kcc-a`/`-kcc-d` spread special or a
+/// `Center` is a distinct state (a `-cb-a`/`-cb-d` spread special or a
 /// `--one-page-landscape` page), not an "unset" value, so the three-way choice is
 /// exhaustive and `other()` has no impossible input (docs/refactor.md B7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,12 +577,12 @@ mod tests {
     #[test]
     fn hrefs_distinguish_pages_from_images() {
         assert_eq!(
-            Href::xhtml("Text", Stem::new("kcc-0001-kcc-x")).to_string(),
-            "Text/kcc-0001-kcc-x.xhtml"
+            Href::xhtml("Text", Stem::new("cb-0001-cb-x")).to_string(),
+            "Text/cb-0001-cb-x.xhtml"
         );
         assert_eq!(
-            Href::image("Images/Chapter 1", FileName::new("kcc-0001-kcc-x.jpg")).to_string(),
-            "Images/Chapter 1/kcc-0001-kcc-x.jpg"
+            Href::image("Images/Chapter 1", FileName::new("cb-0001-cb-x.jpg")).to_string(),
+            "Images/Chapter 1/cb-0001-cb-x.jpg"
         );
     }
 

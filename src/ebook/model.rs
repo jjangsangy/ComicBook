@@ -28,7 +28,7 @@ pub enum Background {
 
 /// How a page participates in spread splitting.
 ///
-/// The KCC order suffix (`-kcc-x`, `-kcc-a` … `-kcc-d`) is derived from this and
+/// The KCC order suffix (`-cb-x`, `-cb-a` … `-cb-d`) is derived from this and
 /// is load-bearing for the OPF spread algorithm (see docs/architecture.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OrderClass {
@@ -232,7 +232,7 @@ string_newtype! {
 }
 
 string_newtype! {
-    /// An [`EncodedPage`]'s output file name, including the `-kcc-<order>` suffix
+    /// An [`EncodedPage`]'s output file name, including the `-cb-<order>` suffix
     /// and the media extension.
     PageName
 }
@@ -523,10 +523,10 @@ pub struct Chapter {
 /// (see docs/architecture.md).
 #[derive(Debug, Clone)]
 pub struct EncodedPage {
-    /// Output file name, including the `-kcc-<order>` suffix and the media
+    /// Output file name, including the `-cb-<order>` suffix and the media
     /// extension. Set by the naming pass from the sanitized page name.
     pub name: PageName,
-    /// The `-kcc-<order>` class that drives the OPF spread algorithm.
+    /// The `-cb-<order>` class that drives the OPF spread algorithm.
     pub order_class: OrderClass,
     pub media_type: MediaType,
     pub bytes: Vec<u8>,
@@ -587,8 +587,8 @@ mod tests {
         let mut png = Vec::new();
         image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
         Ok(Page {
-            source_name: SourceName::new("kcc-0001.png"),
-            rel_path: RelPath::new("kcc-0001.png"),
+            source_name: SourceName::new("cb-0001.png"),
+            rel_path: RelPath::new("cb-0001.png"),
             data: PageData::Encoded(Source::new(png, MediaType::Png)),
             dimensions: Size::new(width, height),
             background: Background::White,
@@ -650,8 +650,8 @@ mod tests {
     #[test]
     fn a_pixel_only_page_has_no_source_bytes_but_keeps_its_media_type() {
         let page = Page {
-            source_name: SourceName::new("kcc-0001.png"),
-            rel_path: RelPath::new("kcc-0001.png"),
+            source_name: SourceName::new("cb-0001.png"),
+            rel_path: RelPath::new("cb-0001.png"),
             data: PageData::Pixels(
                 MediaType::WebP,
                 DynamicImage::ImageRgb8(RgbImage::new(1, 1)),

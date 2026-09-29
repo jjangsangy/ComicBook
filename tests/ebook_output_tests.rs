@@ -86,7 +86,7 @@ fn cbz_repackage_loads_back_into_the_processed_tree() -> Result<()> {
     let tmp = tempdir()?;
     let source = tmp.path().join("source");
     write_png(&source.join("01-normal.png"), 100, 150, [10, 10, 10])?;
-    // 2.5:1 exceeds the bisect threshold, so it rotates to `-kcc-d`.
+    // 2.5:1 exceeds the bisect threshold, so it rotates to `-cb-d`.
     write_png(&source.join("02-spread.png"), 500, 200, [255, 255, 255])?;
     write_png(&source.join("Chapter 1/01.png"), 100, 150, [10, 10, 10])?;
 
@@ -95,11 +95,11 @@ fn cbz_repackage_loads_back_into_the_processed_tree() -> Result<()> {
     assert_eq!(written[0], tmp.path().join("source.cbz"));
 
     let entries = zip_entries(&written[0])?;
-    // The processed pages keep their sanitized `kcc-NNNN-kcc-<order>` names and
+    // The processed pages keep their sanitized `cb-NNNN-cb-<order>` names and
     // their chapter directory (naturally ordered CBZ names are kept verbatim).
-    assert!(entries.contains(&"kcc-0001-kcc-x.jpg".to_string()));
-    assert!(entries.contains(&"kcc-0002-kcc-d.jpg".to_string()));
-    assert!(entries.contains(&"Chapter 1/kcc-0003-kcc-x.jpg".to_string()));
+    assert!(entries.contains(&"cb-0001-cb-x.jpg".to_string()));
+    assert!(entries.contains(&"cb-0002-cb-d.jpg".to_string()));
+    assert!(entries.contains(&"Chapter 1/cb-0003-cb-x.jpg".to_string()));
     // No cover override and no `--keep-comicinfo`, so neither is written.
     assert!(!entries.iter().any(|name| name == "##cover.jpg"));
     assert!(!entries.iter().any(|name| name == "ComicInfo.xml"));
@@ -112,13 +112,13 @@ fn cbz_repackage_loads_back_into_the_processed_tree() -> Result<()> {
             (
                 String::new(),
                 vec![
-                    "kcc-0001-kcc-x.jpg".to_string(),
-                    "kcc-0002-kcc-d.jpg".to_string(),
+                    "cb-0001-cb-x.jpg".to_string(),
+                    "cb-0002-cb-d.jpg".to_string(),
                 ],
             ),
             (
                 "Chapter 1".to_string(),
-                vec!["Chapter 1/kcc-0003-kcc-x.jpg".to_string()],
+                vec!["Chapter 1/cb-0003-cb-x.jpg".to_string()],
             ),
         ]
     );

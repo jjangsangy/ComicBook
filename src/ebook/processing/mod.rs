@@ -22,6 +22,7 @@ use image::DynamicImage;
 use rayon::prelude::*;
 
 use crate::ebook::model::{ChapterName, ComicTree, EncodedPage, Page};
+use crate::ebook::naming::PAGE_PREFIX;
 use crate::ebook::options::{Cropping, InterPanelCrop, Options};
 use crate::ebook::progress;
 use crate::units::{Fraction, Size};
@@ -199,8 +200,8 @@ fn is_colour_page(image: &DynamicImage, options: &Options) -> bool {
 ///
 /// Two conditions are checked (see docs/porting.md):
 ///
-/// - any source page name already carries KCC's `-kcc` order suffix, so it is
-///   probably KCC output and a second conversion will lose quality;
+/// - any source page name already carries the `-cb` order suffix, so it
+///   is probably cb output and a second conversion will lose quality;
 /// - more than 25% of pages are smaller than the target device resolution, and
 ///   neither `--upscale`/`--stretch` nor a Scribe (`KS*`) profile is in effect.
 ///
@@ -213,6 +214,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
     let mut image_smaller: u64 = 0;
     let mut already_processed = false;
     let mut any_page = false;
+    let processed_marker = format!("-{}", PAGE_PREFIX);
 
     for chapter in &tree.chapters {
         for page in &chapter.pages {
@@ -222,7 +224,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
                     .rel_path
                     .as_relative()
                     .file_stem()
-                    .is_some_and(|stem| stem.contains("-kcc"))
+                    .is_some_and(|stem| stem.contains(processed_marker.as_str()))
             {
                 already_processed = true;
             }
@@ -240,7 +242,7 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
 
     if already_processed {
         warnings.push(
-            "WARNING: Source files are probably created by KCC. \
+            "WARNING: Source files are probably created by cb. \
              The second conversion will decrease quality."
                 .to_string(),
         );

@@ -336,8 +336,8 @@ mod tests {
 
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(color)));
         let page = Page {
-            source_name: SourceName::new("kcc-0001.png"),
-            rel_path: RelPath::new("kcc-0001.png"),
+            source_name: SourceName::new("cb-0001.png"),
+            rel_path: RelPath::new("cb-0001.png"),
             data: PageData::Pixels(MediaType::Png, image),
             dimensions: Size::new(width, height),
             background: crate::ebook::model::Background::White,

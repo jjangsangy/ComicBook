@@ -111,11 +111,11 @@ fn webtoon_splits_a_strip_and_omits_the_cover() -> Result<()> {
 
     // The strip becomes two virtual pages, named after the first page's stem.
     assert!(
-        names.contains(&"OEBPS/Images/kcc-0001-0001-kcc-x.jpg".to_string()),
+        names.contains(&"OEBPS/Images/cb-0001-0001-cb-x.jpg".to_string()),
         "missing page 1: {names:?}"
     );
     assert!(
-        names.contains(&"OEBPS/Images/kcc-0001-0002-kcc-x.jpg".to_string()),
+        names.contains(&"OEBPS/Images/cb-0001-0002-cb-x.jpg".to_string()),
         "missing page 2: {names:?}"
     );
     // No cover is built when webtoon mode has no custom cover (KCC's `makeBook`).
@@ -128,11 +128,11 @@ fn webtoon_splits_a_strip_and_omits_the_cover() -> Result<()> {
     // upscaling, so they are emitted at the strip width untouched.
     let one = image::load_from_memory(&entry_bytes(
         &written[0],
-        "OEBPS/Images/kcc-0001-0001-kcc-x.jpg",
+        "OEBPS/Images/cb-0001-0001-cb-x.jpg",
     )?)?;
     let two = image::load_from_memory(&entry_bytes(
         &written[0],
-        "OEBPS/Images/kcc-0001-0002-kcc-x.jpg",
+        "OEBPS/Images/cb-0001-0002-cb-x.jpg",
     )?)?;
     assert_eq!(one.dimensions(), (800, 780));
     assert_eq!(two.dimensions(), (800, 525));
@@ -150,18 +150,16 @@ fn no_processing_emits_the_merged_strip_pngs() -> Result<()> {
 
     // `imgDirectoryProcessing` is skipped under `-n`, so the split PNGs are packaged.
     assert!(
-        names.contains(&"OEBPS/Images/kcc-0001-0001.png".to_string()),
+        names.contains(&"OEBPS/Images/cb-0001-0001.png".to_string()),
         "{names:?}"
     );
     assert!(
-        names.contains(&"OEBPS/Images/kcc-0001-0002.png".to_string()),
+        names.contains(&"OEBPS/Images/cb-0001-0002.png".to_string()),
         "{names:?}"
     );
 
-    let one =
-        image::load_from_memory(&entry_bytes(&written[0], "OEBPS/Images/kcc-0001-0001.png")?)?;
-    let two =
-        image::load_from_memory(&entry_bytes(&written[0], "OEBPS/Images/kcc-0001-0002.png")?)?;
+    let one = image::load_from_memory(&entry_bytes(&written[0], "OEBPS/Images/cb-0001-0001.png")?)?;
+    let two = image::load_from_memory(&entry_bytes(&written[0], "OEBPS/Images/cb-0001-0002.png")?)?;
     assert_eq!(one.dimensions(), (800, 780));
     assert_eq!(two.dimensions(), (800, 525));
     Ok(())
@@ -188,6 +186,6 @@ fn a_custom_cover_is_kept_in_webtoon_mode() -> Result<()> {
         "custom cover missing: {names:?}"
     );
     // The pages are still the split webtoon virtual pages.
-    assert!(names.contains(&"OEBPS/Images/kcc-0001-0001-kcc-x.jpg".to_string()));
+    assert!(names.contains(&"OEBPS/Images/cb-0001-0001-cb-x.jpg".to_string()));
     Ok(())
 }

@@ -297,7 +297,7 @@ pub struct OutputArgs {
     #[arg(long = "keep-comicinfo")]
     pub keep_comicinfo: bool,
 
-    /// Author name (default: KCC)
+    /// Author name (default: cb)
     #[arg(short = 'a', long = "author", value_name = "AUTHOR")]
     pub author: Option<String>,
 

@@ -9,8 +9,8 @@
 </head>
 <docTitle><text>book</text></docTitle>
 <navMap>
-<navPoint id="Text"><navLabel><text>book</text></navLabel><content src="Text/kcc-0001-kcc-x.xhtml"/></navPoint>
-<navPoint id="Text_chapter-1"><navLabel><text>Chapter 1</text></navLabel><content src="Text/chapter-1/kcc-0003-kcc-x.xhtml"/></navPoint>
-<navPoint id="Text_chapter-2"><navLabel><text>Chapter 2</text></navLabel><content src="Text/chapter-2/kcc-0005-kcc-x.xhtml"/></navPoint>
+<navPoint id="Text"><navLabel><text>book</text></navLabel><content src="Text/cb-0001-cb-x.xhtml"/></navPoint>
+<navPoint id="Text_chapter-1"><navLabel><text>Chapter 1</text></navLabel><content src="Text/chapter-1/cb-0003-cb-x.xhtml"/></navPoint>
+<navPoint id="Text_chapter-2"><navLabel><text>Chapter 2</text></navLabel><content src="Text/chapter-2/cb-0005-cb-x.xhtml"/></navPoint>
 </navMap>
 </ncx>

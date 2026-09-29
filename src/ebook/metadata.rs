@@ -190,7 +190,7 @@ pub struct BookMetadata {
 /// This mirrors KCC's `getMetadata` (see docs/architecture.md): the default title
 /// comes from
 /// the source name, `--metadata-title` selects how the ComicInfo title is used,
-/// the author falls back to the first listed people (or `KCC`), and the
+/// the author falls back to the first listed people (or `cb`), and the
 /// series/volume/number/summary/bookmarks are lifted from the ComicInfo
 /// regardless of the other flags.
 pub fn resolve(tree: &ComicTree, source: &Path, output: &OutputOptions) -> BookMetadata {
@@ -226,7 +226,7 @@ pub fn resolve_with(
     };
     let mut authors = match &output.author {
         Some(author) => vec![author.clone()],
-        None => vec!["KCC".to_string()],
+        None => vec!["cb".to_string()],
     };
     let mut series = String::new();
     let mut volume = String::new();
@@ -276,7 +276,7 @@ pub fn resolve_with(
                 people.insert(person.clone());
             }
             authors = if people.is_empty() {
-                vec!["KCC".to_string()]
+                vec!["cb".to_string()]
             } else {
                 people.into_iter().collect()
             };
@@ -490,7 +490,7 @@ mod tests {
         let broken = r#"<ComicInfo><Page Image="x" Bookmark="c"/></ComicInfo>"#;
         let metadata = resolve(&tree(broken), Path::new("/tmp/Book.cbz"), &options);
         assert_eq!(metadata.title, "Book");
-        assert_eq!(metadata.authors, vec!["KCC"]);
+        assert_eq!(metadata.authors, vec!["cb"]);
         assert!(metadata.bookmarks.is_empty());
         Ok(())
     }

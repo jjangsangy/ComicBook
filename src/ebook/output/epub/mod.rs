@@ -56,7 +56,7 @@ impl fmt::Display for ImageDir<'_> {
     }
 }
 
-/// An image file name including its extension (`kcc-0001-kcc-x.jpg`).
+/// An image file name including its extension (`cb-0001-cb-x.jpg`).
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FileName<'a>(&'a str);
@@ -77,7 +77,7 @@ impl fmt::Display for FileName<'_> {
     }
 }
 
-/// A file name without its extension (`kcc-0001-kcc-x`).
+/// A file name without its extension (`cb-0001-cb-x`).
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Stem<'a>(&'a str);
@@ -103,7 +103,7 @@ impl fmt::Display for Stem<'_> {
 pub(crate) struct PageRef<'a> {
     /// Chapter directory relative to `OEBPS/Images` (`""` at the root).
     pub image_dir: ImageDir<'a>,
-    /// Image file name including its extension (`kcc-0001-kcc-x.jpg`).
+    /// Image file name including its extension (`cb-0001-cb-x.jpg`).
     pub file: FileName<'a>,
     pub size: Size,
     pub flags: PageFlags,
@@ -431,15 +431,15 @@ mod tests {
     #[test]
     fn stem_drops_the_last_extension() {
         assert_eq!(
-            stem_of(FileName::new("kcc-0001-kcc-x.jpg")).as_str(),
-            "kcc-0001-kcc-x"
+            stem_of(FileName::new("cb-0001-cb-x.jpg")).as_str(),
+            "cb-0001-cb-x"
         );
         assert_eq!(
             stem_of(FileName::new("archive.tar.gz")).as_str(),
             "archive.tar"
         );
         // A dotless or leading-dot name keeps its whole name, as `splitext` does.
-        assert_eq!(stem_of(FileName::new("kcc-0001")).as_str(), "kcc-0001");
+        assert_eq!(stem_of(FileName::new("cb-0001")).as_str(), "cb-0001");
         assert_eq!(stem_of(FileName::new(".hidden")).as_str(), ".hidden");
     }
 

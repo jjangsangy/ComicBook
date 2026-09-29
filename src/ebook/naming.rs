@@ -1,7 +1,7 @@
 //! Slugify, page naming and output filename resolution.
 //!
 //! Mirrors KCC's `sanitizeTree`/`slugify`/`getOutputFilename` (see
-//! docs/architecture.md), including the `-kcc-x`/`-kcc-a`…`-kcc-d` page suffixes:
+//! docs/architecture.md), including the `-cb-x`/`-cb-a`…`-cb-d` page suffixes:
 //! [`sanitize_tree`] rewrites a [`ComicTree`]'s chapter directories and page names
 //! to the deterministic output layout the pipeline expects, and [`output_filename`]
 //! resolves where the finished book is written. Unlike KCC, the output name is
@@ -23,8 +23,8 @@ use relative_path::{RelativePath, RelativePathBuf};
 use crate::ebook::model::{ChapterName, ComicTree, MediaType, Page, RelPath, SourceName};
 use crate::ebook::options::{Options, OutputEncoding};
 
-/// KCC's deterministic page-name prefix (`kcc-0001`).
-const PAGE_PREFIX: &str = "kcc";
+/// The deterministic page-name prefix (`cb-0001`).
+pub(crate) const PAGE_PREFIX: &str = "cb";
 
 /// Image extensions accepted in a sibling `Covers/` directory.
 ///
@@ -92,7 +92,7 @@ fn pad_numbers(value: &str) -> String {
 ///
 /// This is the in-memory equivalent of KCC's `sanitizeTree`: every chapter
 /// directory path is slugified component by component (with the `A`-suffix
-/// collision rule), every page is renamed to `kcc-NNNN.<ext>` with the extension
+/// collision rule), every page is renamed to `cb-NNNN.<ext>` with the extension
 /// lower-cased, and the first page in walk order is reported as the cover.
 pub fn sanitize_tree(tree: &mut ComicTree, options: &Options) -> Sanitized {
     let (slug_map, chapter_titles) = slugify_directories(tree, options);
