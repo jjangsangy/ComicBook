@@ -1,6 +1,7 @@
 # comic-book
 
 [![CI](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/jjangsangy/ComicBook/branch/main/graph/badge.svg)](https://codecov.io/gh/jjangsangy/ComicBook)
 [![Release](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml/badge.svg)](https://github.com/jjangsangy/ComicBook/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg)](https://www.rust-lang.org)

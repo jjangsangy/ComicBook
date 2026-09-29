@@ -10,6 +10,17 @@ release when a version tag is pushed.
 
 ## [Unreleased]
 
+### Added
+
+- Added a `Coverage` workflow (`.github/workflows/coverage.yml`) that runs the test suite under
+  `cargo llvm-cov nextest`, uploads the `lcov` report to Codecov — which serves the new coverage
+  badge in the README — and enforces a 95% line-coverage floor (`--fail-under-lines`) as a
+  `Coverage` status check. The per-file table is written to the run's job summary, a same-repo pull
+  request gets a sticky coverage comment, and the `lcov` data, an HTML report and the summary
+  markdown are uploaded as the `coverage` artifact. The Codecov upload authenticates with a
+  `CODECOV_TOKEN` repository secret. Coverage is split out of `ci.yml` so a failing gate does not
+  redden the main CI badge.
+
 ### Changed
 
 - Rebranded the `ebook` output from the old `kcc` identifiers to `cb`: when no `-a/--author` is

@@ -22,6 +22,12 @@ undocumented.
   than fit.
 - **Quality gates:** `cargo fmt` and `cargo clippy --all-targets --all-features -- -D warnings`
   must stay green.
+- **Coverage:** `cargo-llvm-cov` runs the same suite under LLVM source-based coverage
+  (`cargo install cargo-llvm-cov --locked`, plus `rustup component add llvm-tools-preview` for the
+  `llvm-cov`/`llvm-profdata` tools). Run it with nextest as the test runner:
+  `cargo llvm-cov nextest`, or `cargo llvm-cov nextest --open` to browse the report. CI runs the
+  suite once on a single `ubuntu` job, enforces a minimum line-coverage floor, and publishes the
+  result to Codecov (which serves the README badge) and the job summary (see [CI](#ci)).
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
   OPF/NCX/NAV output.
@@ -159,6 +165,26 @@ The existing `ubuntu`/`macos`/`windows` matrix installs cargo-nextest
 (`taiki-e/install-action@nextest`) and runs `cargo nextest run --no-fail-fast`, since nextest is
 fail-fast by default: without the flag a single failure (e.g. on Windows) aborts the run and the
 remaining tests never produce output. The release workflow builds static musl Linux binaries.
+
+Coverage is a separate workflow ([`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml)),
+so its gate and badge are independent of the main `CI` badge. It runs the suite once under
+`cargo llvm-cov nextest --no-fail-fast` on `ubuntu-latest`. It is a gate as well as a report:
+`--fail-under-lines "$MIN_LINE_COVERAGE"` (the job's `MIN_LINE_COVERAGE` env var, currently `95`)
+fails the job — and so its `Coverage` status check — when total line coverage drops below the
+floor. Mark `Coverage` as a required status check in branch protection to block merges that would
+take coverage under it.
+
+The result is published four ways: the `lcov.info` report is uploaded to Codecov (which serves the
+badge in the [README](../README.md) and annotates pull requests), the per-file table is appended to
+the run's job summary, a same-repo pull request gets a sticky comment (a PR from a fork has a
+read-only `GITHUB_TOKEN` and is skipped, but still gets the job summary), and the `lcov.info` data,
+an HTML report and the summary markdown are uploaded as the `coverage` artifact. The Codecov
+upload is authenticated with a `CODECOV_TOKEN` repository secret — required because a public repo
+still needs auth on a protected branch like `main` — so install the Codecov GitHub App for the repo
+on first use. Even when the gate fails the summary and report are still produced, because
+`cargo llvm-cov report` re-renders the previous run's profile data rather than rerunning the tests.
+The job is deliberately not part of the OS matrix — instrumentation is much slower and coverage
+does not vary meaningfully between platforms.
 
 On a `v*` tag, that release workflow validates the tag as SemVer, stamps `Cargo.toml`'s
 `[package] version` from it (and refreshes the root `Cargo.lock` entry so the `--locked` build

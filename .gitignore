@@ -6,6 +6,10 @@
 # Default comic-book output directory
 Results/
 
+# Coverage reports (cargo-llvm-cov)
+lcov.info
+/coverage-html/
+
 # Operating System files
 .DS_Store
 .DS_Store?
