@@ -23,11 +23,30 @@ release when a version tag is pushed.
 
 ### Changed
 
-- Expanded unit and integration test coverage across the `archive`, `ebook` input/processing/output
-  and CLI layers, exercising previously-untested branches (the profile table, shared progress-style
-  helpers and `cli::run` dispatch are now fully covered). No behaviour change; the new tests pin
-  existing observable behaviour, and the coverage floor in the `Coverage` workflow is unchanged.
-
+- The `Coverage` workflow now gates on LLVM **region** coverage
+  (`cargo llvm-cov --fail-under-regions`, floor `95`) — the strictest metric, where a partially
+  executed line is not counted as fully covered. The Codecov badge still reports *line* coverage
+  (~97.6%) and so reads higher than the gate, because Codecov's lcov model has no region record.
+- Expanded unit and integration test coverage across the crate to exercise previously-untested
+  branches, raising line coverage to ~97.6% (lcov `DA` records — llvm-cov's own summary reads ~96.6%
+  and its region coverage ~93.9%) from ~90.6% before this pass. The suite now passes 526 tests
+  (with a further 13 `#[ignore]`d), spread over inline `#[cfg(test)]` modules and a new
+  `tests/cli_run_tests.rs`, and the additions pin:
+  - `archive`: the directory/zip/tar/rar readers and writers, archive-path normalisation, the
+    `ops` conversion paths (the same-format fast copy, partial-destination cleanup and the
+    root-strip policies) and the zip writer's directory de-duplication;
+  - `ebook` input: PDF embedded-image extraction (the legacy raw-JPEG scan, its stray-image skip
+    and its error paths) and EPUB spine/manifest resolution (page lookup and `src`/`href` image
+    attribute handling);
+  - `ebook` processing: pixel-type-preserving crops, the box-blur/threshold/luma kernels, page
+    `fit`/`contain`/`pad`/`stretch`/`wallpaper` sizing, autocontrast/autolevel, cover rendering and
+    the webtoon page splitter;
+  - `ebook` output: EPUB OPF/NAV/XHTML panel-view templates, light-novel grayscale conversion and
+    per-tome cover labelling;
+  - CLI: `cli::run` dispatch for every subcommand, completion-script generation per shell, and the
+    binary's success/failure exit codes. Several areas are covered fully for the first time (the
+    device-profile table, the shared progress-style helpers and the `cli::run` dispatch). No
+    behaviour change.
 - Rebranded the `ebook` output from the old `kcc` identifiers to `cb`: when no `-a/--author` is
   given the author is now `cb`, and sanitized page files are named `cb-NNNN-cb-<order>` (e.g.
   `cb-0001-cb-x.xhtml`, `cb-0002-cb-d-above.jpg`) instead of `kcc-NNNN-kcc-<order>`. The page-name

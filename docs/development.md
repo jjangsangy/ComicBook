@@ -26,7 +26,7 @@ undocumented.
   (`cargo install cargo-llvm-cov --locked`, plus `rustup component add llvm-tools-preview` for the
   `llvm-cov`/`llvm-profdata` tools). Run it with nextest as the test runner:
   `cargo llvm-cov nextest`, or `cargo llvm-cov nextest --open` to browse the report. CI runs the
-  suite once on a single `ubuntu` job, enforces a minimum line-coverage floor, and publishes the
+  suite once on a single `ubuntu` job, enforces a minimum region-coverage floor, and publishes the
   result to Codecov (which serves the README badge) and the job summary (see [CI](#ci)).
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
@@ -168,11 +168,21 @@ remaining tests never produce output. The release workflow builds static musl Li
 
 Coverage is a separate workflow ([`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml)),
 so its gate and badge are independent of the main `CI` badge. It runs the suite once under
-`cargo llvm-cov nextest --no-fail-fast` on `ubuntu-latest`. It is a gate as well as a report:
-`--fail-under-lines "$MIN_LINE_COVERAGE"` (the job's `MIN_LINE_COVERAGE` env var, currently `95`)
-fails the job — and so its `Coverage` status check — when total line coverage drops below the
-floor. Mark `Coverage` as a required status check in branch protection to block merges that would
-take coverage under it.
+`cargo llvm-cov nextest --no-fail-fast --lcov` on `ubuntu-latest`. It is a gate as well as a
+report: `--fail-under-regions "$MIN_REGION_COVERAGE"` (the job's env var, currently `95`) fails the
+job — and so its `Coverage` status check — when total LLVM *region* coverage drops below the floor.
+Mark `Coverage` as a required status check in branch protection to block merges that would take
+coverage under it.
+
+The gate is region coverage because it is the strictest of llvm-cov's metrics: it counts each
+control-flow region, so a line that only ran partially (e.g. one arm of a `match`) is not counted as
+fully covered. Region coverage currently sits around 93.9%. The Codecov badge cannot mirror it —
+Codecov's model is lines/branches/functions from lcov, and LLVM has no lcov region record (it emits
+no branch data here at all) — so the badge reports *line* coverage (~97.6%) and reads higher than
+the gate. That divergence is intentional: the stricter gate guards the merge while the badge tracks
+the widely-reported line number. Note that llvm-cov itself reports different line totals in its
+summary, its `show` output and its lcov export, so name the metric you mean rather than assuming
+they agree.
 
 The result is published four ways: the `lcov.info` report is uploaded to Codecov (which serves the
 badge in the [README](../README.md) and annotates pull requests), the per-file table is appended to

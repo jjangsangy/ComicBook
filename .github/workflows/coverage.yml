@@ -17,11 +17,13 @@ jobs:
     # A single Linux job is enough: the instrumented run is far slower than the
     # plain test matrix, and coverage does not vary meaningfully by OS.
     runs-on: ubuntu-latest
-    # Total line-coverage floor. `--fail-under-lines` below makes the job — and so
-    # its `Coverage` status check — fail when the suite drops under it. Mark the
-    # check as required in branch protection to block merges on it.
+    # Total region-coverage floor. `--fail-under-regions` below makes the job — and so
+    # its `Coverage` status check — fail when total region coverage is under it. Region
+    # coverage is llvm-cov's strictest metric (a partially executed line is not counted
+    # as fully covered). Codecov cannot represent LLVM regions, so its badge reports
+    # *line* coverage instead and will differ — see docs/development.md.
     env:
-      MIN_LINE_COVERAGE: 95
+      MIN_REGION_COVERAGE: 95
     permissions:
       contents: read
       # The sticky pull-request comment.
@@ -47,14 +49,14 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       # One instrumented run of the whole suite, reusing the test matrix's
-      # `--no-fail-fast` policy so a single failure still lets every remaining
-      # test record its coverage. `--fail-under-lines` is the coverage gate: the
-      # run exits non-zero when total line coverage is below `MIN_LINE_COVERAGE`,
-      # which reddens the job and its status check. The lcov file is the
-      # machine-readable artifact; the tables below are rendered from the same
-      # profile data, so they are still published when the gate fails.
+      # `--no-fail-fast` policy so a single failure still lets every remaining test
+      # record its coverage. `--fail-under-regions` is the gate: the run exits non-zero
+      # when total region coverage is below `MIN_REGION_COVERAGE`, which reddens the job
+      # and its status check. `lcov.info` is the machine-readable artifact (uploaded to
+      # Codecov); the tables below are rendered from the same profile data, so they are
+      # still published when the gate fails.
       - name: Run tests with coverage
-        run: cargo llvm-cov nextest --no-fail-fast --fail-under-lines "$MIN_LINE_COVERAGE" --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --no-fail-fast --fail-under-regions "$MIN_REGION_COVERAGE" --lcov --output-path lcov.info
 
       # Feeds the badge and the Codecov dashboard/PR annotations from `lcov.info`.
       # Authenticated with the `CODECOV_TOKEN` repository secret (required
@@ -74,7 +76,8 @@ jobs:
       # without rerunning the tests, so this still reports even when that run
       # failed. `--color never` keeps ANSI escapes out of the markdown, and the
       # `available` output lets the later report steps skip when a build failure
-      # left no profile data at all.
+      # left no profile data at all. The headline repeats the gate's region figure;
+      # the Codecov badge reports line coverage, which is a different metric.
       - name: Write coverage summary
         id: coverage
         if: always()
@@ -85,15 +88,25 @@ jobs:
             echo 'available=false' >> "$GITHUB_OUTPUT"
             report="Coverage report unavailable; see the 'Run tests with coverage' step."
           fi
+          regions="$(printf '%s\n' "$report" | awk '/^TOTAL/{print $4; exit}')"
+          [ -n "$regions" ] || regions="unavailable"
           {
-            echo "## Code coverage — minimum ${MIN_LINE_COVERAGE}% lines"
+            echo "## Code coverage"
+            echo
+            echo "**Region coverage (the gate): ${regions}. Floor: ${MIN_REGION_COVERAGE}%.**"
+            echo
+            echo "The Codecov badge reports *line* coverage, a different metric — Codecov has no region concept."
             echo
             echo '```'
             echo "$report"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           {
-            echo "## Code coverage — minimum ${MIN_LINE_COVERAGE}% lines"
+            echo "## Code coverage"
+            echo
+            echo "**Region coverage (the gate): ${regions}. Floor: ${MIN_REGION_COVERAGE}%.**"
+            echo
+            echo "The Codecov badge reports *line* coverage, a different metric — Codecov has no region concept."
             echo
             echo '```'
             echo "$report"
