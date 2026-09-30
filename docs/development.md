@@ -26,8 +26,12 @@ undocumented.
   (`cargo install cargo-llvm-cov --locked`, plus `rustup component add llvm-tools-preview` for the
   `llvm-cov`/`llvm-profdata` tools). Run it with nextest as the test runner:
   `cargo llvm-cov nextest`, or `cargo llvm-cov nextest --open` to browse the report. CI runs the
-  suite once on a single `ubuntu` job, enforces a minimum line-coverage floor through Codecov, and
-  publishes the result to Codecov (which serves the README badge) and the job summary (see [CI](#ci)).
+  suite once on a single `ubuntu` job through the `ci` profile in
+  [`.config/nextest.toml`](../.config/nextest.toml) — selected with `NEXTEST_PROFILE=ci`, since
+  `--profile` is also a cargo-llvm-cov option and would not reach nextest — which also writes the
+  JUnit report Codecov Test Analytics ingests. CI enforces a minimum line-coverage floor through
+  Codecov and publishes the result and the graph to Codecov (which serves the README badge and
+  icicle graph) and the job summary (see [CI](#ci)).
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
   OPF/NCX/NAV output.
@@ -168,8 +172,10 @@ remaining tests never produce output. The release workflow builds static musl Li
 
 Coverage is a separate workflow ([`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml)),
 so its check and badge are independent of the main `CI` badge. It runs the suite once under
-`cargo llvm-cov nextest --no-fail-fast --lcov` on `ubuntu-latest`; that step fails only on a test
-failure. The coverage *gate* is the `codecov/project` status configured in
+`cargo llvm-cov nextest --lcov` on `ubuntu-latest`, with `NEXTEST_PROFILE=ci` selecting the `ci`
+profile from [`.config/nextest.toml`](../.config/nextest.toml) (every test runs even after a
+failure, and the run writes the JUnit report at `target/nextest/ci/junit.xml`); that step fails only
+on a test failure. The coverage *gate* is the `codecov/project` status configured in
 [`codecov.yml`](../codecov.yml) (target `95%`, no threshold), which Codecov evaluates against the
 uploaded `lcov.info`. Mark `codecov/project` as a required status check in branch protection to
 block merges that would take coverage under the floor.
@@ -182,11 +188,14 @@ header (~96.6%) than in its own lcov `DA` export, and its *region* coverage (~93
 record at all — so a `--fail-under-regions`/`--fail-under-lines` floor would gate on a number
 Codecov never shows. Name the metric you mean rather than assuming the tools agree.
 
-The result is published four ways: the `lcov.info` report is uploaded to Codecov (which serves the
-badge in the [README](../README.md), annotates pull requests and enforces the gate), the per-file
-table is appended to the run's job summary, a same-repo pull request gets a sticky comment (a PR
-from a fork has a read-only `GITHUB_TOKEN` and is skipped, but still gets the job summary), and the
-`lcov.info` data, an HTML report and the summary markdown are uploaded as the `coverage` artifact.
+The result is published five ways: the `lcov.info` report is uploaded to Codecov (which serves the
+badge and the icicle graph in the [README](../README.md), annotates pull requests and enforces
+the gate), the `target/nextest/ci/junit.xml` report is uploaded separately with
+`report_type: test_results` for Codecov Test Analytics (per-test timing and flakiness, plus the
+failing-test annotation on a pull request), the per-file table is appended to the run's job summary,
+a same-repo pull request gets a sticky comment (a PR from a fork has a read-only `GITHUB_TOKEN` and
+is skipped, but still gets the job summary), and the `lcov.info` data, the JUnit report, an HTML
+report and the summary markdown are uploaded as the `coverage` artifact.
 The Codecov upload is authenticated with a `CODECOV_TOKEN` repository secret — required because a
 public repo still needs auth on a protected branch like `main` — so install the Codecov GitHub App
 for the repo on first use. Even when a test fails the summary and report are still produced, because

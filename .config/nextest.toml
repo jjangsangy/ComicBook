@@ -1,0 +1,18 @@
+# cargo-nextest configuration (<https://nexte.st/docs/configuration/>).
+#
+# The Coverage workflow selects the `ci` profile through the `NEXTEST_PROFILE=ci`
+# environment variable rather than `--profile ci`, because `--profile` is also a
+# cargo-llvm-cov option and would be consumed by the wrapper instead of reaching
+# nextest. Besides running every test to completion the profile emits the JUnit
+# report that Codecov Test Analytics ingests; local `cargo nextest run` stays on
+# the `default` profile and writes no report.
+
+[profile.ci]
+# Run every test even after a failure, so the JUnit report still records the
+# tests that never ran behind the first failure.
+fail-fast = false
+
+[profile.ci.junit]
+# Relative to the target directory, i.e. target/nextest/ci/junit.xml; the
+# Coverage workflow uploads that path to Codecov with report_type=test_results.
+path = "junit.xml"

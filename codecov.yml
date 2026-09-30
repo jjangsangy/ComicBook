@@ -5,6 +5,10 @@
 # rendered from the same upload and report the same number: line coverage scored
 # from the lcov `DA:` records. Mark `codecov/project` as a required status check
 # in branch protection to block merges that drop coverage under the floor.
+#
+# The same workflow also uploads the nextest JUnit report with
+# `report_type: test_results` for Codecov Test Analytics. That upload is not gated
+# here; only the coverage status below can block a merge.
 coverage:
   status:
     project:

@@ -44,13 +44,20 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # One instrumented run of the whole suite, reusing the test matrix's
-      # `--no-fail-fast` policy so a single failure still lets every remaining test
-      # record its coverage. This step fails only on a test failure; the coverage
-      # floor is enforced downstream by the Codecov status, which scores the
-      # `lcov.info` written here (see `codecov.yml`).
+      # One instrumented run of the whole suite. `NEXTEST_PROFILE=ci` selects the
+      # `ci` profile from `.config/nextest.toml`: it runs every test even after a
+      # failure (so a single failure still lets every remaining test record its
+      # coverage) and writes the JUnit report at `target/nextest/ci/junit.xml` for
+      # the Codecov Test Analytics upload below. The profile is selected through the
+      # environment variable, not `--profile ci`, because `--profile` is also a
+      # cargo-llvm-cov option and would be consumed by the wrapper instead of
+      # reaching nextest. This step fails only on a test failure; the coverage floor
+      # is enforced downstream by the Codecov status, which scores the `lcov.info`
+      # written here (see `codecov.yml`).
       - name: Run tests with coverage
-        run: cargo llvm-cov nextest --no-fail-fast --lcov --output-path lcov.info
+        env:
+          NEXTEST_PROFILE: ci
+        run: cargo llvm-cov nextest --lcov --output-path lcov.info
 
       # Source of truth for the coverage gate. The `codecov/project` status
       # (configured in `codecov.yml`) fails when coverage is under its target, and
@@ -65,6 +72,22 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # Codecov Test Analytics. The JUnit report nextest wrote during the run above
+      # is uploaded under `report_type: test_results`, which powers Codecov's
+      # per-test timing/flakiness view and annotates a pull request with the failing
+      # tests and their stack traces. It reuses the same action and `CODECOV_TOKEN`
+      # as the coverage upload; `if: always()` runs it even when a test failed — the
+      # case the failing-test annotation exists for — and `fail_ci_if_error` stays
+      # false so a Codecov outage does not redden the job.
+      - name: Upload test results to Codecov
+        if: always()
+        uses: codecov/codecov-action@v7
+        with:
+          report_type: test_results
+          files: target/nextest/ci/junit.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -137,6 +160,7 @@ jobs:
           name: coverage
           path: |
             lcov.info
+            target/nextest/ci/junit.xml
             coverage-comment.md
             coverage-html/
           if-no-files-found: ignore

@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
+[![Codecov icicle coverage graph](https://codecov.io/gh/jjangsangy/ComicBook/graphs/icicle.svg)](https://codecov.io/gh/jjangsangy/ComicBook)
+
 A high-performance command-line tool written in Rust for working with comic-book archives: repackage them between `.cbz`/`.cbr`/`.cb7`/`.cbt` (and plain folders), clamp oversized pages for size-limited readers, and convert them into e-book formats — fixed-layout EPUB, Kobo KePub, Kindle AZW3/MOBI and PDF — for e-readers, tablets and phones. Everything is compiled into the binary; no `7z`, `unrar`, `kindlegen`, `ImageMagick` or other external program is required.
 
 ---

@@ -20,6 +20,12 @@ release when a version tag is pushed.
   comment, and the `lcov` data, an HTML report and the summary markdown are uploaded as the
   `coverage` artifact. The Codecov upload authenticates with a `CODECOV_TOKEN` repository secret.
   Coverage is split out of `ci.yml` so a failing gate does not redden the main CI badge.
+- Added Codecov Test Analytics beside the coverage upload. A new `.config/nextest.toml` defines a
+  `ci` profile that has nextest write a JUnit report; the `Coverage` workflow selects it with
+  `NEXTEST_PROFILE=ci` and uploads `target/nextest/ci/junit.xml` to Codecov with
+  `report_type: test_results`, enabling Codecov's per-test timing/flakiness view and the
+  failing-test annotation on pull requests. The README header now also shows Codecov's embeddable
+  icicle SVG coverage graph beneath the badges.
 
 ### Changed
 
