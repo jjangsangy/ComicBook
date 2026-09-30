@@ -568,4 +568,265 @@ mod tests {
         assert_ne!(bytes[0], bytes[1], "each tome gets its own N/M label");
         Ok(())
     }
+
+    // Property-based checks for the two unit packers (docs/development.md). A page's
+    // payload is a single distinct byte, so dropping, duplicating or reordering a
+    // page becomes observable once the tomes/units are flattened back.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A page whose one-byte payload is its identity (`tag`).
+        fn tagged_page(tag: u8) -> EncodedPage {
+            let name = format!("p{tag:03}.jpg");
+            EncodedPage {
+                name: PageName::new(name.as_str()),
+                order_class: OrderClass::Normal,
+                media_type: MediaType::Jpeg,
+                bytes: vec![tag],
+                size: Size::new(1, 1),
+                flags: PageFlags::default(),
+            }
+        }
+
+        /// The flattened page payloads of a list of units.
+        fn payloads(units: &[Vec<EncodedPage>]) -> Vec<&[u8]> {
+            units
+                .iter()
+                .flat_map(|unit| unit.iter())
+                .map(|page| page.bytes.as_slice())
+                .collect()
+        }
+
+        /// The page payloads of a flat page list.
+        fn flat_payloads(pages: &[EncodedPage]) -> Vec<&[u8]> {
+            pages.iter().map(|page| page.bytes.as_slice()).collect()
+        }
+
+        /// `Vec<Vec<u8>>`: one tag per page, grouped into non-empty units, all tags
+        /// distinct.
+        fn unit_tags() -> impl Strategy<Value = Vec<Vec<u8>>> {
+            prop::collection::vec(1usize..=3, 0..=5).prop_map(|counts| {
+                let mut tag = 0u8;
+                counts
+                    .into_iter()
+                    .map(|count| {
+                        (0..count)
+                            .map(|_| {
+                                let current = tag;
+                                tag = tag.wrapping_add(1);
+                                current
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+        }
+
+        fn units_of(tags: &[Vec<u8>]) -> Vec<Vec<EncodedPage>> {
+            tags.iter()
+                .map(|unit| unit.iter().copied().map(tagged_page).collect())
+                .collect()
+        }
+
+        /// `0`/`1` (any non-empty unit then exceeds the target and gets its own
+        /// tome) and small values that force multi-tome packing.
+        fn target() -> impl Strategy<Value = u64> {
+            prop_oneof![Just(0u64), Just(1u64), 2u64..=12]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `pack_units` partitions whole units into tomes, preserves their order,
+            /// and only lets a tome exceed the target when it is a single oversized
+            /// unit. A non-empty input never yields an empty tome.
+            #[test]
+            fn pack_units_partitions_whole_units_under_the_target(
+                tags in unit_tags(),
+                target in target(),
+            ) {
+                let units = units_of(&tags);
+                let tomes = pack_units(units.clone(), Bytes::new(target));
+
+                // (c) The output is non-empty, and a non-empty input never yields an
+                // empty tome.
+                prop_assert!(!tomes.is_empty());
+                if !units.is_empty() {
+                    prop_assert!(tomes.iter().all(|tome| !tome.is_empty()));
+                }
+
+                // (a) Flattening the tomes reproduces the input pages, element-wise.
+                prop_assert_eq!(payloads(&tomes), payloads(&units));
+
+                // (a) Tome boundaries fall only between units: each cumulative page
+                // count is a whole-unit edge (the final one is the total).
+                let total_pages: usize = tags.iter().map(Vec::len).sum();
+                let unit_edges: std::collections::HashSet<usize> = {
+                    let mut edges = std::collections::HashSet::new();
+                    let mut edge = 0usize;
+                    for unit in &tags {
+                        edge += unit.len();
+                        edges.insert(edge);
+                    }
+                    edges
+                };
+                let mut boundary = 0usize;
+                for tome in &tomes {
+                    boundary += tome.len();
+                    if boundary < total_pages {
+                        prop_assert!(
+                            unit_edges.contains(&boundary),
+                            "a tome boundary split a unit at page {}", boundary
+                        );
+                    } else {
+                        prop_assert_eq!(boundary, total_pages);
+                    }
+                }
+
+                // (b) A tome is over the target only when it is exactly one unit
+                // whose own total exceeds it.
+                let mut cursor = 0usize;
+                for tome in &tomes {
+                    let tome_total: u64 = tome.iter().map(|page| page.bytes.len() as u64).sum();
+                    let mut consumed_units = 0usize;
+                    let mut consumed_pages = 0usize;
+                    let mut last_unit_total = 0u64;
+                    while consumed_pages < tome.len() {
+                        match tags.get(cursor) {
+                            Some(unit) => {
+                                consumed_pages += unit.len();
+                                last_unit_total = unit.len() as u64;
+                                consumed_units += 1;
+                                cursor += 1;
+                            }
+                            None => break,
+                        }
+                    }
+                    if tome_total > target {
+                        prop_assert_eq!(consumed_units, 1);
+                        prop_assert!(last_unit_total > target);
+                    }
+                }
+            }
+        }
+
+        /// The mandated edge cases, pinned deterministically alongside the property.
+        #[test]
+        fn pack_units_handles_the_edge_cases() {
+            // A `0` target forces every unit into its own tome.
+            let units = vec![vec![tagged_page(1)], vec![tagged_page(2), tagged_page(3)]];
+            let tomes = pack_units(units.clone(), Bytes::new(0));
+            assert_eq!(tomes.iter().map(Vec::len).collect::<Vec<_>>(), vec![1, 2]);
+            assert_eq!(payloads(&tomes), payloads(&units));
+
+            // An oversized unit is its own tome, with no empty leading tome.
+            let units = vec![
+                vec![tagged_page(1), tagged_page(2), tagged_page(3)],
+                vec![tagged_page(4)],
+            ];
+            let tomes = pack_units(units.clone(), Bytes::new(2));
+            assert_eq!(tomes.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 1]);
+            assert_eq!(payloads(&tomes), payloads(&units));
+
+            // Two 2-byte units under a 3-byte cap start a second tome.
+            let units = vec![
+                vec![tagged_page(1), tagged_page(2)],
+                vec![tagged_page(3), tagged_page(4)],
+            ];
+            let tomes = pack_units(units.clone(), Bytes::new(3));
+            assert_eq!(tomes.len(), 2);
+            assert_eq!(payloads(&tomes), payloads(&units));
+        }
+
+        /// A sequence over the three Scribe half tags, 0..=10 pages.
+        fn half_sequence() -> impl Strategy<Value = Vec<ScribeHalf>> {
+            prop::collection::vec(
+                prop_oneof![
+                    Just(ScribeHalf::NotSplit),
+                    Just(ScribeHalf::Above),
+                    Just(ScribeHalf::Below),
+                ],
+                0..=10,
+            )
+        }
+
+        fn half_pages(halves: &[ScribeHalf]) -> Vec<EncodedPage> {
+            halves
+                .iter()
+                .enumerate()
+                .map(|(index, &half)| {
+                    let mut page = tagged_page(index as u8);
+                    page.flags.half = half;
+                    page
+                })
+                .collect()
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `page_units` pairs an `-above` page with the immediately following
+            /// `-below` page and nothing else, preserving the page order.
+            #[test]
+            fn page_units_only_pair_an_above_with_its_immediate_below(
+                halves in half_sequence(),
+            ) {
+                let pages = half_pages(&halves);
+                let units = page_units(pages.clone());
+
+                // The pages survive, in order.
+                prop_assert_eq!(flat_payloads(&pages), payloads(&units));
+
+                let mut position = 0usize;
+                for unit in &units {
+                    // Every unit is a single page, or an above/below pair.
+                    prop_assert!(unit.len() == 1 || unit.len() == 2);
+                    // A singleton unit may be any half (a lone `Below` is its own
+                    // unit); a length-2 unit is exactly `[Above, Below]`, so a `Below`
+                    // never starts a pair.
+                    if unit.len() == 2 {
+                        let pair: Vec<ScribeHalf> =
+                            unit.iter().map(|page| page.flags.half).collect();
+                        prop_assert_eq!(pair, [ScribeHalf::Above, ScribeHalf::Below]);
+                    }
+                    // An unpaired `Above` is followed by something other than a `Below`.
+                    if unit.len() == 1 {
+                        if let Some(page) = unit.first() {
+                            if page.flags.half == ScribeHalf::Above {
+                                prop_assert_ne!(
+                                    halves.get(position + 1).copied(),
+                                    Some(ScribeHalf::Below)
+                                );
+                            }
+                        }
+                    }
+                    position += unit.len();
+                }
+            }
+        }
+
+        #[test]
+        fn page_units_pair_the_documented_sequences() {
+            use ScribeHalf::{Above, Below, NotSplit};
+            let paired = |sequence: &[ScribeHalf]| -> Vec<Vec<ScribeHalf>> {
+                page_units(half_pages(sequence))
+                    .iter()
+                    .map(|unit| unit.iter().map(|page| page.flags.half).collect())
+                    .collect()
+            };
+            assert_eq!(paired(&[Above, Below]), vec![vec![Above, Below]]);
+            assert_eq!(paired(&[Above, Above]), vec![vec![Above], vec![Above]]);
+            assert_eq!(paired(&[Below, Above]), vec![vec![Below], vec![Above]]);
+            assert_eq!(
+                paired(&[Above, Below, Below]),
+                vec![vec![Above, Below], vec![Below]]
+            );
+            assert_eq!(
+                paired(&[NotSplit, Above, Below, NotSplit]),
+                vec![vec![NotSplit], vec![Above, Below], vec![NotSplit]]
+            );
+            assert_eq!(paired(&[]), Vec::<Vec<ScribeHalf>>::new());
+        }
+    }
 }

@@ -107,8 +107,13 @@ pub fn normalize_archive_path(raw: &str) -> Option<NormalizedArchivePath> {
         if trimmed.len() == 2 && trimmed.ends_with(':') {
             continue;
         }
-        let cleaned = trimmed.trim_end_matches(':');
-        if cleaned.is_empty() {
+        // Strip any trailing colon(s) and re-trim, then re-run the `.`/`..` guard: the
+        // colon strip can re-expose whitespace (`"a :"` -> `"a"`) and, crucially, can
+        // turn a segment into a traversal one (`"..:"` -> `".."`). Doing the dot check
+        // *after* the strip is what makes normalization idempotent and closes the
+        // `safe_join` escape; see the properties below.
+        let cleaned = trimmed.trim_end_matches(':').trim();
+        if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
             continue;
         }
         if !out.is_empty() {
@@ -413,5 +418,124 @@ mod tests {
         assert!(dst.join("top.txt").is_file());
         assert_eq!(std::fs::read(dst.join("nested/deep.txt"))?, b"deep");
         Ok(())
+    }
+
+    // Property-based checks for the sanitizer and `safe_join` (docs/development.md). The
+    // alphabet deliberately includes the separators, dots, colons and whitespace the
+    // sanitizer has special rules for, so the drive-letter/traversal shapes are exercised
+    // rather than a vacuous alphanumerics-only generator.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// The characters archive entry names are built from: alphanumerics plus the
+        /// separators, dots, colons and whitespace the sanitizer distinguishes.
+        const PATH_ALPHABET: &[char] = &['a', 'Z', '7', '/', '\\', '.', ':', ' ', '\t', '_', '-'];
+
+        /// Hostile hand-picked names plus a mixed random name over [`PATH_ALPHABET`].
+        /// `"..:"` and `"a :"` are the counterexamples that pinned the
+        /// dot-segment/idempotence invariants below (a leaked `..`/re-exposed space),
+        /// kept explicit so those properties keep exercising the fixed path.
+        fn mixed_archive_name() -> impl Strategy<Value = String> {
+            prop_oneof![
+                Just("../".to_string()),
+                Just("C:\\".to_string()),
+                Just("a :".to_string()),
+                Just("a/./b".to_string()),
+                Just("..:".to_string()),
+                prop::collection::vec(prop::sample::select(PATH_ALPHABET), 0..=24)
+                    .prop_map(|chars| chars.into_iter().collect()),
+            ]
+        }
+
+        /// The raw `safe_join` seeds plus an arbitrary (possibly non-ASCII) string.
+        /// `"..:"` is the base-escape counterexample that pinned the containment
+        /// property below.
+        fn raw_archive_name() -> impl Strategy<Value = String> {
+            prop_oneof![
+                Just("../../etc/passwd".to_string()),
+                Just("..\\..\\x".to_string()),
+                Just("/abs/x".to_string()),
+                Just("C:\\x".to_string()),
+                Just("a/./b".to_string()),
+                Just(String::new()),
+                Just("///".to_string()),
+                Just("..:".to_string()),
+                any::<String>(),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// A successful normalization is a clean, forward-slash, relative path: no
+            /// leading/trailing separator, no backslash, no empty component, and no
+            /// component ending in `:` (the drive-letter strip is total).
+            #[test]
+            fn normalize_archive_path_emits_a_clean_relative_path(raw in mixed_archive_name()) {
+                if let Some(normalized) = normalize_archive_path(&raw) {
+                    let s = normalized.as_str();
+                    prop_assert!(!s.is_empty());
+                    prop_assert!(!s.starts_with('/'));
+                    prop_assert!(!s.ends_with('/'));
+                    prop_assert!(!s.contains('\\'));
+                    for component in s.split('/') {
+                        prop_assert!(!component.is_empty());
+                        prop_assert!(!component.ends_with(':'));
+                    }
+                }
+            }
+
+            /// The sanitizer must never emit a `.` or `..` segment: it is the traversal
+            /// guard the whole path-safety story rests on (the `"..:"` case is the one
+            /// that pinned it).
+            #[test]
+            fn normalize_archive_path_never_emits_dot_segments(raw in mixed_archive_name()) {
+                if let Some(normalized) = normalize_archive_path(&raw) {
+                    for component in normalized.as_str().split('/') {
+                        prop_assert_ne!(component, ".");
+                        prop_assert_ne!(component, "..");
+                    }
+                }
+            }
+
+            /// Re-normalizing a normalized path is a no-op (the `"a :"` case is the one
+            /// that pinned it).
+            #[test]
+            fn normalize_archive_path_is_idempotent(raw in mixed_archive_name()) {
+                if let Some(normalized) = normalize_archive_path(&raw) {
+                    let again = normalize_archive_path(normalized.as_str());
+                    prop_assert_eq!(
+                        again.as_ref().map(NormalizedArchivePath::as_str),
+                        Some(normalized.as_str()),
+                    );
+                }
+            }
+
+            /// `safe_join` always lands inside `base`, and a relative path that
+            /// normalizes away leaves `base` untouched.
+            #[test]
+            fn safe_join_stays_under_base(raw in raw_archive_name()) {
+                let dir = tempfile::tempdir()?;
+                let base = dir.path();
+                let out = safe_join(base, &raw);
+                prop_assert!(out.starts_with(base), "{raw:?} escaped {base:?}: {out:?}");
+                if normalize_archive_path(&raw).is_none() {
+                    prop_assert_eq!(out, base.to_path_buf());
+                }
+            }
+
+            /// A joined path never contains a `..` (`ParentDir`) component (the `"..:"`
+            /// case, which normalization previously leaked, is the one that pinned it).
+            #[test]
+            fn safe_join_never_escapes_base(raw in raw_archive_name()) {
+                let dir = tempfile::tempdir()?;
+                let base = dir.path();
+                let out = safe_join(base, &raw);
+                for component in out.components() {
+                    prop_assert!(!matches!(component, std::path::Component::ParentDir));
+                }
+            }
+        }
     }
 }

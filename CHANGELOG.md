@@ -26,6 +26,13 @@ release when a version tag is pushed.
   `report_type: test_results`, enabling Codecov's per-test timing/flakiness view and the
   failing-test annotation on pull requests. The README header now also shows Codecov's embeddable
   icicle SVG coverage graph beneath the badges.
+- Added property-based tests with [`proptest`](https://proptest-rs.github.io/proptest/) (a new
+  dev-only dependency) for the pure invariants of the geometry units, naming/metadata, image
+  processing, chunking, EPUB output and archive-path layers (see [docs/development.md](docs/development.md)).
+  They state a law over generated inputs and shrink a failure to a minimal counterexample, and
+  complement the existing unit and golden tests; a failure persists a seed under the gitignored
+  `proptest-regressions/`. What is covered, the candidate properties still to implement, and the
+  findings this pass surfaced are catalogued in [docs/proptest.md](docs/proptest.md).
 
 ### Changed
 
@@ -71,6 +78,13 @@ release when a version tag is pushed.
   prefix now lives in one place (`ebook::naming::PAGE_PREFIX`), and the "already processed" warning
   refers to `cb`. Both the default author and the page filenames are user-visible, so the emitted
   documents change; the golden fixtures were regenerated for the new names.
+
+### Fixed
+
+- Fixed `normalize_archive_path` so a segment's trailing colon is stripped *before* the `.`/`..`
+  traversal guard. Previously a name like `"..:"` was cleaned to `".."` and survived, so
+  `safe_join` could escape its base directory (a zip-slip), and normalization was not idempotent
+  (`"a :"` normalised to `"a "`, then to `"a"`). Both are now pinned by property tests.
 
 ## [0.2.8] - 2026-09-28
 

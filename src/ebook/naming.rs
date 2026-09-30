@@ -472,4 +472,89 @@ mod tests {
         assert_eq!(kobo_name("My Book! (1)"), "My_Book_1_");
         assert_eq!(kobo_name("café.1"), "café_1");
     }
+
+    // Property-based checks for the `slugify`/`pad_numbers` layering
+    // (docs/development.md). Slugs feed straight into output paths, so a bad
+    // `pad_numbers` is a correctness and path-safety bug, not a cosmetic one.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Tokens mixed into every generated name: ASCII alphanumerics, digit
+        /// runs of the interesting lengths (including leading zeros and runs
+        /// beyond four digits), separators/whitespace, Latin-1/CJK/emoji and
+        /// hostile path fragments.
+        fn any_slug_token() -> impl Strategy<Value = &'static str> {
+            prop::sample::select(vec![
+                "a", "B", "7", "Z", "1", "12", "0007", "007", "10000", "999999", " ", "  ", "\t",
+                "_", "-", ".", "..", "/", "\\", ",", "!", "#", "é", "ü", "ß", "ñ", "Ç", "日本",
+                "漫画", "😀", "🎌", "../etc", "a/b",
+            ])
+        }
+
+        /// A guaranteed ASCII-alphanumeric token, so every generated input has
+        /// at least one `[A-Za-z0-9]` and the slug can never be empty. This is
+        /// what keeps `slugify_is_idempotent` from being satisfied vacuously by
+        /// `""`.
+        fn any_slug_anchor() -> impl Strategy<Value = &'static str> {
+            prop::sample::select(vec!["a", "b", "Z", "0", "7"])
+        }
+
+        fn any_slug_input() -> impl Strategy<Value = String> {
+            (
+                prop::collection::vec(any_slug_token(), 0..8),
+                any_slug_anchor(),
+            )
+                .prop_map(|(tokens, anchor)| {
+                    let mut value: String = tokens.concat();
+                    value.push_str(anchor);
+                    value
+                })
+        }
+
+        const STYLES: [NameStyle; 2] = [NameStyle::Slug, NameStyle::Cbz];
+        const NATURAL: [bool; 2] = [false, true];
+
+        proptest! {
+            /// Slugifying an already-slugified name is a no-op, for every style
+            /// and natural-sortedness flag. This pins the `pad_numbers` layer:
+            /// zero-padding must be a fixed point, because `sanitize_tree` may
+            /// route an already-slugified directory name back through `slugify`.
+            #[test]
+            fn slugify_is_idempotent(value in any_slug_input()) {
+                for style in STYLES {
+                    for natural in NATURAL {
+                        let once = slugify(&value, style, natural);
+                        let twice = slugify(&once, style, natural);
+                        prop_assert!(
+                            once == twice,
+                            "not idempotent: style={style:?} natural={natural}"
+                        );
+                    }
+                }
+            }
+
+            /// For `NameStyle::Slug` the result is always a safe single path
+            /// component: only `[a-z0-9-]`, no `/`, `\` or `.`, no leading or
+            /// trailing `-` and no `--` run. The `Cbz && natural` branch returns
+            /// the input verbatim, so it is deliberately excluded.
+            #[test]
+            fn slugify_slug_style_is_a_safe_path_component(value in any_slug_input()) {
+                for natural in NATURAL {
+                    let slug = slugify(&value, NameStyle::Slug, natural);
+                    prop_assert!(
+                        slug.chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                        "unexpected character in {slug:?}"
+                    );
+                    prop_assert!(!slug.contains('/'), "{slug:?}");
+                    prop_assert!(!slug.contains('\\'), "{slug:?}");
+                    prop_assert!(!slug.contains('.'), "{slug:?}");
+                    prop_assert!(!slug.starts_with('-'), "{slug:?}");
+                    prop_assert!(!slug.ends_with('-'), "{slug:?}");
+                    prop_assert!(!slug.contains("--"), "{slug:?}");
+                }
+            }
+        }
+    }
 }

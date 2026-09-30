@@ -2299,4 +2299,99 @@ mod tests {
         assert_eq!(decoded.dimensions(), (2, 2));
         Ok(())
     }
+
+    // Property-based checks for the resize helpers (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::test_runner::TestCaseError;
+
+        /// Adapt a fallible resize into the `Result` a `proptest!` body expects.
+        /// (`anyhow::Error` is not a `std::error::Error`, so `?` cannot convert it.)
+        fn resized(
+            result: Result<DynamicImage>,
+        ) -> std::result::Result<DynamicImage, TestCaseError> {
+            result.map_err(|error| TestCaseError::fail(error.to_string()))
+        }
+
+        /// An RGB image with visible structure, so each resize does real work.
+        fn any_rgb_image() -> impl Strategy<Value = DynamicImage> {
+            (1u32..64, 1u32..64, any::<u8>()).prop_map(|(width, height, seed)| {
+                DynamicImage::ImageRgb8(RgbImage::from_fn(width, height, |x, y| {
+                    Rgb([
+                        seed,
+                        (x.wrapping_mul(7).wrapping_add(y)) as u8,
+                        x.wrapping_add(y.wrapping_mul(13)) as u8,
+                    ])
+                }))
+            })
+        }
+
+        fn any_size() -> impl Strategy<Value = Size> {
+            (1u32..64, 1u32..64).prop_map(|(width, height)| Size::new(width, height))
+        }
+
+        /// Whether two `(width, height)` ratios agree to within about a pixel on each
+        /// axis: `out.w * in.h` and `out.h * in.w` differ by at most `in.w + in.h`.
+        fn ratio_close(out: (u32, u32), src: (u32, u32)) -> bool {
+            let lhs = u64::from(out.0) * u64::from(src.1);
+            let rhs = u64::from(out.1) * u64::from(src.0);
+            lhs.abs_diff(rhs) <= u64::from(src.0) + u64::from(src.1)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `contain` fits within the target box (never exceeding either axis) and
+            /// preserves the source aspect ratio to within a pixel.
+            #[test]
+            fn contain_fits_the_target_and_keeps_the_ratio(
+                image in any_rgb_image(),
+                size in any_size(),
+            ) {
+                let out = resized(contain(&image, size, Method::Bicubic))?;
+                let (ow, oh) = out.dimensions();
+                prop_assert!(ow <= size.width && oh <= size.height);
+                prop_assert!(ratio_close((ow, oh), image.dimensions()));
+            }
+
+            /// `thumbnail` fits within the target, never enlarges, and returns an
+            /// already-fitting image untouched.
+            #[test]
+            fn thumbnail_shrinks_only_and_is_identity_when_fitting(
+                image in any_rgb_image(),
+                size in any_size(),
+            ) {
+                let (iw, ih) = image.dimensions();
+                let out = resized(thumbnail(image.clone(), size, Method::Bicubic))?;
+                let (ow, oh) = out.dimensions();
+                prop_assert!(ow <= size.width && oh <= size.height);
+                prop_assert!(ow <= iw && oh <= ih);
+                if iw <= size.width && ih <= size.height {
+                    prop_assert_eq!((ow, oh), (iw, ih));
+                }
+                prop_assert!(ratio_close((ow, oh), (iw, ih)));
+            }
+
+            /// `fit` crops to the target ratio and resizes to exactly the target size.
+            #[test]
+            fn fit_produces_the_exact_target_size(
+                image in any_rgb_image(),
+                size in any_size(),
+            ) {
+                let out = resized(fit(&image, size, Method::Lanczos))?;
+                prop_assert_eq!(out.dimensions(), size.to_dimensions());
+            }
+
+            /// `pad` centres the contained image on a canvas of exactly the target.
+            #[test]
+            fn pad_produces_the_exact_target_size(
+                image in any_rgb_image(),
+                size in any_size(),
+            ) {
+                let out = resized(pad(&image, size, Method::Bicubic, Background::White))?;
+                prop_assert_eq!(out.dimensions(), size.to_dimensions());
+            }
+        }
+    }
 }

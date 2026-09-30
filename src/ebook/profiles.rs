@@ -666,4 +666,86 @@ mod tests {
             assert_eq!(row.profile.to_string(), row.code);
         }
     }
+
+    // Checks over the whole profile table (docs/development.md). A plain loop is
+    // enough here: the table is a finite, compile-time constant.
+    mod properties {
+        use super::*;
+
+        #[test]
+        fn profile_rows_are_internally_consistent() {
+            for row in &PROFILE_ROWS {
+                // (a) Only `Other` is unbounded; every real device has a positive size.
+                let is_other = row.profile == Profile::Other;
+                let sized = row.width > 0 && row.height > 0;
+                assert!(is_other ^ sized, "{}: Other XOR a positive size", row.code);
+
+                // (b) A palette is a whole number of grayscale triples, from black to
+                // white. The empty `PALETTE_NULL` sentinel is the only vacuous case,
+                // and no row uses it (asserted below).
+                let palette = row.palette;
+                assert_eq!(
+                    palette.len() % 3,
+                    0,
+                    "{}: palette length is a multiple of three",
+                    row.code
+                );
+                let (triples, remainder) = palette.as_chunks::<3>();
+                assert!(remainder.is_empty(), "{}: whole triples", row.code);
+                for [r, g, b] in triples {
+                    assert_eq!(r, g, "{}: palette is grayscale", row.code);
+                    assert_eq!(g, b, "{}: palette is grayscale", row.code);
+                }
+                if !palette.is_empty() {
+                    assert_eq!(
+                        palette.get(..3),
+                        Some([0x00u8, 0x00, 0x00].as_slice()),
+                        "{}: palette starts at black",
+                        row.code
+                    );
+                    assert_eq!(
+                        palette.get(palette.len() - 3..),
+                        Some([0xffu8, 0xff, 0xff].as_slice()),
+                        "{}: palette ends at white",
+                        row.code
+                    );
+                }
+
+                // (c) The brand predicates agree with the code prefix. Note the
+                // deliberate `KO` (Kindle Oasis, uppercase) vs `Ko` (Kobo) spelling:
+                // `starts_with("Ko")` is case-sensitive, so it picks out Kobo only.
+                assert_eq!(
+                    row.profile.is_scribe(),
+                    row.code.starts_with("KS"),
+                    "{}: Scribe is the KS prefix",
+                    row.code
+                );
+                assert_eq!(
+                    row.profile.is_remarkable(),
+                    row.code.starts_with("Rmk"),
+                    "{}: reMarkable is the Rmk prefix",
+                    row.code
+                );
+                assert_eq!(
+                    row.profile.is_kobo_brand(),
+                    row.code.starts_with("Ko"),
+                    "{}: Kobo is the Ko prefix",
+                    row.code
+                );
+
+                // (d) The code round-trips through the table.
+                assert_eq!(
+                    Profile::from_code(row.code),
+                    Some(row.profile),
+                    "{}",
+                    row.code
+                );
+                assert_eq!(row.profile.entry().profile, row.profile);
+            }
+
+            // The empty palette is the only vacuous case, and no row uses it.
+            assert!(PALETTE_NULL.is_empty());
+            assert!(PROFILE_ROWS.iter().all(|row| !row.palette.is_empty()));
+        }
+    }
 }

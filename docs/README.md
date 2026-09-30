@@ -58,6 +58,7 @@ thumbnail upload (`kindle.py` device paths), anything requiring `kindlegen`/`7-Z
 | [dependencies.md](dependencies.md) | Off-the-shelf policy, crate list, licences, clean-room rules |
 | [porting.md](porting.md) | Porting history and the decisions/deviations behind the `ebook` code |
 | [development.md](development.md) | Testing, CI, cross-platform notes, risks, glossary, references |
+| [proptest.md](proptest.md) | Property-based tests: what is covered, candidate properties, findings |
 
 ## Definition of done
 

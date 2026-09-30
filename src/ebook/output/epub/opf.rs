@@ -446,4 +446,107 @@ mod tests {
         );
         Ok(())
     }
+
+    // Property-based checks for the spread-property algorithm (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_order_class() -> impl Strategy<Value = OrderClass> {
+            prop_oneof![
+                Just(OrderClass::Normal),
+                Just(OrderClass::RotateFirst),
+                Just(OrderClass::RotateLast),
+                Just(OrderClass::SplitLeft),
+                Just(OrderClass::SplitRight),
+            ]
+        }
+
+        /// An order-class list of 1..=12 entries with at least one spread special, so
+        /// the backward fix-up pass runs.
+        fn order_with_a_special() -> impl Strategy<Value = Vec<OrderClass>> {
+            prop::collection::vec(any_order_class(), 1..=12).prop_map(|mut order| {
+                if order.iter().all(|class| *class == OrderClass::Normal) {
+                    let middle = order.len() / 2;
+                    if let Some(slot) = order.get_mut(middle) {
+                        *slot = OrderClass::RotateFirst;
+                    }
+                }
+                order
+            })
+        }
+
+        fn any_initial_side() -> impl Strategy<Value = PageSide> {
+            prop_oneof![Just(PageSide::Left), Just(PageSide::Right)]
+        }
+
+        fn is_rotated(class: OrderClass) -> bool {
+            matches!(class, OrderClass::RotateFirst | OrderClass::RotateLast)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// The spread algorithm keeps every page in the closed set
+            /// {left, right, center}, centres exactly the rotated spreads, pins the
+            /// split halves to their physical side, and alternates adjacent ordinary
+            /// pages.
+            #[test]
+            fn spread_properties_pin_specials_and_alternate_plain_pages(
+                order in order_with_a_special(),
+                right_to_left in any::<bool>(),
+                initial in any_initial_side(),
+            ) {
+                let sides = spread_properties(&order, right_to_left, initial);
+
+                // (i) Length preserved; every side is one of the three values.
+                prop_assert_eq!(sides.len(), order.len());
+
+                // (ii) A page is centred exactly when it is a rotated spread.
+                for (side, class) in sides.iter().zip(&order) {
+                    prop_assert_eq!(*side == PageSide::Center, is_rotated(*class));
+                }
+
+                // (iii) A split half keeps its physical side.
+                for (side, class) in sides.iter().zip(&order) {
+                    let expected = match class {
+                        OrderClass::SplitLeft => {
+                            if right_to_left { PageSide::Right } else { PageSide::Left }
+                        }
+                        OrderClass::SplitRight => {
+                            if right_to_left { PageSide::Left } else { PageSide::Right }
+                        }
+                        _ => continue,
+                    };
+                    prop_assert_eq!(*side, expected);
+                }
+
+                // (iv) Adjacent ordinary pages alternate.
+                for (side_pair, class_pair) in sides.windows(2).zip(order.windows(2)) {
+                    if let ([left, right], [first, second]) = (side_pair, class_pair) {
+                        if *first == OrderClass::Normal && *second == OrderClass::Normal {
+                            prop_assert_ne!(left, right);
+                        }
+                    }
+                }
+            }
+
+            /// An all-ordinary order alternates from the initial side (no special
+            /// resets the running side).
+            #[test]
+            fn spread_properties_alternate_plain_pages_from_the_initial_side(
+                order in prop::collection::vec(Just(OrderClass::Normal), 0..=12),
+                right_to_left in any::<bool>(),
+                initial in any_initial_side(),
+            ) {
+                let sides = spread_properties(&order, right_to_left, initial);
+                prop_assert_eq!(sides.len(), order.len());
+                let mut expected = initial;
+                for side in &sides {
+                    prop_assert_eq!(*side, expected);
+                    expected = expected.other();
+                }
+            }
+        }
+    }
 }

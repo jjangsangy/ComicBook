@@ -35,4 +35,7 @@ tmp/
 # insta pending snapshots (reviewed and accepted via `cargo insta`)
 *.snap.new
 
+# proptest failure seeds (persisted so a shrunk counterexample is replayable)
+proptest-regressions/
+
 kcc/

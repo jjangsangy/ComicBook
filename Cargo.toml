@@ -120,6 +120,10 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 # Parsing the generated PDF back in the round-trip tests. MIT, pure Rust; dev-only,
 # so it never ships.
 lopdf = { version = "0.45", default-features = false }
+# Property-based testing for the pure geometry/naming/chunking/processing
+# invariants (docs/development.md). MIT/Apache-2.0, dev-only, never ships. The
+# regression seeds it writes on failure live in `proptest-regressions/`.
+proptest = "1"
 
 [lints.rust]
 unused_must_use = "deny"

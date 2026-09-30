@@ -975,4 +975,102 @@ mod tests {
             Some(BBox::new(19, 29, 181, 271))
         );
     }
+
+    // Property-based checks for the crop primitives (docs/development.md). The
+    // generated boxes use a deliberately tight coordinate range so `merge_boxes`
+    // actually merges candidates instead of scanning past disjoint boxes.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Four raw coordinates normalised so `x1 <= x2` and `y1 <= y2`.
+        fn any_index_box() -> impl Strategy<Value = IndexBox> {
+            (-4i64..40, -4i64..40, -4i64..40, -4i64..40).prop_map(|(ax, bx, ay, by)| {
+                IndexBox::new(ax.min(bx), ax.max(bx), ay.min(by), ay.max(by))
+            })
+        }
+
+        /// An independently written overlap predicate: grow `b` by `dx`/`dy` and ask
+        /// whether the two coordinate intervals overlap. `merge_boxes` grows its
+        /// second (candidate) argument the same way, but this predicate is spelled out
+        /// so the property does not call the implementation under test.
+        fn grown_overlap(a: IndexBox, b: IndexBox, dx: f64, dy: f64) -> bool {
+            let (b_left, b_right) = (b.x1 as f64 - dx, b.x2 as f64 + dx);
+            let (b_upper, b_lower) = (b.y1 as f64 - dy, b.y2 as f64 + dy);
+            a.x1 as f64 <= b_right
+                && a.x2 as f64 >= b_left
+                && a.y1 as f64 <= b_lower
+                && a.y2 as f64 >= b_upper
+        }
+
+        /// The smallest box containing every box in `boxes`, or `None` when empty.
+        fn union_all(boxes: &[IndexBox]) -> Option<IndexBox> {
+            boxes.iter().copied().reduce(IndexBox::union)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `merge_boxes` outputs a pairwise-disjoint set (under the same `dx`/`dy`
+            /// tolerance it merges with), preserves the total union, is idempotent, and
+            /// never grows the list.
+            #[test]
+            fn merge_boxes_is_disjoint_union_preserving_and_idempotent(
+                boxes in prop::collection::vec(any_index_box(), 0..8),
+                dx in 0.0f64..3.0,
+                dy in 0.0f64..3.0,
+            ) {
+                let out = merge_boxes(boxes.clone(), dx, dy);
+
+                // Merging only ever removes boxes.
+                prop_assert!(out.len() <= boxes.len());
+
+                // No two surviving boxes overlap under the merge tolerance.
+                for (i, a) in out.iter().enumerate() {
+                    for b in out.iter().skip(i + 1) {
+                        prop_assert!(
+                            !grown_overlap(*a, *b, dx, dy),
+                            "boxes {} and {} still overlap: {:?} / {:?}",
+                            i, i + 1, a, b
+                        );
+                    }
+                }
+
+                // The union of every box is conserved.
+                prop_assert_eq!(union_all(&out), union_all(&boxes));
+
+                // A merged layout is a fixed point.
+                prop_assert_eq!(merge_boxes(out.clone(), dx, dy), out);
+            }
+
+            /// `clamp_bbox` keeps the input box and widens it out to at least the 10 %
+            /// border band, i.e. it caps how much ink-free margin may be removed per
+            /// side at 10 %.
+            #[test]
+            fn clamp_bbox_contains_input_and_the_ten_percent_band(
+                ax in 0u32..200,
+                bx in 0u32..200,
+                ay in 0u32..200,
+                by in 0u32..200,
+                width in 1u32..200,
+                height in 1u32..200,
+            ) {
+                let bbox = BBox::new(ax.min(bx), ay.min(by), ax.max(bx), ay.max(by));
+                let out = clamp_bbox(bbox, width, height);
+                let (w, h) = (f64::from(width), f64::from(height));
+
+                // The output contains the input box ...
+                prop_assert!(out.left <= f64::from(bbox.left));
+                prop_assert!(out.upper <= f64::from(bbox.upper));
+                prop_assert!(out.right >= f64::from(bbox.right));
+                prop_assert!(out.lower >= f64::from(bbox.lower));
+
+                // ... and the 10 % inset band, so no more than 10 % of a side is cut.
+                prop_assert!(out.left <= 0.1 * w);
+                prop_assert!(out.upper <= 0.1 * h);
+                prop_assert!(out.right >= 0.9 * w);
+                prop_assert!(out.lower >= 0.9 * h);
+            }
+        }
+    }
 }

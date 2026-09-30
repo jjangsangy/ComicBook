@@ -463,4 +463,80 @@ mod tests {
         assert_eq!(format_modified(now)?, "2024-01-02T03:04:05Z");
         Ok(())
     }
+
+    // Property-based checks for the HTML escaper (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Reverse [`html_escape`] by scanning left to right and preferring the
+        /// longest entity, so it is a left inverse (and `html_escape` is injective).
+        fn unescape(escaped: &str) -> String {
+            const ENTITIES: [(&str, char); 5] = [
+                ("&#x27;", '\''),
+                ("&quot;", '"'),
+                ("&amp;", '&'),
+                ("&lt;", '<'),
+                ("&gt;", '>'),
+            ];
+            let mut out = String::with_capacity(escaped.len());
+            let mut rest = escaped;
+            'scan: while !rest.is_empty() {
+                for (entity, ch) in ENTITIES {
+                    if let Some(tail) = rest.strip_prefix(entity) {
+                        out.push(ch);
+                        rest = tail;
+                        continue 'scan;
+                    }
+                }
+                let mut chars = rest.chars();
+                if let Some(ch) = chars.next() {
+                    out.push(ch);
+                    rest = chars.as_str();
+                }
+            }
+            out
+        }
+
+        /// Strings biased towards the five special characters and the literal text
+        /// `&amp;`.
+        fn escape_input() -> impl Strategy<Value = String> {
+            let atom = prop_oneof![
+                Just(String::from("&")),
+                Just(String::from("<")),
+                Just(String::from(">")),
+                Just(String::from("\"")),
+                Just(String::from("'")),
+                Just(String::from("&amp;")),
+                Just(String::from("plain")),
+                any::<char>().prop_map(|ch| ch.to_string()),
+            ];
+            prop::collection::vec(atom, 0..=8).prop_map(|parts| parts.concat())
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `html_escape` removes every markup-significant character, and
+            /// `unescape` inverts it exactly.
+            #[test]
+            fn html_escape_escapes_markup_and_round_trips(value in escape_input()) {
+                let escaped = html_escape(&value);
+
+                // (a) None of `<`, `>`, `"` or `'` survive.
+                prop_assert!(!escaped.chars().any(|ch| matches!(ch, '<' | '>' | '"' | '\'')));
+
+                // (b) The five entities invert exactly (so `html_escape` is injective).
+                prop_assert!(unescape(&escaped) == value);
+
+                // (c) A string with no special character is returned unchanged.
+                let has_special = value
+                    .chars()
+                    .any(|ch| matches!(ch, '&' | '<' | '>' | '"' | '\''));
+                if !has_special {
+                    prop_assert!(escaped == value);
+                }
+            }
+        }
+    }
 }

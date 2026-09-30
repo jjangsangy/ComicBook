@@ -343,4 +343,91 @@ mod tests {
         strip_common_root(&mut flat);
         assert_eq!(flat[0].name.as_str(), "a.png");
     }
+
+    // Property-based checks for the chapter grouping/ordering under `RootStrip::Keep`
+    // (docs/development.md): the tree builder must lose no page, reassemble every page's
+    // path from its chapter + relative name, and impose exactly the two orderings the
+    // walk/natural comparators define.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// The path segments a synthetic book draws from: case variants and duplicates so
+        /// the grouping and comparator rules are actually exercised.
+        const SEGMENTS: &[&str] = &[
+            "A", "a", "B", "b", "Chapter", "chapter", "page.png", "Page.PNG", "0", "1",
+        ];
+
+        /// A page name of 0..=3 `/`-separated segments (a canonical relative path).
+        fn page_name() -> impl Strategy<Value = String> {
+            prop::collection::vec(prop::sample::select(SEGMENTS), 0..=3)
+                .prop_map(|parts| parts.join("/"))
+        }
+
+        /// A random 0..=8 page list, free to contain duplicates and case variants.
+        fn page_names() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec(page_name(), 0..=8)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `build_tree` under `RootStrip::Keep` preserves every page and orders the
+            /// chapter tree exactly as the grouping comparators require.
+            #[test]
+            fn build_tree_keep_preserves_pages_and_orders_the_tree(names in page_names()) {
+                let loaded_pages: Vec<LoadedPage> =
+                    names.iter().map(|name| loaded(name)).collect();
+                let tree = build_tree(loaded_pages, None, RootStrip::Keep);
+
+                // (1) No page is dropped or duplicated.
+                prop_assert_eq!(tree.page_count(), names.len());
+
+                // (2) The multiset of source names is preserved.
+                let mut expected = names.clone();
+                expected.sort();
+                let mut actual: Vec<String> = tree
+                    .chapters
+                    .iter()
+                    .flat_map(|chapter| chapter.pages.iter())
+                    .map(|page| page.source_name.as_str().to_string())
+                    .collect();
+                actual.sort();
+                prop_assert_eq!(actual, expected);
+
+                // (3) Chapters are non-decreasing in the directory walk order.
+                let dirs: Vec<&RelativePath> = tree
+                    .chapters
+                    .iter()
+                    .map(|chapter| chapter.name.as_relative())
+                    .collect();
+                for (a, b) in dirs.iter().copied().zip(dirs.iter().copied().skip(1)) {
+                    prop_assert_ne!(compare_dir_paths(a, b), Ordering::Greater);
+                }
+
+                // (4) Pages within a chapter are non-decreasing in natural order.
+                for chapter in &tree.chapters {
+                    let files: Vec<&str> = chapter
+                        .pages
+                        .iter()
+                        .map(|page| page.rel_path.as_str())
+                        .collect();
+                    for (a, b) in files.iter().copied().zip(files.iter().copied().skip(1)) {
+                        prop_assert_ne!(natord::compare_ignore_case(a, b), Ordering::Greater);
+                    }
+                }
+
+                // (5) Chapter name joined with the relative path reassembles the source.
+                for chapter in &tree.chapters {
+                    for page in &chapter.pages {
+                        let joined = chapter
+                            .name
+                            .as_relative()
+                            .join(page.rel_path.as_relative());
+                        prop_assert_eq!(joined.as_str(), page.source_name.as_str());
+                    }
+                }
+            }
+        }
+    }
 }

@@ -375,4 +375,96 @@ mod tests {
         assert!(Range::new(7, 7).is_degenerate());
         assert!(!Range::new(1, 200).is_degenerate());
     }
+
+    // Property-based checks for the geometry laws (docs/development.md). These are
+    // the footguns the newtypes exist to prevent: a transposed `min`/`max`, an extent
+    // that overflows, a membership test that is not symmetric.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_index_box() -> impl Strategy<Value = IndexBox> {
+            (any::<i64>(), any::<i64>(), any::<i64>(), any::<i64>())
+                .prop_map(|(x1, x2, y1, y2)| IndexBox::new(x1, x2, y1, y2))
+        }
+
+        /// Component-wise containment: `outer` encloses `inner`.
+        fn encloses(outer: IndexBox, inner: IndexBox) -> bool {
+            outer.x1 <= inner.x1
+                && outer.x2 >= inner.x2
+                && outer.y1 <= inner.y1
+                && outer.y2 >= inner.y2
+        }
+
+        proptest! {
+            /// `union` is a join-semilattice: commutative, associative, idempotent,
+            /// and it is an upper bound of both operands.
+            #[test]
+            fn index_box_union_is_a_join_semilattice(
+                a in any_index_box(),
+                b in any_index_box(),
+                c in any_index_box(),
+            ) {
+                prop_assert_eq!(a.union(b), b.union(a));
+                prop_assert_eq!(a.union(b).union(c), a.union(b.union(c)));
+                prop_assert_eq!(a.union(a), a);
+                prop_assert!(encloses(a.union(b), a));
+                prop_assert!(encloses(a.union(b), b));
+            }
+
+            /// Growing both operands by the same margins is symmetric.
+            #[test]
+            fn index_box_intersects_is_symmetric(
+                a in any_index_box(),
+                b in any_index_box(),
+                dx in -1.0e6f64..1.0e6,
+                dy in -1.0e6f64..1.0e6,
+            ) {
+                prop_assert_eq!(a.intersects(b, dx, dy), b.intersects(a, dx, dy));
+            }
+
+            /// Growing a box can only create overlap, never destroy it.
+            #[test]
+            fn index_box_intersects_is_monotone_in_the_margins(
+                a in any_index_box(),
+                b in any_index_box(),
+                dx1 in 0.0f64..1.0e6,
+                dy1 in 0.0f64..1.0e6,
+                more_dx in 0.0f64..1.0e6,
+                more_dy in 0.0f64..1.0e6,
+            ) {
+                if a.intersects(b, dx1, dy1) {
+                    prop_assert!(a.intersects(b, dx1 + more_dx, dy1 + more_dy));
+                }
+            }
+
+            /// `area` is the exact `u64` product of the saturating extents, so it
+            /// never overflows even at the `u32` extremes.
+            #[test]
+            fn bbox_area_is_the_exact_u64_product(
+                left in any::<u32>(),
+                upper in any::<u32>(),
+                right in any::<u32>(),
+                lower in any::<u32>(),
+            ) {
+                let bbox = BBox::new(left, upper, right, lower);
+                let expected =
+                    u64::from(right.saturating_sub(left)) * u64::from(lower.saturating_sub(upper));
+                prop_assert_eq!(bbox.area(), expected);
+                prop_assert!(bbox.area() <= u64::from(u32::MAX) * u64::from(u32::MAX));
+            }
+
+            /// `Quality::new` accepts exactly `0..=MAX` and preserves the value.
+            #[test]
+            fn quality_new_is_total_and_exact(q in any::<u8>()) {
+                match Quality::new(q) {
+                    Ok(quality) => {
+                        prop_assert!(q <= Quality::MAX);
+                        prop_assert_eq!(quality.get(), q);
+                    }
+                    Err(_) => prop_assert!(q > Quality::MAX),
+                }
+            }
+        }
+    }
 }

@@ -35,6 +35,23 @@ undocumented.
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
   OPF/NCX/NAV output.
+- **Property-based tests** with [`proptest`](https://proptest-rs.github.io/proptest/) (dev-only).
+  Each states an invariant over a generated input space and shrinks a counterexample to a minimal
+  case, complementing the point-example unit and golden tests. They live in a nested
+  `mod properties` inside each module's `#[cfg(test)] mod tests` and pin the pure laws of the
+  geometry units (`IndexBox::union`'s semilattice laws, the `u64` `BBox` area, `Quality`'s range),
+  naming and metadata (`slugify` idempotence, `ComicInfo` people canonicalisation), image
+  processing (`merge_boxes` disjointness/union-conservation, `clamp_bbox` containment, the fill
+  threshold, `contain`/`fit`/`pad`/`thumbnail` sizing, webtoon page packing), chunking and EPUB
+  output (`pack_units` page conservation, `spread_properties` side rules, `html_escape` round-trips,
+  `normalize_lf` CR-freedom), the archive path sanitizer (`safe_join` containment,
+  `normalize_archive_path` dot-segment/idempotence) and the device-profile table. They are
+  device- and byte-safe (never assert golden output) and keep generated images tiny so a run stays
+  fast; a failure persists a replayable seed under the gitignored `proptest-regressions/`. Because
+  the crate denies `clippy::unwrap_used`/`expect_used`/`panic`, bodies assert with
+  `prop_assert!`/`prop_assert_eq!` (fallible setup may use `?` via `TestCaseError`'s
+  `From<E: Error>`). The candidate properties not yet implemented, and the findings this pass
+  surfaced, are tracked in [proptest.md](proptest.md).
 - **Fixture/golden tests:** commit small `CBZ`/`CBR`/`CB7`/`CBT` inputs and assert structure by
   parsing the output back (mimetype first + stored; OPF spine; XHTML image refs; image
   dimensions). `tests/ebook_golden_tests.rs` pins the generated EPUB documents (OPF/NCX/NAV/XHTML/

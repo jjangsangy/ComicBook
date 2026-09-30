@@ -379,4 +379,42 @@ mod tests {
         assert_eq!(luma601(0, 255, 0), 150); // 0.587 * 255
         assert_eq!(luma601(0, 0, 255), 29); // 0.114 * 255
     }
+
+    // Property-based checks for the colour detector (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::test_runner::TestCaseError;
+
+        /// Adapt a fallible setup step into the `Result` a `proptest!` body expects.
+        /// (`anyhow::Error` is not a `std::error::Error`, so `?` cannot convert it.)
+        fn setup<T>(result: anyhow::Result<T>) -> std::result::Result<T, TestCaseError> {
+            result.map_err(|error| TestCaseError::fail(error.to_string()))
+        }
+
+        /// An RGB image whose every pixel is neutral (`r == g == b`), with varied
+        /// levels from the seed and the pixel position.
+        fn any_neutral_rgb() -> impl Strategy<Value = RgbImage> {
+            (1u32..16, 1u32..16, any::<u8>()).prop_map(|(width, height, seed)| {
+                RgbImage::from_fn(width, height, |x, y| {
+                    let level = seed
+                        .wrapping_add((x.wrapping_mul(31).wrapping_add(y.wrapping_mul(17))) as u8);
+                    Rgb([level, level, level])
+                })
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// A neutral image is detected as Gray: every pixel maps to Cb == Cr ==
+            /// 128, so the chroma histogram is a single spike and the spread test
+            /// bails out at the first cascade step.
+            #[test]
+            fn neutral_images_are_gray(image in any_neutral_rgb()) {
+                let opts = setup(options(&[]))?;
+                prop_assert_eq!(color_check(&image, &opts), Detected::Gray);
+            }
+        }
+    }
 }

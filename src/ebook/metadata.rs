@@ -567,4 +567,107 @@ mod tests {
         assert_eq!(zfill("123", 3), "123");
         assert_eq!(zfill("-5", 3), "-05");
     }
+
+    // Property-based checks for the ComicInfo people canonicalisation
+    // (docs/development.md). The de-duplicate/sort/drop-empty rule is shared by
+    // every people field, so it is pinned once against the real parser.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// One candidate name: sometimes from a small fixed pool (so duplicates
+        /// are easy to generate) and otherwise random. No name contains `,`, so
+        /// none can collide with the `", "` separator; none contains `&`, `<` or
+        /// `>` or a control character, so the generated document always parses.
+        fn any_person_name() -> impl Strategy<Value = String> {
+            prop_oneof![
+                2 => prop::sample::select(vec![
+                    "Miura", "Kentaro", "café", "Über", "Stück", "日本",
+                    "A", "B", "Zed", "O'Brien", "van Damme", "X-23",
+                    "Dr. Strange", "a.b",
+                ])
+                .prop_map(str::to_owned),
+                3 => prop::collection::vec(any_person_char(), 1..6)
+                    .prop_map(|chars| chars.into_iter().collect()),
+            ]
+        }
+
+        fn any_person_char() -> impl Strategy<Value = char> {
+            prop::sample::select(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .'-:éüß日本"
+                    .chars()
+                    .collect::<Vec<char>>(),
+            )
+        }
+
+        /// A raw people list as `(document text, expected canonical form)`. The
+        /// slots are the `", "` separated entries: any of them may be empty (a
+        /// bare `""` or the empty slots around a `", "` run), duplicated or out
+        /// of order. The expected form is exactly the non-empty entries as a
+        /// `BTreeSet` — KCC's `list(set(...)); .sort()`.
+        fn any_people_list() -> impl Strategy<Value = (String, Vec<String>)> {
+            prop::collection::vec(any_person_name(), 1..4).prop_flat_map(|pool| {
+                let len = pool.len();
+                prop::collection::vec(
+                    prop_oneof![
+                        1 => Just(None::<usize>),
+                        3 => (0..len).prop_map(Some),
+                    ],
+                    0..6,
+                )
+                .prop_map(move |choices| {
+                    let slots: Vec<String> = choices
+                        .into_iter()
+                        .map(|choice| {
+                            choice.map_or_else(String::new, |index| {
+                                pool.get(index).cloned().unwrap_or_default()
+                            })
+                        })
+                        .collect();
+                    let content = slots.join(", ");
+                    let expected: Vec<String> = slots
+                        .iter()
+                        .filter(|slot| !slot.is_empty())
+                        .cloned()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    (content, expected)
+                })
+            })
+        }
+
+        proptest! {
+            /// `ComicInfo::parse` canonicalises every people field: drop empty
+            /// entries, de-duplicate, sort. Names never contain `", "`, so the
+            /// split is unambiguous and the expected set is exactly the
+            /// deduplicated non-empty entries.
+            #[test]
+            fn people_are_canonicalised_by_parse(
+                writers in any_people_list(),
+                pencillers in any_people_list(),
+                inkers in any_people_list(),
+                colorists in any_people_list(),
+            ) {
+                let (writer_text, expected_writers) = writers;
+                let (penciller_text, expected_pencillers) = pencillers;
+                let (inker_text, expected_inkers) = inkers;
+                let (colorist_text, expected_colorists) = colorists;
+                let xml = format!(
+                    "<ComicInfo><Writer>{writer_text}</Writer>\
+                     <Penciller>{penciller_text}</Penciller>\
+                     <Inker>{inker_text}</Inker>\
+                     <Colorist>{colorist_text}</Colorist></ComicInfo>"
+                );
+                // `anyhow::Error` is not `std::error::Error`, so it cannot use `?`
+                // directly; convert it into a proptest failure explicitly.
+                let info = ComicInfo::parse(xml.as_bytes())
+                    .map_err(|error| TestCaseError::fail(error.to_string()))?;
+                prop_assert_eq!(info.writers, expected_writers);
+                prop_assert_eq!(info.pencillers, expected_pencillers);
+                prop_assert_eq!(info.inkers, expected_inkers);
+                prop_assert_eq!(info.colorists, expected_colorists);
+            }
+        }
+    }
 }

@@ -223,4 +223,52 @@ mod tests {
         });
         assert_eq!(fill_check(&image), Background::White);
     }
+
+    // Property-based checks for the fill heuristic (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A flat RGB page of one level.
+        fn flat(width: u32, height: u32, level: u8) -> DynamicImage {
+            DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb([level; 3])))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// A uniform page reads White exactly when its level is at or above the
+            /// black/white threshold; the generator is biased toward the two levels
+            /// straddling it.
+            #[test]
+            fn flat_page_follows_the_threshold(
+                level in prop_oneof![0u8..=255, Just(127u8), Just(128u8)],
+                width in 1u32..24,
+                height in 1u32..24,
+            ) {
+                let expected = if level >= 128 {
+                    Background::White
+                } else {
+                    Background::Black
+                };
+                prop_assert_eq!(fill_check(&flat(width, height, level)), expected);
+            }
+
+            /// The levels either side of the threshold decide opposite ways (a flat
+            /// page is otherwise ambiguous only at that boundary).
+            #[test]
+            fn fill_check_threshold_boundary_is_sharp(
+                level in prop_oneof![Just(127u8), Just(128u8)],
+                width in 1u32..24,
+                height in 1u32..24,
+            ) {
+                let expected = if level >= 128 {
+                    Background::White
+                } else {
+                    Background::Black
+                };
+                prop_assert_eq!(fill_check(&flat(width, height, level)), expected);
+            }
+        }
+    }
 }

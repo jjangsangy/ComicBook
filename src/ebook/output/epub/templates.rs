@@ -713,4 +713,52 @@ mod tests {
         assert_eq!(normalize_lf("a\r\nb\r".to_string()), "a\nb");
         assert_eq!(normalize_lf("a\r\n\r".to_string()), "a\n");
     }
+
+    // Property-based checks for the line-ending normaliser (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// The reference normaliser: drop one trailing `\r`, then fold `\r\n` and
+        /// `\r` down to `\n`.
+        fn reference(mut out: String) -> String {
+            if out.ends_with('\r') {
+                out.pop();
+            }
+            out.replace("\r\n", "\n").replace('\r', "\n")
+        }
+
+        fn line_ending_input() -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop_oneof![Just("a"), Just("\n"), Just("\r\n"), Just("\r"), Just("")],
+                0..=8,
+            )
+            .prop_map(|parts| parts.concat())
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `normalize_lf` removes every `\r`, is idempotent, leaves `\r`-free
+            /// input untouched, and matches the reference fold.
+            #[test]
+            fn normalize_lf_folds_carriage_returns(input in line_ending_input()) {
+                let output = normalize_lf(input.clone());
+
+                prop_assert!(!output.contains('\r'));
+                prop_assert!(normalize_lf(output.clone()) == output);
+                if !input.contains('\r') {
+                    prop_assert!(output == input);
+                }
+                prop_assert!(output == reference(input.clone()));
+            }
+        }
+
+        #[test]
+        fn normalize_lf_handles_the_documented_shapes() {
+            assert_eq!(normalize_lf(String::from("a\r\nb")), "a\nb");
+            assert_eq!(normalize_lf(String::from("a\r")), "a");
+            assert_eq!(normalize_lf(String::from("a\rb\r\nc")), "a\nb\nc");
+        }
+    }
 }

@@ -52,7 +52,7 @@ const MAX_MERGED_HEIGHT: Pixels = Pixels::new(131_072 * 4);
 ///
 /// `height == bottom - top`; deriving it removes a third tuple field that could
 /// drift from the stored edges.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Panel {
     top: u32,
     bottom: u32,
@@ -783,5 +783,90 @@ mod tests {
         let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?)?;
         assert!(pages.is_empty(), "pages: {:?}", split_sizes(&pages));
         Ok(())
+    }
+
+    // Property-based checks for the panel helpers (docs/development.md).
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A panel `[top, bottom)` with a non-zero height.
+        fn any_panel() -> impl Strategy<Value = Panel> {
+            (0u32..64, 1u32..200).prop_map(|(top, height)| Panel {
+                top,
+                bottom: top + height,
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// `pack_pages` returns an ordered partition of the panel indices: every
+            /// index appears exactly once, in order, no page is empty, and each page
+            /// starts after the previous page's last index.
+            #[test]
+            fn pack_pages_is_an_ordered_partition(
+                panels in prop::collection::vec(any_panel(), 1..12),
+                virtual_height in 1u32..40,
+            ) {
+                let pages = pack_pages(&panels, virtual_height);
+
+                // Each page starts where the previous one ended (and no page is empty,
+                // since an empty page would leave the cursor behind).
+                let mut expected = 0usize;
+                for page in &pages {
+                    prop_assert_eq!(page.first().copied(), Some(expected));
+                    expected += page.len();
+                }
+                prop_assert_eq!(expected, panels.len());
+
+                // Each page's first index is greater than the previous page's last.
+                for pair in pages.windows(2) {
+                    let prev_last = pair.first().and_then(|page| page.last()).copied();
+                    let next_first = pair.get(1).and_then(|page| page.first()).copied();
+                    prop_assert!(matches!(
+                        (prev_last, next_first),
+                        (Some(prev), Some(next)) if next > prev
+                    ));
+                }
+            }
+
+            /// `split_panels` preserves a panel's span: the first part starts at the
+            /// panel top, the last ends at the panel bottom, and every part is a valid
+            /// non-empty sub-interval, sorted by top.
+            #[test]
+            fn split_panels_preserves_the_panel_span(
+                panel in any_panel(),
+                virtual_height in 1u32..80,
+            ) {
+                let parts = split_panels(&[panel], virtual_height);
+                prop_assert!(!parts.is_empty());
+
+                let first = parts.first().copied();
+                let last = parts.last().copied();
+                prop_assert!(matches!(first, Some(part) if part.top == panel.top));
+                prop_assert!(matches!(last, Some(part) if part.bottom == panel.bottom));
+
+                let mut previous_top: Option<u32> = None;
+                for part in &parts {
+                    prop_assert!(
+                        part.top < part.bottom,
+                        "empty part: {}..{}",
+                        part.top,
+                        part.bottom
+                    );
+                    prop_assert!(part.top >= panel.top && part.bottom <= panel.bottom);
+                    if let Some(prev) = previous_top {
+                        prop_assert!(
+                            part.top >= prev,
+                            "parts out of order: {} after {}",
+                            part.top,
+                            prev
+                        );
+                    }
+                    previous_top = Some(part.top);
+                }
+            }
+        }
     }
 }
