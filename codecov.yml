@@ -1,0 +1,15 @@
+# Codecov is the single source of truth for the coverage gate.
+#
+# The `Coverage` workflow uploads `lcov.info` and passes no `cargo llvm-cov
+# --fail-under-*` floor, so this project status check and the README badge are
+# rendered from the same upload and report the same number: line coverage scored
+# from the lcov `DA:` records. Mark `codecov/project` as a required status check
+# in branch protection to block merges that drop coverage under the floor.
+coverage:
+  status:
+    project:
+      default:
+        # Hard floor in percentage points; the status is green at or above it.
+        target: 95%
+        # Allow no drop below the target.
+        threshold: 0%

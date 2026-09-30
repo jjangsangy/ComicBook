@@ -1,7 +1,7 @@
 name: Coverage
 
-# Coverage lives in its own workflow so a failing 95% gate reddens the dedicated
-# coverage badge/check without taking the main `CI` badge down with it.
+# Coverage lives in its own workflow so a failing coverage gate reddens the
+# dedicated `codecov/project` check without taking the main `CI` badge down.
 on:
   push:
     branches: [ "main", "master" ]
@@ -17,13 +17,9 @@ jobs:
     # A single Linux job is enough: the instrumented run is far slower than the
     # plain test matrix, and coverage does not vary meaningfully by OS.
     runs-on: ubuntu-latest
-    # Total region-coverage floor. `--fail-under-regions` below makes the job — and so
-    # its `Coverage` status check — fail when total region coverage is under it. Region
-    # coverage is llvm-cov's strictest metric (a partially executed line is not counted
-    # as fully covered). Codecov cannot represent LLVM regions, so its badge reports
-    # *line* coverage instead and will differ — see docs/development.md.
-    env:
-      MIN_REGION_COVERAGE: 95
+    # The coverage floor is enforced by Codecov, not here: the uploaded `lcov.info`
+    # is scored by the `codecov/project` status configured in `codecov.yml`, so the
+    # gate and the README badge are the same number. See docs/development.md.
     permissions:
       contents: read
       # The sticky pull-request comment.
@@ -50,20 +46,20 @@ jobs:
 
       # One instrumented run of the whole suite, reusing the test matrix's
       # `--no-fail-fast` policy so a single failure still lets every remaining test
-      # record its coverage. `--fail-under-regions` is the gate: the run exits non-zero
-      # when total region coverage is below `MIN_REGION_COVERAGE`, which reddens the job
-      # and its status check. `lcov.info` is the machine-readable artifact (uploaded to
-      # Codecov); the tables below are rendered from the same profile data, so they are
-      # still published when the gate fails.
+      # record its coverage. This step fails only on a test failure; the coverage
+      # floor is enforced downstream by the Codecov status, which scores the
+      # `lcov.info` written here (see `codecov.yml`).
       - name: Run tests with coverage
-        run: cargo llvm-cov nextest --no-fail-fast --fail-under-regions "$MIN_REGION_COVERAGE" --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --no-fail-fast --lcov --output-path lcov.info
 
-      # Feeds the badge and the Codecov dashboard/PR annotations from `lcov.info`.
-      # Authenticated with the `CODECOV_TOKEN` repository secret (required
-      # because a public repo still needs auth on a protected branch like
-      # `main`). `if: always()` keeps the badge current even when the gate fails;
-      # a Codecov outage stays non-blocking because `fail_ci_if_error` is false
-      # (flip it to true to fail the job on a bad or missing token instead).
+      # Source of truth for the coverage gate. The `codecov/project` status
+      # (configured in `codecov.yml`) fails when coverage is under its target, and
+      # the README badge is rendered from this same upload, so the gate and the badge
+      # cannot disagree. Authenticated with the `CODECOV_TOKEN` repository secret
+      # (required because a public repo still needs auth on a protected branch like
+      # `main`). `if: always()` keeps the badge current even when a test fails;
+      # `fail_ci_if_error` stays false so a Codecov outage does not redden the job
+      # (flip it to true to fail on a bad or missing token instead).
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v7
@@ -76,8 +72,10 @@ jobs:
       # without rerunning the tests, so this still reports even when that run
       # failed. `--color never` keeps ANSI escapes out of the markdown, and the
       # `available` output lets the later report steps skip when a build failure
-      # left no profile data at all. The headline repeats the gate's region figure;
-      # the Codecov badge reports line coverage, which is a different metric.
+      # left no profile data at all. The headline is the *line* figure Codecov gates
+      # on, recomputed from the lcov `DA:` records so it matches the badge exactly —
+      # truncated to two decimals, as Codecov does (llvm-cov's own `Lines` column
+      # counts differently and would not match).
       - name: Write coverage summary
         id: coverage
         if: always()
@@ -88,14 +86,17 @@ jobs:
             echo 'available=false' >> "$GITHUB_OUTPUT"
             report="Coverage report unavailable; see the 'Run tests with coverage' step."
           fi
-          regions="$(printf '%s\n' "$report" | awk '/^TOTAL/{print $4; exit}')"
-          [ -n "$regions" ] || regions="unavailable"
+          if [ -f lcov.info ]; then
+            lines="$(awk -F'[,:]' '/^DA:/{n++; if ($3+0>0) h++} END{if (n) printf "%.2f%% (%d/%d)", int(h*10000/n)/100, h, n; else print "unavailable"}' lcov.info)"
+          else
+            lines="unavailable"
+          fi
           {
             echo "## Code coverage"
             echo
-            echo "**Region coverage (the gate): ${regions}. Floor: ${MIN_REGION_COVERAGE}%.**"
+            echo "**Line coverage (the Codecov gate): ${lines}.**"
             echo
-            echo "The Codecov badge reports *line* coverage, a different metric — Codecov has no region concept."
+            echo "This is the figure Codecov scores from lcov.info; the codecov/project status (see codecov.yml) is the gate."
             echo
             echo '```'
             echo "$report"
@@ -104,9 +105,9 @@ jobs:
           {
             echo "## Code coverage"
             echo
-            echo "**Region coverage (the gate): ${regions}. Floor: ${MIN_REGION_COVERAGE}%.**"
+            echo "**Line coverage (the Codecov gate): ${lines}.**"
             echo
-            echo "The Codecov badge reports *line* coverage, a different metric — Codecov has no region concept."
+            echo "This is the figure Codecov scores from lcov.info; the codecov/project status (see codecov.yml) is the gate."
             echo
             echo '```'
             echo "$report"

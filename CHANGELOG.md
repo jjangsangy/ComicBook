@@ -14,19 +14,15 @@ release when a version tag is pushed.
 
 - Added a `Coverage` workflow (`.github/workflows/coverage.yml`) that runs the test suite under
   `cargo llvm-cov nextest`, uploads the `lcov` report to Codecov — which serves the new coverage
-  badge in the README — and enforces a 95% line-coverage floor (`--fail-under-lines`) as a
-  `Coverage` status check. The per-file table is written to the run's job summary, a same-repo pull
-  request gets a sticky coverage comment, and the `lcov` data, an HTML report and the summary
-  markdown are uploaded as the `coverage` artifact. The Codecov upload authenticates with a
-  `CODECOV_TOKEN` repository secret. Coverage is split out of `ci.yml` so a failing gate does not
-  redden the main CI badge.
+  badge in the README and enforces the coverage floor through its `codecov/project` status
+  (configured in `codecov.yml`) — so the gate and the badge report the same number. The per-file
+  table is written to the run's job summary, a same-repo pull request gets a sticky coverage
+  comment, and the `lcov` data, an HTML report and the summary markdown are uploaded as the
+  `coverage` artifact. The Codecov upload authenticates with a `CODECOV_TOKEN` repository secret.
+  Coverage is split out of `ci.yml` so a failing gate does not redden the main CI badge.
 
 ### Changed
 
-- The `Coverage` workflow now gates on LLVM **region** coverage
-  (`cargo llvm-cov --fail-under-regions`, floor `95`) — the strictest metric, where a partially
-  executed line is not counted as fully covered. The Codecov badge still reports *line* coverage
-  (~97.6%) and so reads higher than the gate, because Codecov's lcov model has no region record.
 - Expanded unit and integration test coverage across the crate to exercise previously-untested
   branches, raising line coverage to ~97.6% (lcov `DA` records — llvm-cov's own summary reads ~96.6%
   and its region coverage ~93.9%) from ~90.6% before this pass. The suite now passes 526 tests

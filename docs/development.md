@@ -26,8 +26,8 @@ undocumented.
   (`cargo install cargo-llvm-cov --locked`, plus `rustup component add llvm-tools-preview` for the
   `llvm-cov`/`llvm-profdata` tools). Run it with nextest as the test runner:
   `cargo llvm-cov nextest`, or `cargo llvm-cov nextest --open` to browse the report. CI runs the
-  suite once on a single `ubuntu` job, enforces a minimum region-coverage floor, and publishes the
-  result to Codecov (which serves the README badge) and the job summary (see [CI](#ci)).
+  suite once on a single `ubuntu` job, enforces a minimum line-coverage floor through Codecov, and
+  publishes the result to Codecov (which serves the README badge) and the job summary (see [CI](#ci)).
 - **Unit tests** per algorithm on small synthetic images: colour-check decisions, fill
   detection, split classification, crop boxes, slugify, spread properties, filename logic,
   OPF/NCX/NAV output.
@@ -167,31 +167,29 @@ fail-fast by default: without the flag a single failure (e.g. on Windows) aborts
 remaining tests never produce output. The release workflow builds static musl Linux binaries.
 
 Coverage is a separate workflow ([`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml)),
-so its gate and badge are independent of the main `CI` badge. It runs the suite once under
-`cargo llvm-cov nextest --no-fail-fast --lcov` on `ubuntu-latest`. It is a gate as well as a
-report: `--fail-under-regions "$MIN_REGION_COVERAGE"` (the job's env var, currently `95`) fails the
-job — and so its `Coverage` status check — when total LLVM *region* coverage drops below the floor.
-Mark `Coverage` as a required status check in branch protection to block merges that would take
-coverage under it.
+so its check and badge are independent of the main `CI` badge. It runs the suite once under
+`cargo llvm-cov nextest --no-fail-fast --lcov` on `ubuntu-latest`; that step fails only on a test
+failure. The coverage *gate* is the `codecov/project` status configured in
+[`codecov.yml`](../codecov.yml) (target `95%`, no threshold), which Codecov evaluates against the
+uploaded `lcov.info`. Mark `codecov/project` as a required status check in branch protection to
+block merges that would take coverage under the floor.
 
-The gate is region coverage because it is the strictest of llvm-cov's metrics: it counts each
-control-flow region, so a line that only ran partially (e.g. one arm of a `match`) is not counted as
-fully covered. Region coverage currently sits around 93.9%. The Codecov badge cannot mirror it —
-Codecov's model is lines/branches/functions from lcov, and LLVM has no lcov region record (it emits
-no branch data here at all) — so the badge reports *line* coverage (~97.6%) and reads higher than
-the gate. That divergence is intentional: the stricter gate guards the merge while the badge tracks
-the widely-reported line number. Note that llvm-cov itself reports different line totals in its
-summary, its `show` output and its lcov export, so name the metric you mean rather than assuming
-they agree.
+Keeping the floor in Codecov rather than passing a `cargo llvm-cov --fail-under-*` flag is
+deliberate: Codecov renders the badge, so making it authoritative means the gate and the badge can
+never disagree. Codecov scores *line* coverage from the lcov `DA:` records (~97.5%). llvm-cov
+cannot produce that same figure itself — it reports a different line total in its summary/`LF`
+header (~96.6%) than in its own lcov `DA` export, and its *region* coverage (~93.9%) has no lcov
+record at all — so a `--fail-under-regions`/`--fail-under-lines` floor would gate on a number
+Codecov never shows. Name the metric you mean rather than assuming the tools agree.
 
 The result is published four ways: the `lcov.info` report is uploaded to Codecov (which serves the
-badge in the [README](../README.md) and annotates pull requests), the per-file table is appended to
-the run's job summary, a same-repo pull request gets a sticky comment (a PR from a fork has a
-read-only `GITHUB_TOKEN` and is skipped, but still gets the job summary), and the `lcov.info` data,
-an HTML report and the summary markdown are uploaded as the `coverage` artifact. The Codecov
-upload is authenticated with a `CODECOV_TOKEN` repository secret — required because a public repo
-still needs auth on a protected branch like `main` — so install the Codecov GitHub App for the repo
-on first use. Even when the gate fails the summary and report are still produced, because
+badge in the [README](../README.md), annotates pull requests and enforces the gate), the per-file
+table is appended to the run's job summary, a same-repo pull request gets a sticky comment (a PR
+from a fork has a read-only `GITHUB_TOKEN` and is skipped, but still gets the job summary), and the
+`lcov.info` data, an HTML report and the summary markdown are uploaded as the `coverage` artifact.
+The Codecov upload is authenticated with a `CODECOV_TOKEN` repository secret — required because a
+public repo still needs auth on a protected branch like `main` — so install the Codecov GitHub App
+for the repo on first use. Even when a test fails the summary and report are still produced, because
 `cargo llvm-cov report` re-renders the previous run's profile data rather than rerunning the tests.
 The job is deliberately not part of the OS matrix — instrumentation is much slower and coverage
 does not vary meaningfully between platforms.
