@@ -131,3 +131,31 @@ pub fn parse_target_extension(ext: &str) -> Option<(&'static str, ArchiveKind)> 
     let format = ArchiveFormat::from_str(&clean, true).ok()?;
     Some((format.extension(), format.kind()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_extensions_match_the_format_spellings() {
+        // Cross-check the kind's extension against the canonical extension of each comic
+        // format that produces it, rather than restating the same literals.
+        for format in [
+            ArchiveFormat::Cbz,
+            ArchiveFormat::Cbr,
+            ArchiveFormat::Cb7,
+            ArchiveFormat::Cbt,
+        ] {
+            assert_eq!(format.kind().default_extension(), format.extension());
+        }
+        assert_eq!(ArchiveKind::Directory.default_extension(), "");
+    }
+
+    #[test]
+    fn a_non_archive_type_is_not_detected() {
+        // A PNG signature is identified by `infer` but maps to neither a known archive
+        // extension nor a known archive MIME type, so detection returns `None`.
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(detect_archive_kind_from_bytes(&png), None);
+    }
+}

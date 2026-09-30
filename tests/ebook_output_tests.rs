@@ -274,6 +274,26 @@ fn pdf_streams_png_pages_through_flate() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn pdf_prepends_a_smart_cropped_cover() -> Result<()> {
+    let tmp = tempdir()?;
+    let source = tmp.path().join("source");
+    // A wide first page: `--smart-cover-crop` crops it into a cover, which the PDF
+    // writes ahead of the processed pages (so the page count grows by one).
+    write_png(&source.join("01.png"), 1900, 1000, [255, 255, 255])?;
+    write_png(&source.join("02.png"), 100, 150, [10, 10, 10])?;
+
+    let plain = convert(&source, &["-f", "pdf", "-p", "KoE", "-c", "0"])?;
+    let plain_pages = read_pdf(&plain[0])?.len();
+
+    let cropped = convert(
+        &source,
+        &["-f", "pdf", "-p", "KoE", "-c", "0", "--smart-cover-crop"],
+    )?;
+    assert_eq!(read_pdf(&cropped[0])?.len(), plain_pages + 1);
+    Ok(())
+}
+
 // --- light novel -----------------------------------------------------------------
 
 #[test]
@@ -322,5 +342,44 @@ fn light_novel_reports_a_folder_source_beside_it() -> Result<()> {
     write_png(&source.join("page.png"), 20, 30, [10, 10, 10])?;
     let written = convert(&source, &["--light-novel", "-p", "KV"])?;
     assert_eq!(written, vec![tmp.path().join("manga.cbz")]);
+    Ok(())
+}
+
+#[test]
+fn light_novel_resizes_an_oversized_page_and_keeps_comicinfo() -> Result<()> {
+    // Cheap twin of the ignored 3000x4000 case: an oversized page is grayscaled and
+    // contained to the profile, a fitting page is copied verbatim, and the discovered
+    // ComicInfo.xml survives into the repackaged CBZ.
+    std::env::set_var(progress::QUIET_ENV, "1");
+    let tmp = tempdir()?;
+    let source = tmp.path().join("novel");
+    write_png(&source.join("a.png"), 20, 30, [10, 10, 10])?;
+    // Just over the KV profile (1072x1448) so it is grayscaled and contained.
+    write_png(&source.join("big.png"), 1100, 1500, [200, 30, 30])?;
+    fs::write(
+        source.join("ComicInfo.xml"),
+        br#"<ComicInfo><Series>Berserk</Series></ComicInfo>"#,
+    )?;
+
+    let options = options(&["--light-novel", "-p", "KV"])?;
+    let written = comic_book::ebook::output::lightnovel::convert(&source, &options)?;
+    assert_eq!(written, vec![tmp.path().join("novel.cbz")]);
+
+    let entries = zip_entries(&written[0])?;
+    assert!(entries.contains(&"a.png".to_string()));
+    assert!(entries.contains(&"big.png".to_string()));
+    assert!(entries.contains(&"ComicInfo.xml".to_string()));
+
+    // The oversized page is grayscaled and scaled to fit (1100x1500 → 1062x1448).
+    let big = zip_entry(&written[0], "big.png")?.context("the resized page is written")?;
+    let decoded = image::load_from_memory(&big)?;
+    assert_eq!(decoded.dimensions(), (1062, 1448));
+    assert!(matches!(decoded, DynamicImage::ImageLuma8(_)));
+
+    // A page that already fits is copied byte-for-byte.
+    assert_eq!(
+        zip_entry(&written[0], "a.png")?,
+        fs::read(source.join("a.png")).ok()
+    );
     Ok(())
 }

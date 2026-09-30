@@ -1712,4 +1712,591 @@ mod tests {
         assert_eq!(encoded[0].flags.half, ScribeHalf::NotSplit);
         Ok(())
     }
+
+    #[test]
+    fn no_processing_re_encodes_a_page_without_source_bytes() -> Result<()> {
+        // A page holding only pixels (a webtoon strip) still round-trips through the
+        // codec under `--no-processing`.
+        let source = page(40, 40, [1, 2, 3]);
+        let options = options(&["--no-processing"])?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
+        assert_eq!(encoded.len(), 1);
+        assert_eq!(encoded[0].media_type, MediaType::Png);
+        // The page was re-encoded through the PNG encoder, not passed through empty.
+        assert!(encoded[0].bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_borders_override_the_detected_background() -> Result<()> {
+        let source = page(10, 10, [5, 5, 5]);
+        // The detected background is white, so the black override is the observable one.
+        assert_eq!(
+            page_fill(&source, &options(&["--borders", "white"])?),
+            Background::White
+        );
+        assert_eq!(
+            page_fill(&source, &options(&["--borders", "black"])?),
+            Background::Black
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_narrow_landscape_rotates_only_under_splitter_rotate() -> Result<()> {
+        let image = DynamicImage::ImageRgb8(RgbImage::new(1100, 1000));
+        let rotated = split_check(
+            image.clone(),
+            &options(&["--splitter", "1"])?,
+            Size::new(1072, 1448),
+        );
+        assert_eq!(order_of(&rotated), vec![OrderClass::RotateLast]);
+        assert_eq!(rotated[0].image.dimensions(), (1000, 1100));
+
+        // The default splitter leaves the same page untouched.
+        let plain = split_check(image, &options(&[])?, Size::new(1072, 1448));
+        assert_eq!(order_of(&plain), vec![OrderClass::Normal]);
+        Ok(())
+    }
+
+    #[test]
+    fn splitter_rotate_and_both_control_a_wide_spread() -> Result<()> {
+        // `rotate` always rotates a wide spread.
+        let rotate = split_check(
+            DynamicImage::ImageRgb8(RgbImage::new(500, 200)),
+            &options(&["--splitter", "1"])?,
+            Size::new(1072, 1448),
+        );
+        assert_eq!(order_of(&rotate), vec![OrderClass::RotateLast]);
+
+        // `both` bisects (under the threshold) and rotates.
+        let both = split_check(
+            DynamicImage::ImageRgb8(RgbImage::new(300, 200)),
+            &options(&["--splitter", "2"])?,
+            Size::new(1072, 1448),
+        );
+        assert_eq!(
+            order_of(&both),
+            vec![
+                OrderClass::SplitLeft,
+                OrderClass::SplitRight,
+                OrderClass::RotateLast
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rotate_right_reverses_the_rotation_direction() -> Result<()> {
+        // A lone white top-left marker: the clockwise (`--rotate-right`) rotate moves
+        // it to the top-right of the 200x500 result, the default counter-clockwise
+        // rotate to the bottom-left.
+        let marker = || {
+            DynamicImage::ImageRgb8(RgbImage::from_fn(500, 200, |x, y| {
+                if x == 0 && y == 0 {
+                    Rgb([255, 255, 255])
+                } else {
+                    Rgb([0, 0, 0])
+                }
+            }))
+        };
+        let right = split_check(
+            marker(),
+            &options(&["--rotate-right"])?,
+            Size::new(1072, 1448),
+        );
+        assert_eq!(order_of(&right), vec![OrderClass::RotateLast]);
+        assert_eq!(right[0].image.dimensions(), (200, 500));
+        assert_eq!(
+            right[0].image.get_pixel(199, 0)[0],
+            255,
+            "clockwise keeps the marker at the top right"
+        );
+
+        let left = split_check(marker(), &options(&[])?, Size::new(1072, 1448));
+        assert_eq!(left[0].image.dimensions(), (200, 500));
+        assert_eq!(
+            left[0].image.get_pixel(0, 499)[0],
+            255,
+            "counter-clockwise moves the marker to the bottom left"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn maximize_strips_can_stack_right_to_left() -> Result<()> {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(400, 100, |x, _| {
+            if x < 200 {
+                Rgb([0, 0, 0])
+            } else {
+                Rgb([255, 0, 0])
+            }
+        }));
+        let payloads = split_check(
+            image,
+            &options(&["--maximize-strips", "--manga"])?,
+            Size::new(1072, 1448),
+        );
+        assert_eq!(order_of(&payloads), vec![OrderClass::Normal]);
+        // Right-to-left puts the red right half on top of the black left half.
+        assert_eq!(payloads[0].image.get_pixel(0, 0)[0], 255);
+        assert_eq!(payloads[0].image.get_pixel(0, 100)[0], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn bisect_handles_a_portrait_image() {
+        // Reached only for landscape spreads in the pipeline, but the portrait branch
+        // is still well-defined; pin it directly.
+        let (first, second) = bisect(&DynamicImage::ImageRgb8(RgbImage::new(100, 200)), false);
+        assert_eq!(first.dimensions(), (100, 100));
+        assert_eq!(second.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn a_grayscale_source_keeps_the_luma_plane() -> Result<()> {
+        let source = Page {
+            source_name: SourceName::new("page.png"),
+            rel_path: RelPath::new("page.png"),
+            data: PageData::Pixels(
+                MediaType::Png,
+                DynamicImage::ImageLuma8(GrayImage::from_pixel(40, 40, Luma([10]))),
+            ),
+            dimensions: Size::new(40, 40),
+            background: Background::White,
+        };
+        let options = options(&[])?;
+        let encoded = process_page(&source, &options, options.profile_size())?;
+        assert_eq!(encoded.len(), 1);
+        assert_eq!(encoded[0].media_type, MediaType::Jpeg);
+        // The single-channel plane survives to the JPEG, which decodes as grayscale.
+        assert!(matches!(
+            image::load_from_memory(&encoded[0].bytes)?,
+            DynamicImage::ImageLuma8(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_tall_scribe_page_splits_into_above_and_below() -> Result<()> {
+        // Cheap twin of the ignored 2000x3000 case: the page is contain-fitted to the
+        // 2480-tall profile, then split at 1920 into a top and a bottom image.
+        let tall = page(100, 3000, [10, 10, 10]);
+        let options = options(&["-f", "epub", "-p", "KS"])?;
+        let size = options.profile_size();
+        let encoded = process_page(&tall, &options, size)?;
+        assert_eq!(encoded.len(), 2);
+        assert_eq!(encoded[0].name, "page-cb-x-above.jpg");
+        assert_eq!(encoded[1].name, "page-cb-x-below.jpg");
+        assert_eq!(encoded[0].size.height, SCRIBE_MAX_DIMENSION);
+        assert_eq!(encoded[0].flags.half, ScribeHalf::Above);
+        assert_eq!(encoded[1].flags.half, ScribeHalf::Below);
+        assert_eq!(encoded[0].size.width, encoded[1].size.width);
+        assert!(encoded[1].size.height > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn gamma_correct_handles_a_grayscale_plane() -> Result<()> {
+        let mut image = DynamicImage::ImageLuma8(GrayImage::from_pixel(2, 2, Luma([128])));
+        gamma_correct(&mut image, &options(&["--gamma", "2.0"])?, Detected::Gray);
+        // The Luma8 arm maps in place, keeping the single channel.
+        assert!(matches!(image, DynamicImage::ImageLuma8(_)));
+        assert_eq!(image.to_luma8().get_pixel(0, 0)[0], 64);
+        Ok(())
+    }
+
+    #[test]
+    fn gamma_correct_converts_a_non_rgb_source() -> Result<()> {
+        let mut image = DynamicImage::ImageRgba8(RgbaImage::new(2, 2));
+        gamma_correct(&mut image, &options(&["--gamma", "2.0"])?, Detected::Gray);
+        assert!(matches!(image, DynamicImage::ImageRgb8(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn autocontrast_level_raises_the_dark_floor_before_stretching() -> Result<()> {
+        // 98 mid pixels at 30 set the black point, so `--auto-level` raises the lone 10
+        // to 30 before the stretch; the 30s then sit at the bottom of the range (0)
+        // instead of being stretched up from 10 (which would give 21).
+        let mut image = DynamicImage::ImageLuma8(GrayImage::from_fn(100, 1, |x, _| {
+            Luma([match x {
+                0 => 10,
+                99 => 250,
+                _ => 30,
+            }])
+        }));
+        autocontrast_image(&mut image, &options(&["--auto-level"])?, Detected::Gray);
+        let leveled = image.to_luma8();
+        assert_eq!(
+            leveled.get_pixel(1, 0)[0],
+            0,
+            "a 30 was levelled to the floor"
+        );
+        assert_eq!(
+            leveled.get_pixel(99, 0)[0],
+            255,
+            "the bright end stays white"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn autolevel_raises_a_colour_page_below_the_black_point() {
+        // 99 grey pixels at 30 set the black point; the lone 10 is levelled up to it.
+        let mut image = DynamicImage::ImageRgb8(RgbImage::from_fn(100, 1, |x, _| {
+            let value = if x == 0 { 10 } else { 30 };
+            Rgb([value, value, value])
+        }));
+        autolevel_image(&mut image, Detected::Color);
+        assert!(matches!(image, DynamicImage::ImageRgb8(_)));
+        let rgb = image.to_rgb8();
+        let levelled = rgb.get_pixel(0, 0);
+        assert_eq!(
+            levelled[0], 30,
+            "the dark pixel is raised to the black point"
+        );
+        assert_eq!(levelled[0], levelled[1]);
+        assert_eq!(levelled[1], levelled[2]);
+    }
+
+    #[test]
+    fn autolevel_converts_a_non_luma_source_for_gray() {
+        let mut image =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(16, 1, |x, _| Rgb([(x * 16) as u8; 3])));
+        autolevel_image(&mut image, Detected::Gray);
+        assert!(matches!(image, DynamicImage::ImageLuma8(_)));
+    }
+
+    #[test]
+    fn stretch_distorts_while_wallpaper_centre_crops() -> Result<()> {
+        // A red quadrant in the top-left of a 2:1 page. `--stretch` scales the whole page
+        // (the red quadrant survives), while `--wallpaper` centre-crops to the device ratio
+        // and discards the left edge entirely. A square fixture could not tell them apart.
+        let red_corner = || {
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 50, |x, y| {
+                if x < 25 && y < 25 {
+                    Rgb([255, 0, 0])
+                } else {
+                    Rgb([255, 255, 255])
+                }
+            }))
+        };
+        let is_red = |pixel: [u8; 3]| pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60;
+
+        let stretch = options(&[
+            "--stretch",
+            "--custom-width",
+            "100",
+            "--custom-height",
+            "100",
+        ])?;
+        let mut image = red_corner();
+        resize_image(
+            &mut image,
+            &stretch,
+            Size::new(100, 100),
+            OrderClass::Normal,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), (100, 100));
+        let stretched = image.to_rgb8();
+        assert!(
+            is_red(stretched.get_pixel(10, 10).0),
+            "stretch keeps the corner"
+        );
+        assert!(
+            !is_red(stretched.get_pixel(10, 60).0),
+            "the lower half stays white"
+        );
+
+        let wallpaper = options(&[
+            "--wallpaper",
+            "--custom-width",
+            "100",
+            "--custom-height",
+            "100",
+        ])?;
+        let mut image = red_corner();
+        resize_image(
+            &mut image,
+            &wallpaper,
+            Size::new(100, 100),
+            OrderClass::Normal,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), (100, 100));
+        let cropped = image.to_rgb8();
+        assert!(
+            !is_red(cropped.get_pixel(10, 10).0),
+            "the wallpaper centre crop discards the red left edge"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_rotate_contains_an_oversized_spread_or_leaves_a_small_one() -> Result<()> {
+        let options = options(&[
+            "--no-rotate",
+            "--custom-width",
+            "100",
+            "--custom-height",
+            "100",
+        ])?;
+
+        // Wider than twice the target width: contained to (200, 100).
+        let mut image = DynamicImage::ImageRgb8(RgbImage::new(300, 150));
+        resize_image(
+            &mut image,
+            &options,
+            Size::new(100, 100),
+            OrderClass::RotateLast,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), (200, 100));
+
+        // Already within the box: left alone.
+        let mut image = DynamicImage::ImageRgb8(RgbImage::new(40, 40));
+        resize_image(
+            &mut image,
+            &options,
+            Size::new(100, 100),
+            OrderClass::RotateLast,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), (40, 40));
+        Ok(())
+    }
+
+    #[test]
+    fn a_kindle_oversized_no_rotate_spread_is_capped() -> Result<()> {
+        let options = options(&["-p", "KV", "--no-rotate"])?;
+        let size = options.profile_size();
+        let mut image = DynamicImage::ImageRgb8(RgbImage::new(3000, 1000));
+        resize_image(
+            &mut image,
+            &options,
+            size,
+            OrderClass::RotateLast,
+            Background::White,
+        )?;
+        assert!(image.width() <= SCRIBE_MAX_DIMENSION && image.height() <= SCRIBE_MAX_DIMENSION);
+        Ok(())
+    }
+
+    #[test]
+    fn a_kdx_page_is_padded_or_fitted_to_the_profile() -> Result<()> {
+        let options = options(&["-p", "KDX", "-f", "cbz"])?;
+        let size = options.profile_size();
+
+        // A page whose ratio differs from the device is padded to the exact size.
+        let mut image = DynamicImage::ImageRgb8(RgbImage::new(1000, 2000));
+        resize_image(
+            &mut image,
+            &options,
+            size,
+            OrderClass::Normal,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), size.to_dimensions());
+
+        // A page at the device ratio is fitted directly.
+        let mut image = DynamicImage::ImageRgb8(RgbImage::new(size.width * 2, size.height * 2));
+        resize_image(
+            &mut image,
+            &options,
+            size,
+            OrderClass::Normal,
+            Background::White,
+        )?;
+        assert_eq!(image.dimensions(), size.to_dimensions());
+        Ok(())
+    }
+
+    #[test]
+    fn resize_to_preserves_rgba_and_normalises_other_types() -> Result<()> {
+        let rgba = resize_to(
+            &DynamicImage::ImageRgba8(RgbaImage::new(200, 100)),
+            Size::new(50, 50),
+            Method::Lanczos,
+        )?;
+        assert!(matches!(rgba, DynamicImage::ImageRgba8(_)));
+        assert_eq!(rgba.dimensions(), (50, 50));
+
+        let luma16 = DynamicImage::ImageLuma16(ImageBuffer::from_pixel(200, 100, Luma([10u16])));
+        let resized = resize_to(&luma16, Size::new(50, 50), Method::Lanczos)?;
+        assert!(matches!(resized, DynamicImage::ImageRgb8(_)));
+        assert_eq!(resized.dimensions(), (50, 50));
+        Ok(())
+    }
+
+    #[test]
+    fn fit_resizes_a_matching_ratio_directly() -> Result<()> {
+        // This exercises the equal-ratio early return; the result is identical to the crop
+        // path for an exact ratio, so it is a coverage guard for that branch (the round-trip
+        // to a *different* ratio is covered by the wallpaper/crop tests).
+        let fitted = fit(
+            &DynamicImage::ImageRgb8(RgbImage::new(1000, 500)),
+            Size::new(100, 50),
+            Method::Lanczos,
+        )?;
+        assert_eq!(fitted.dimensions(), (100, 50));
+        Ok(())
+    }
+
+    #[test]
+    fn contain_rounds_the_contained_dimension() -> Result<()> {
+        // A 1001x500 page into 1000x500 rounds the height to exactly 500, so the requested
+        // target is kept. (The `new_height != size.height` guard is unobservable here: both
+        // spellings yield the same size.)
+        let wide = contain(
+            &DynamicImage::ImageRgb8(RgbImage::new(1001, 500)),
+            Size::new(1000, 500),
+            Method::Lanczos,
+        )?;
+        assert_eq!(wide.dimensions(), (1000, 500));
+
+        // A 1000x501 page into 1000x500 rounds the width to 998, so the *rounded* size (not
+        // the target) is what gets resized to.
+        let tall = contain(
+            &DynamicImage::ImageRgb8(RgbImage::new(1000, 501)),
+            Size::new(1000, 500),
+            Method::Lanczos,
+        )?;
+        assert_eq!(tall.dimensions(), (998, 500));
+        Ok(())
+    }
+
+    #[test]
+    fn pad_preserves_grayscale_and_rgba_and_black_fill() -> Result<()> {
+        let gray = pad(
+            &DynamicImage::ImageLuma8(GrayImage::new(2000, 1000)),
+            Size::new(1000, 1000),
+            Method::Lanczos,
+            Background::White,
+        )?;
+        assert!(matches!(gray, DynamicImage::ImageLuma8(_)));
+        assert_eq!(gray.dimensions(), (1000, 1000));
+
+        let rgba = pad(
+            &DynamicImage::ImageRgba8(RgbaImage::new(2000, 1000)),
+            Size::new(1000, 1000),
+            Method::Lanczos,
+            Background::White,
+        )?;
+        assert!(matches!(rgba, DynamicImage::ImageRgba8(_)));
+
+        let black = pad(
+            &DynamicImage::ImageRgb8(RgbImage::new(2000, 1000)),
+            Size::new(1000, 1000),
+            Method::Lanczos,
+            Background::Black,
+        )?;
+        assert_eq!(black.to_rgb8().get_pixel(500, 0)[0], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn palette_bit_depth_covers_every_boundary() {
+        assert_eq!(
+            Palette::new(vec![[0u8; 3]; 2]).bit_depth(),
+            png::BitDepth::One
+        );
+        assert_eq!(
+            Palette::new(vec![[0u8; 3]; 3]).bit_depth(),
+            png::BitDepth::Two
+        );
+        assert_eq!(
+            Palette::new(vec![[0u8; 3]; 5]).bit_depth(),
+            png::BitDepth::Four
+        );
+        assert_eq!(
+            Palette::new(vec![[0u8; 3]; 17]).bit_depth(),
+            png::BitDepth::Eight
+        );
+    }
+
+    #[test]
+    fn encode_image_covers_webp_and_no_quantize_branches() -> Result<()> {
+        let gray = page(40, 40, [10, 10, 10]);
+
+        // Lossless WebP on the PNG branch.
+        let opts = options(&["-p", "KoE", "--force-png", "--webp"])?;
+        let encoded = process_page(&gray, &opts, opts.profile_size())?;
+        assert_eq!(encoded[0].media_type, MediaType::WebP);
+
+        // Unquantised grayscale PNG.
+        let opts = options(&["-p", "KoE", "--force-png", "--no-quantize"])?;
+        let encoded = process_page(&gray, &opts, opts.profile_size())?;
+        assert_eq!(encoded[0].media_type, MediaType::Png);
+        assert_eq!(encoded[0].bytes[25], 0, "grayscale (colour type 0)");
+
+        // KDX + CBZ quantises, then stores as grayscale.
+        let opts = options(&["-p", "KDX", "--force-png"])?;
+        let encoded = process_page(&gray, &opts, opts.profile_size())?;
+        assert_eq!(encoded[0].media_type, MediaType::Png);
+        assert_eq!(encoded[0].bytes[25], 0, "grayscale (colour type 0)");
+
+        // Lossy WebP off the PNG branch.
+        let opts = options(&["-p", "KoE", "--webp"])?;
+        let encoded = process_page(&gray, &opts, opts.profile_size())?;
+        assert_eq!(encoded[0].media_type, MediaType::WebP);
+        Ok(())
+    }
+
+    #[test]
+    fn quantize_rejects_a_malformed_palette() {
+        // Fewer than three entries...
+        assert!(quantize(&RgbImage::new(2, 2), &[]).is_err());
+        assert!(quantize(&RgbImage::new(2, 2), &[0, 0]).is_err());
+        // ...and a length that is not a whole number of RGB triples.
+        assert!(quantize(&RgbImage::new(2, 2), &[0, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn encode_dynamic_covers_every_media_type() -> Result<()> {
+        let quality = options(&[])?.processing.jpeg_quality;
+        let rgb = RgbImage::new(4, 4);
+        let jpeg = encode_dynamic(
+            &DynamicImage::ImageRgb8(rgb.clone()),
+            MediaType::Jpeg,
+            quality,
+        )?;
+        assert!(jpeg.starts_with(&[0xff, 0xd8, 0xff]), "JPEG SOI/APP marker");
+        let png_gray = encode_dynamic(
+            &DynamicImage::ImageLuma8(GrayImage::new(4, 4)),
+            MediaType::Png,
+            quality,
+        )?;
+        assert!(png_gray.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let png_rgb = encode_dynamic(
+            &DynamicImage::ImageRgb8(rgb.clone()),
+            MediaType::Png,
+            quality,
+        )?;
+        assert!(png_rgb.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let gif = encode_dynamic(
+            &DynamicImage::ImageRgb8(rgb.clone()),
+            MediaType::Gif,
+            quality,
+        )?;
+        assert!(gif.starts_with(b"GIF8"));
+        let webp = encode_dynamic(&DynamicImage::ImageRgb8(rgb), MediaType::WebP, quality)?;
+        assert!(webp.starts_with(b"RIFF") && &webp[8..12] == b"WEBP");
+        Ok(())
+    }
+
+    #[test]
+    fn encodable_normalises_a_float_buffer() -> Result<()> {
+        let quality = options(&[])?.processing.jpeg_quality;
+        let float =
+            DynamicImage::ImageRgb32F(ImageBuffer::from_pixel(2, 2, Rgb([0.1f32, 0.2, 0.3])));
+        let jpeg = encode_jpeg(&float, quality)?;
+        assert!(jpeg.starts_with(&[0xff, 0xd8, 0xff]), "JPEG SOI/APP marker");
+        // Decoding proves the float buffer was normalised into a valid image, not just
+        // that some bytes were produced.
+        let decoded = image::load_from_memory(&jpeg)?;
+        assert_eq!(decoded.dimensions(), (2, 2));
+        Ok(())
+    }
 }

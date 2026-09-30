@@ -275,6 +275,11 @@ mod tests {
         );
         assert_eq!(resolve_relative("", "Images/a.png"), "Images/a.png");
         assert_eq!(resolve_relative("OEBPS/Text", "a.png"), "OEBPS/Text/a.png");
+        // A `.` component is dropped.
+        assert_eq!(
+            resolve_relative("OEBPS/Text", "./a.png"),
+            "OEBPS/Text/a.png"
+        );
         // A leading `/` ignores the base; a leading `\` does not (backslashes are only
         // folded for splitting), so a `\`-separated href stays relative.
         assert_eq!(resolve_relative("OEBPS", "/Images/a.png"), "Images/a.png");
@@ -282,6 +287,52 @@ mod tests {
             resolve_relative("OEBPS", "\\Images\\a.png"),
             "OEBPS/Images/a.png"
         );
+    }
+
+    fn files(entries: &[(&str, &str)]) -> HashMap<String, Arc<[u8]>> {
+        entries
+            .iter()
+            .map(|(name, body)| (name.to_string(), Arc::from(body.as_bytes())))
+            .collect()
+    }
+
+    const CONTAINER: &str = r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#;
+    const OPF: &str = r#"<package><manifest><item id="p1" href="p1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="p1"/></spine></package>"#;
+
+    #[test]
+    fn a_spine_reference_without_a_page_file_is_skipped() -> Result<()> {
+        // The manifest names `p1.xhtml`, but it is not in the container: the page is
+        // skipped and the book yields no images.
+        let map = files(&[
+            ("META-INF/container.xml", CONTAINER),
+            ("OEBPS/content.opf", OPF),
+        ]);
+        assert!(spine_images(&map)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn an_image_attribute_that_is_neither_src_nor_href_is_ignored() -> Result<()> {
+        // The `alt` attribute points at an existing image that is *larger* than the `src`
+        // image, so if the guard let it through it would win the "largest" selection.
+        // Asserting the chosen bytes shows the non-src/href attribute was ignored.
+        let page =
+            r#"<html><body><img alt="Images/big.png"/><img src="Images/a.png"/></body></html>"#;
+        let map = files(&[
+            ("META-INF/container.xml", CONTAINER),
+            ("OEBPS/content.opf", OPF),
+            ("OEBPS/p1.xhtml", page),
+            ("OEBPS/Images/a.png", "png bytes"),
+            (
+                "OEBPS/Images/big.png",
+                "a much much larger set of png bytes",
+            ),
+        ]);
+        let ordered = spine_images(&map)?.context("the referenced image is kept")?;
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].0, "0.png");
+        assert_eq!(ordered[0].1.as_ref(), b"png bytes");
+        Ok(())
     }
 
     #[test]

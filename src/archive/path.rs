@@ -371,5 +371,47 @@ mod tests {
         // An absent destination name or source stem cannot match a real root.
         assert!(!is_matching_root("Issue 01", None, None));
         assert!(!is_matching_root("Issue 01", Some(""), Some("")));
+        // A root with no alphanumerics normalizes to nothing and never matches.
+        assert!(!is_matching_root("---", Some("x"), None));
+        assert!(!is_matching_root("!!!", Some("!!!"), None));
+    }
+
+    #[test]
+    fn colon_only_segments_are_dropped() {
+        // A segment of only colons (longer than the two-character drive-letter form)
+        // normalizes away instead of leaving an empty component.
+        assert_eq!(normalize_archive_path(":"), None);
+        assert_eq!(
+            normalize_archive_path("a/:::/b").map(|p| p.as_str().to_string()),
+            Some("a/b".to_string())
+        );
+    }
+
+    #[test]
+    fn find_single_root_dir_ignores_os_metadata() {
+        let entries = vec![
+            parse_entry_info("__MACOSX/._page.jpg", false),
+            parse_entry_info("._page.jpg", false),
+            parse_entry_info("Root/page.jpg", false),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        assert_eq!(find_single_root_dir(&entries), Some("Root".to_string()));
+    }
+
+    #[test]
+    fn copy_dir_all_recurses_into_subdirectories() -> std::io::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("nested"))?;
+        std::fs::write(src.join("top.txt"), b"top")?;
+        std::fs::write(src.join("nested/deep.txt"), b"deep")?;
+
+        let dst = tmp.path().join("dst");
+        copy_dir_all(&src, &dst)?;
+        assert!(dst.join("top.txt").is_file());
+        assert_eq!(std::fs::read(dst.join("nested/deep.txt"))?, b"deep");
+        Ok(())
     }
 }

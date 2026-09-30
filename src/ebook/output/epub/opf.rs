@@ -383,4 +383,67 @@ mod tests {
             "a&amp;b&lt;c&gt;d&quot;e&#x27;f"
         );
     }
+
+    /// Resolve options from a `comic-book ebook` command line.
+    fn options(args: &[&str]) -> Result<Options> {
+        use clap::Parser;
+        let mut full = vec!["comic-book", "ebook", "book.cbz"];
+        full.extend_from_slice(args);
+        let cli = crate::cli::Cli::try_parse_from(full)?;
+        match cli.command {
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => anyhow::bail!("expected the ebook subcommand"),
+        }
+    }
+
+    #[test]
+    fn group_position_uses_whichever_parts_are_present() {
+        let metadata = |volume: &str, number: &str| BookMetadata {
+            title: String::new(),
+            authors: Vec::new(),
+            series: String::new(),
+            volume: volume.to_string(),
+            number: number.to_string(),
+            summary: String::new(),
+            bookmarks: Vec::new(),
+            comicinfo_xml: None,
+        };
+        assert_eq!(group_position(&metadata("3", "7")).as_deref(), Some("3.7"));
+        assert_eq!(group_position(&metadata("3", "")).as_deref(), Some("3"));
+        assert_eq!(group_position(&metadata("", "7")).as_deref(), Some("7"));
+        assert_eq!(group_position(&metadata("", "")), None);
+    }
+
+    #[test]
+    fn a_pdf_or_epub_source_flips_the_opening_side() -> Result<()> {
+        let plain = options(&[])?;
+        assert_eq!(
+            flip_for_source(PageSide::Left, Path::new("book.pdf"), &plain),
+            PageSide::Right
+        );
+        assert_eq!(
+            flip_for_source(PageSide::Left, Path::new("BOOK.EPUB"), &plain),
+            PageSide::Right
+        );
+        assert_eq!(
+            flip_for_source(PageSide::Left, Path::new("book.cbz"), &plain),
+            PageSide::Left
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spread_shift_flips_the_opening_side_and_composes_with_the_source() -> Result<()> {
+        let shifted = options(&["--spread-shift"])?;
+        assert_eq!(
+            flip_for_source(PageSide::Left, Path::new("book.cbz"), &shifted),
+            PageSide::Right
+        );
+        // Both flips compose: a PDF plus `--spread-shift` returns to the start.
+        assert_eq!(
+            flip_for_source(PageSide::Left, Path::new("book.pdf"), &shifted),
+            PageSide::Left
+        );
+        Ok(())
+    }
 }

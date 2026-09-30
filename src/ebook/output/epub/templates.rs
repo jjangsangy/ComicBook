@@ -548,10 +548,88 @@ pub(crate) struct StyleCss {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_lf, render_lf, Direction, FileName, Href, NavTitle, Opf, PageSide, Series,
-        SpineAttr, Stem, WritingMode,
+        normalize_lf, render_lf, Direction, FileName, Href, NavTitle, Opf, PageSide, PanelId,
+        Series, SpineAttr, Stem, WritingMode,
     };
     use crate::units::Size;
+
+    #[test]
+    fn page_sides_alternate_and_display() {
+        assert_eq!(PageSide::Left.other(), PageSide::Right);
+        assert_eq!(PageSide::Right.other(), PageSide::Left);
+        // `Center` is never alternated, so it maps to itself.
+        assert_eq!(PageSide::Center.other(), PageSide::Center);
+        assert_eq!(PageSide::Left.to_string(), "left");
+        assert_eq!(PageSide::Center.to_string(), "center");
+    }
+
+    #[test]
+    fn writing_modes_cover_both_orientations_and_directions() {
+        assert_eq!(
+            WritingMode::resolve(false, Direction::Ltr),
+            WritingMode::HorizontalLr
+        );
+        assert_eq!(
+            WritingMode::resolve(false, Direction::Rtl),
+            WritingMode::HorizontalRl
+        );
+        assert_eq!(
+            WritingMode::resolve(true, Direction::Ltr),
+            WritingMode::VerticalLr
+        );
+        assert_eq!(
+            WritingMode::resolve(true, Direction::Rtl),
+            WritingMode::VerticalRl
+        );
+        assert_eq!(WritingMode::VerticalLr.to_string(), "vertical-lr");
+        assert_eq!(WritingMode::VerticalRl.to_string(), "vertical-rl");
+    }
+
+    #[test]
+    fn panel_ids_and_styles_cover_every_region() {
+        for (id, name) in [
+            (PanelId::Tl, "PV-TL"),
+            (PanelId::Tr, "PV-TR"),
+            (PanelId::Bl, "PV-BL"),
+            (PanelId::Br, "PV-BR"),
+            (PanelId::T, "PV-T"),
+            (PanelId::B, "PV-B"),
+            (PanelId::L, "PV-L"),
+            (PanelId::R, "PV-R"),
+        ] {
+            assert_eq!(id.to_string(), name);
+        }
+        // The quadrant styles are constant (borrowed, ignoring the offsets).
+        for (id, style) in [
+            (PanelId::Tl, "position:absolute;left:0;top:0;"),
+            (PanelId::Tr, "position:absolute;right:0;top:0;"),
+            (PanelId::Bl, "position:absolute;left:0;bottom:0;"),
+            (PanelId::Br, "position:absolute;right:0;bottom:0;"),
+        ] {
+            assert!(
+                matches!(id.style(20, -3), std::borrow::Cow::Borrowed(_)),
+                "{id} has a borrowed constant style"
+            );
+            assert_eq!(id.style(20, -3).as_ref(), style);
+        }
+        // The split-axis styles interpolate the runtime centring offsets.
+        assert_eq!(
+            PanelId::T.style(20, -3).as_ref(),
+            "position:absolute;top:0;left:20%;"
+        );
+        assert_eq!(
+            PanelId::B.style(20, -3).as_ref(),
+            "position:absolute;bottom:0;left:20%;"
+        );
+        assert_eq!(
+            PanelId::L.style(20, -3).as_ref(),
+            "position:absolute;left:0;top:-3%;"
+        );
+        assert_eq!(
+            PanelId::R.style(20, -3).as_ref(),
+            "position:absolute;right:0;top:-3%;"
+        );
+    }
 
     #[test]
     fn spine_attrs_use_the_per_reader_spelling() {

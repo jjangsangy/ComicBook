@@ -281,6 +281,8 @@ pub fn get_images_from_source<P: AsRef<Path>>(
 mod tests {
     use super::*;
     use crate::archive::writer::ArchiveWriter;
+    use image::{ImageFormat, RgbImage};
+    use std::io::{Cursor, Write};
 
     fn write_cbz(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
         let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, path)?;
@@ -288,6 +290,28 @@ mod tests {
             writer.add_entry(name, EntryContent::File(data))?;
         }
         writer.finish()
+    }
+
+    /// Writes a CBZ whose entries are Deflate-compressed, unlike `ArchiveWriter` which
+    /// always stores files. Used to tell a direct byte copy apart from a re-encode.
+    fn write_deflated_cbz(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
+        let file = std::fs::File::create(path)?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in entries {
+            zip.start_file(*name, options)?;
+            zip.write_all(data)?;
+        }
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn png_bytes(width: u32, height: u32) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        DynamicImage::ImageRgb8(RgbImage::new(width, height))
+            .write_to(&mut Cursor::new(&mut out), ImageFormat::Png)?;
+        Ok(out)
     }
 
     #[test]
@@ -339,6 +363,88 @@ mod tests {
             RootStripPolicy::IfMatchingDestination,
         )?;
         assert!(unmatched.join("Root/a.jpg").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn listing_entries_works_for_archives_and_folders() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let cbz = tmp.path().join("book.cbz");
+        write_cbz(&cbz, &[("Chapter/a.jpg", b"a"), ("Chapter/b.jpg", b"b")])?;
+        let listed = list_archive_entry_names(ArchiveKind::Cbz, &cbz)?;
+        assert_eq!(listed.len(), 3);
+        assert!(listed.iter().any(|e| e.name.as_str() == "Chapter"));
+
+        let dir = tmp.path().join("folder");
+        fs::create_dir_all(dir.join("sub"))?;
+        fs::write(dir.join("page.jpg"), b"a")?;
+        let folder_entries = list_archive_entry_names(ArchiveKind::Directory, &dir)?;
+        assert_eq!(folder_entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn converting_a_file_into_itself_is_rejected() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("book.cbz");
+        write_cbz(&src, &[("a.jpg", b"a")])?;
+        let err = convert_archive(ArchiveKind::Cbz, &src, ArchiveKind::Cbz, &src)
+            .err()
+            .context("a file cannot convert into itself")?;
+        assert!(err.to_string().contains("into itself"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_convert_creates_missing_parent_directories() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("book.cbz");
+        write_cbz(&src, &[("a.jpg", b"a")])?;
+        let dest = tmp.path().join("does/not/exist/out.cbt");
+        convert_archive(ArchiveKind::Cbz, &src, ArchiveKind::Cbt, &dest)?;
+        assert!(dest.is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn same_format_conversion_copies_the_file_directly() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("book.cbz");
+        // The source stores its entry Deflated, while `ArchiveWriter` always writes files
+        // Stored. A re-encode would therefore rewrite the container and change the bytes,
+        // so exact equality only holds when the direct-copy path was taken.
+        write_deflated_cbz(&src, &[("a.jpg", b"payload payload payload payload")])?;
+        let dest = tmp.path().join("copy.cbz");
+        convert_archive(ArchiveKind::Cbz, &src, ArchiveKind::Cbz, &dest)?;
+        assert_eq!(fs::read(&dest)?, fs::read(&src)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_conversion_removes_the_partial_destination() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        // Opens as a tar (`TarReader::open` only checks readability) but fails while
+        // streaming entries, so the half-written destination is cleaned up.
+        let bad = tmp.path().join("bad.cbt");
+        fs::write(&bad, b"this is not a tar archive")?;
+        let dest = tmp.path().join("out.cb7");
+        assert!(convert_archive(ArchiveKind::Cbt, &bad, ArchiveKind::Cb7, &dest).is_err());
+        assert!(!dest.exists(), "the partial archive is removed on failure");
+        Ok(())
+    }
+
+    #[test]
+    fn reading_images_skips_non_image_entries() -> Result<()> {
+        let png = png_bytes(2, 2)?;
+        let tmp = tempfile::tempdir()?;
+        let cbz = tmp.path().join("book.cbz");
+        write_cbz(
+            &cbz,
+            &[("notes.txt", b"not an image"), ("page.png", png.as_slice())],
+        )?;
+        let images = get_images_from_source(ArchiveKind::Cbz, &cbz)?;
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name.as_str(), "page.png");
         Ok(())
     }
 }

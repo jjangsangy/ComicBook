@@ -248,3 +248,78 @@ pub fn warn(message: &str) {
     }
     eprintln!("{message}");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A batch reporter whose bars draw to a hidden target, so the test emits no
+    /// terminal output even if stderr happens to be a terminal.
+    fn batch_reporter() -> Reporter {
+        let multi = MultiProgress::with_draw_target(ProgressDrawTarget::hidden());
+        // `insert_after` requires the anchor bar to belong to the multi, so the
+        // overall bar is added to it exactly as `Reporter::batch` does.
+        let overall = multi.add(ProgressBar::hidden());
+        Reporter {
+            mode: Mode::Batch {
+                multi,
+                overall,
+                lines: RefCell::new(Vec::new()),
+            },
+        }
+    }
+
+    #[test]
+    fn style_builders_construct_a_style() {
+        // `ProgressStyle` has no accessor to assert against; this covers the private
+        // style builders, whose constant templates the parser accepts.
+        bar_style();
+        line_style();
+        spinner_style();
+    }
+
+    #[test]
+    fn builders_hide_without_an_interactive_terminal() {
+        // `bar`/`spinner` hide exactly when progress output is off (the normal case
+        // under nextest, where stderr is a pipe); the multi/status builders always draw
+        // to a hidden target.
+        assert_eq!(bar(3, "pages").is_hidden(), !progress_enabled());
+        assert_eq!(spinner("working").is_hidden(), !progress_enabled());
+        assert!(bar_for_multi(3, "pages".to_string()).is_hidden());
+        assert!(line_bar().is_hidden());
+        assert!(hidden().is_hidden());
+    }
+
+    #[test]
+    fn a_batch_reporter_drives_its_children_and_status_lines() {
+        let reporter = batch_reporter();
+        let child = reporter.child(2, "page");
+        child.inc(1);
+        reporter.inc();
+        reporter.println("done");
+        reporter.warn("careful");
+        reporter.finish();
+        // Both `println` and `warn` retained a status line below the bars.
+        assert!(matches!(
+            &reporter.mode,
+            Mode::Batch { lines, .. } if lines.borrow().len() == 2
+        ));
+    }
+
+    #[test]
+    fn a_standalone_reporter_routes_its_children_and_lines() {
+        let reporter = Reporter::standalone();
+        // A standalone child is a top-level bar, hidden exactly when progress is off (the
+        // normal case under nextest).
+        let child = reporter.child(1, "page");
+        assert_eq!(child.is_hidden(), !progress_enabled());
+        child.inc(1);
+        // `inc`/`finish` are no-ops without an overall bar; `println`/`warn` take their
+        // `Standalone` arms. Those arms write to stdout/stderr, which this exercises for
+        // coverage but cannot assert on without capturing the process streams.
+        reporter.inc();
+        reporter.finish();
+        reporter.println("standalone line");
+        reporter.warn("standalone warning");
+    }
+}

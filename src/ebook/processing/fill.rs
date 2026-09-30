@@ -206,4 +206,21 @@ mod tests {
         );
         assert_eq!(fill_check(&image), Background::White);
     }
+
+    #[test]
+    fn border_sampling_handles_a_partial_final_strip() {
+        // 21 is not a multiple of the 5-pixel strip width, so the final top and left
+        // strips clamp to `dimension - 5` rather than overrunning. The clamp only ever
+        // widens the sampled overlap, so this pins that such a page is still read
+        // without overrun: a checkerboard puts both colours in every strip, so the vote
+        // is zero and the page reads as white.
+        let image = build(21, 21, |x, y| {
+            if (x + y) % 2 == 0 {
+                [255, 255, 255]
+            } else {
+                [0, 0, 0]
+            }
+        });
+        assert_eq!(fill_check(&image), Background::White);
+    }
 }

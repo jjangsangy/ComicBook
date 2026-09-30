@@ -130,6 +130,30 @@ fn test_webp_save() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_webp_save_converts_non_rgb_and_creates_parents() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    // A grayscale source forces the `to_rgb8()` conversion; the nested destination
+    // forces the parent directory to be created first.
+    let out_file = tmp.path().join("nested/dir/test.webp");
+    let img = DynamicImage::ImageLuma8(image::GrayImage::from_pixel(30, 20, image::Luma([7])));
+    save_image_as_webp(&img, &out_file, 90.0)?;
+    assert!(out_file.exists());
+    assert_eq!(image::open(&out_file)?.dimensions(), (30, 20));
+    Ok(())
+}
+
+#[test]
+fn test_resize_lanczos3_converts_a_non_rgb_source() -> anyhow::Result<()> {
+    // A grayscale source takes the `to_rgb8()` branch and comes back as RGB8.
+    let img = DynamicImage::ImageLuma8(image::GrayImage::from_pixel(40, 20, image::Luma([5])));
+    let resized =
+        comic_book::image_ops::resize_lanczos3(&img, comic_book::units::Size::new(20, 10))?;
+    assert_eq!(resized.dimensions(), (20, 10));
+    assert!(matches!(resized, DynamicImage::ImageRgb8(_)));
+    Ok(())
+}
+
 // ===================================================================
 // Extension and Format Detection Tests
 // ===================================================================

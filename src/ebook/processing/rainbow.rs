@@ -344,4 +344,23 @@ mod tests {
             erase_rainbow_artifacts(&image, OutputColor::from_detection(Detected::Gray, false));
         assert!(matches!(filtered, DynamicImage::ImageLuma8(_)));
     }
+
+    #[test]
+    fn the_colour_path_accepts_a_non_rgb_source() {
+        // A non-RGB8 image forces the `to_rgb8()` conversion branch of the colour
+        // path before filtering; a flat source is all-DC, so it survives unattenuated.
+        let image = DynamicImage::ImageLuma8(GrayImage::from_pixel(16, 16, Luma([120])));
+        let filtered =
+            erase_rainbow_artifacts(&image, OutputColor::from_detection(Detected::Color, true));
+        assert_eq!(filtered.dimensions(), (16, 16));
+        let rgb = filtered.to_rgb8();
+        for pixel in rgb.pixels() {
+            assert!(
+                pixel[0].abs_diff(120) <= 2
+                    && pixel[1].abs_diff(120) <= 2
+                    && pixel[2].abs_diff(120) <= 2,
+                "a flat source is preserved, got {pixel:?}"
+            );
+        }
+    }
 }

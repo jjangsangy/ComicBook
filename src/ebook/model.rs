@@ -694,4 +694,102 @@ mod tests {
             Some("Chapter 1")
         );
     }
+
+    #[test]
+    fn order_suffixes_cover_every_class() {
+        assert_eq!(OrderClass::Normal.suffix(), "x");
+        assert_eq!(OrderClass::RotateFirst.suffix(), "a");
+        assert_eq!(OrderClass::RotateLast.suffix(), "d");
+        assert_eq!(OrderClass::SplitLeft.suffix(), "b");
+        assert_eq!(OrderClass::SplitRight.suffix(), "c");
+    }
+
+    #[test]
+    fn media_types_map_extensions_and_mime() {
+        assert_eq!(MediaType::WebP.extension(), "webp");
+        assert_eq!(MediaType::Gif.extension(), "gif");
+        assert_eq!(MediaType::Gif.mime(), "image/gif");
+        assert_eq!(MediaType::WebP.mime(), "image/webp");
+        assert_eq!(MediaType::from_extension("gif"), Some(MediaType::Gif));
+        assert_eq!(MediaType::from_extension("webp"), Some(MediaType::WebP));
+        assert_eq!(MediaType::from_extension("png"), Some(MediaType::Png));
+        assert_eq!(MediaType::from_extension("jpeg"), Some(MediaType::Jpeg));
+        assert_eq!(MediaType::from_extension("txt"), None);
+    }
+
+    #[test]
+    fn name_newtype_compares_against_a_bare_str() {
+        let name = SourceName::new("page.png");
+        assert!(<SourceName as PartialEq<str>>::eq(&name, "page.png"));
+        assert!(!<SourceName as PartialEq<str>>::eq(&name, "other.png"));
+    }
+
+    #[test]
+    fn taking_the_image_from_an_encoded_page_yields_nothing() -> Result<()> {
+        let mut page = encoded_png_page(2, 2)?;
+        assert!(
+            page.take_image().is_none(),
+            "an encoded page carries no pixels to take"
+        );
+        // A consumed page has neither pixels nor bytes.
+        page.take_source();
+        assert!(page.take_image().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_decoded_page_keeps_pixels_when_its_source_is_moved_out() -> Result<()> {
+        let mut page = encoded_png_page(3, 4)?;
+        page.ensure_decoded()?;
+        assert!(page.take_source().is_some());
+        assert!(
+            page.decoded().is_some(),
+            "take_source downgrades EncodedDecoded to Pixels, keeping the pixels"
+        );
+        assert_eq!(page.media_type(), Some(MediaType::Png));
+        assert!(page.source_bytes().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn decoding_a_consumed_page_is_an_error() -> Result<()> {
+        let mut page = encoded_png_page(2, 2)?;
+        page.take_source();
+        assert!(page.to_decoded().is_err());
+        assert!(page.ensure_decoded().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn tree_emptiness_tracks_chapters_and_pages() {
+        assert!(ComicTree::new().is_empty());
+        assert!(ComicTree::default().is_empty());
+        assert_eq!(ComicTree::new().page_count(), 0);
+
+        let empty_chapter = ComicTree {
+            chapters: vec![Chapter {
+                name: ChapterName::root(),
+                pages: Vec::new(),
+            }],
+            comicinfo: None,
+        };
+        assert!(empty_chapter.is_empty());
+
+        let page = Page {
+            source_name: SourceName::new("cb-0001.png"),
+            rel_path: RelPath::new("cb-0001.png"),
+            data: PageData::Pixels(MediaType::Png, DynamicImage::ImageRgb8(RgbImage::new(1, 1))),
+            dimensions: Size::new(1, 1),
+            background: Background::White,
+        };
+        let populated = ComicTree {
+            chapters: vec![Chapter {
+                name: ChapterName::root(),
+                pages: vec![page],
+            }],
+            comicinfo: None,
+        };
+        assert!(!populated.is_empty());
+        assert_eq!(populated.page_count(), 1);
+    }
 }

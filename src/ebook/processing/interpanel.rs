@@ -282,4 +282,71 @@ mod tests {
         // A 16-pixel gutter keeps 2 % at each end, so 15 rows are dropped.
         assert_eq!(kept_span(142, 158, Fraction::new(0.04)), (142, 157));
     }
+
+    #[test]
+    fn every_pixel_type_survives_the_row_removal() {
+        use image::{ImageBuffer, Luma, LumaA, Rgb, Rgba};
+
+        let cases = [
+            DynamicImage::ImageLumaA8(ImageBuffer::from_pixel(8, 8, LumaA([10u8, 255]))),
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(8, 8, Rgba([10u8, 20, 30, 255]))),
+            DynamicImage::ImageLuma16(ImageBuffer::from_pixel(8, 8, Luma([10u16]))),
+            DynamicImage::ImageLumaA16(ImageBuffer::from_pixel(8, 8, LumaA([10u16, 65535]))),
+            DynamicImage::ImageRgb16(ImageBuffer::from_pixel(8, 8, Rgb([10u16, 20, 30]))),
+            DynamicImage::ImageRgba16(ImageBuffer::from_pixel(8, 8, Rgba([10u16, 20, 30, 65535]))),
+            DynamicImage::ImageRgb32F(ImageBuffer::from_pixel(8, 8, Rgb([0.1f32, 0.2, 0.3]))),
+            DynamicImage::ImageRgba32F(ImageBuffer::from_pixel(
+                8,
+                8,
+                Rgba([0.1f32, 0.2, 0.3, 1.0]),
+            )),
+        ];
+        for image in &cases {
+            let cropped = crop_empty_inter_panel(
+                image,
+                Direction::Both,
+                Fraction::new(0.04),
+                Background::White,
+            );
+            assert_eq!(
+                std::mem::discriminant(&cropped),
+                std::mem::discriminant(image),
+                "the pixel type is preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn a_black_background_inverts_before_cropping() {
+        // Panels are white on a black field, so the background-inversion branch runs.
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(200, 300, |x, y| {
+            let panel =
+                (20..180).contains(&x) && (20..280).contains(&y) && !(140..160).contains(&y);
+            if panel {
+                Rgb([255, 255, 255])
+            } else {
+                Rgb([0, 0, 0])
+            }
+        }));
+        let black = crop_empty_inter_panel(
+            &image,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::Black,
+        );
+        let white = crop_empty_inter_panel(
+            &image,
+            Direction::Horizontal,
+            Fraction::new(0.04),
+            Background::White,
+        );
+        // Only the inverted (black-background) run finds the field's gutter empty, so
+        // the two runs must disagree: the width is untouched but the height shrinks.
+        assert_eq!(black.dimensions().0, 200);
+        assert!(
+            black.dimensions().1 < 300,
+            "the inverted field's gutter collapses"
+        );
+        assert_ne!(black.dimensions(), white.dimensions());
+    }
 }

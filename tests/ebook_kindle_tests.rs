@@ -304,3 +304,18 @@ fn explicit_batch_splitting_and_size_caps_now_convert() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn temp_dir_option_still_converts_beside_the_source() -> Result<()> {
+    // `--temp-dir` spools `kindling`'s scratch tree beside the source instead of in the
+    // system temp directory. The scratch directory is deleted on drop, so its location is
+    // not observable after the run; this pins that the flag is accepted and the conversion
+    // with the source's parent as the spool root still succeeds.
+    let tmp = tempdir()?;
+    let source = tmp.path().join("book");
+    fixture(&source)?;
+    let written = convert(&source, &["-f", "mobi", "-p", "KV", "--temp-dir"])?;
+    assert_eq!(written, vec![tmp.path().join("book.mobi")]);
+    assert!(written[0].is_file());
+    Ok(())
+}

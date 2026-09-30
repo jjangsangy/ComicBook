@@ -683,4 +683,105 @@ mod tests {
         assert!(StripWidth::new(MIN_STRIP_WIDTH - 1).is_none());
         assert!(StripWidth::new(MIN_STRIP_WIDTH).is_some_and(|width| width.step() > 0));
     }
+
+    #[test]
+    fn a_strip_taller_than_the_merge_cap_is_rejected() {
+        // The height cap is checked from the reported dimensions, before any
+        // allocation, so the page's pixels need not actually be that tall.
+        let mut page = strip_page("cb-0001.png", checker_strip(800, &[(10, 0)]));
+        page.dimensions = Size::new(800, MAX_MERGED_HEIGHT.raw() as u32 + 1);
+        assert!(merge_chapter(&mut [page]).is_err());
+    }
+
+    #[test]
+    fn a_non_rgb_page_is_converted_before_merging() -> Result<()> {
+        let gray =
+            DynamicImage::ImageLuma8(image::GrayImage::from_pixel(200, 100, image::Luma([50])));
+        let page = strip_page("cb-0001.png", gray);
+        let merged = merge_chapter(&mut [page])?;
+        assert_eq!(merged.dimensions(), (200, 100));
+        assert!(matches!(merged, DynamicImage::ImageRgb8(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_strip_narrower_than_the_minimum_is_rejected() -> Result<()> {
+        // Taller than the device so it is split, but too narrow to scan for panels.
+        let merged = DynamicImage::ImageRgb8(RgbImage::from_pixel(200, 2000, Rgb([0, 0, 0])));
+        assert!(split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_parent_directory_path_has_no_stem_to_strip() {
+        // `..` has no file stem, so the path is returned verbatim (the alternative
+        // `parent().join("")` would collapse it to empty).
+        assert_eq!(strip_extension(RelativePath::new("..")).as_str(), "..");
+    }
+
+    #[test]
+    fn a_device_wider_than_the_cap_uses_the_cap_for_the_virtual_height() -> Result<()> {
+        // KO is 1264px wide, past the 1072 cap; KV is narrower than the cap.
+        assert_eq!(virtual_height(800, &options(&["-p", "KO"])?), 1253);
+        assert_eq!(virtual_height(800, &options(&["-p", "KV"])?), 1080);
+        Ok(())
+    }
+
+    #[test]
+    fn a_panel_between_one_and_two_virtual_pages_splits_in_two() {
+        let panels = split_panels(
+            &[Panel {
+                top: 0,
+                bottom: 1800,
+            }],
+            1000,
+        );
+        assert_eq!(panels.len(), 2);
+        assert_eq!((panels[0].top, panels[0].bottom), (0, 1000));
+        assert_eq!((panels[1].top, panels[1].bottom), (800, 1800));
+    }
+
+    #[test]
+    fn a_panel_many_virtual_pages_tall_splits_into_overlapping_parts() {
+        let panels = split_panels(
+            &[Panel {
+                top: 0,
+                bottom: 3500,
+            }],
+            1000,
+        );
+        // ceil(3500 / 1000) == 4 parts, the middle ones stepping by 3500 / 4 == 875.
+        assert_eq!(panels.len(), 4);
+        assert_eq!((panels[0].top, panels[0].bottom), (0, 1000));
+        assert_eq!((panels[1].top, panels[1].bottom), (875, 1875));
+        assert_eq!((panels[2].top, panels[2].bottom), (1750, 2750));
+        assert_eq!((panels[3].top, panels[3].bottom), (2500, 3500));
+    }
+
+    #[test]
+    fn a_unit_shorter_than_the_minimum_page_is_dropped() -> Result<()> {
+        // A 1500px strip (taller than the KV device, so it splits) whose only dark
+        // content is a short band at the very bottom, which the edge scan merges with
+        // the strip's final rows into one too-short panel.
+        let width = 800u32;
+        let mut image = RgbImage::from_pixel(width, 1500, Rgb([255, 255, 255]));
+        for py in 1496..1500 {
+            for px in 40..width - 40 {
+                let dark = ((px / 6) + (py / 6)) % 2 == 0;
+                image.put_pixel(
+                    px,
+                    py,
+                    if dark {
+                        Rgb([0, 0, 0])
+                    } else {
+                        Rgb([255, 255, 255])
+                    },
+                );
+            }
+        }
+        let merged = DynamicImage::ImageRgb8(image);
+        let pages = split_chapter(merged, "cb-0001", &options(&["-p", "KV"])?)?;
+        assert!(pages.is_empty(), "pages: {:?}", split_sizes(&pages));
+        Ok(())
+    }
 }

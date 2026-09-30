@@ -625,3 +625,45 @@ impl fmt::Display for Profile {
         f.write_str(self.code())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_profile_table_matches_its_compile_time_derivation() {
+        // `profile_variants` normally runs only during const evaluation, so call it at
+        // runtime to exercise its body; compare against an independent iterator-based
+        // derivation of the same field list (a fresh `ALL_PROFILES` would be circular,
+        // since it is *defined* by this const fn).
+        let derived: Vec<Profile> = PROFILE_ROWS.iter().map(|row| row.profile).collect();
+        assert_eq!(
+            profile_variants(&PROFILE_ROWS).as_slice(),
+            derived.as_slice()
+        );
+
+        // Pin `ALL_PROFILES` against independent expectations rather than restating the
+        // definition.
+        assert_eq!(ALL_PROFILES.len(), 41);
+        assert_eq!(ALL_PROFILES[0], Profile::K1);
+        assert_eq!(ALL_PROFILES[40], Profile::Other);
+
+        for (index, row) in PROFILE_ROWS.iter().enumerate() {
+            // Every code round-trips to its row's profile...
+            assert_eq!(Profile::from_code(row.code), Some(row.profile));
+            // ...and the row sits at its discriminant index, the invariant `entry` uses.
+            assert_eq!(row.profile as usize, index);
+        }
+
+        // Like `profile_variants`, this normally runs only at const-eval time; the runtime
+        // call is for coverage of the helper body, not an extra behavioural check.
+        check_rows_match_discriminants(&PROFILE_ROWS);
+    }
+
+    #[test]
+    fn each_profile_displays_as_its_code() {
+        for row in PROFILE_ROWS.iter() {
+            assert_eq!(row.profile.to_string(), row.code);
+        }
+    }
+}

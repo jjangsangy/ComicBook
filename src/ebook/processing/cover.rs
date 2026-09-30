@@ -466,4 +466,80 @@ mod tests {
         ));
         Ok(())
     }
+
+    #[test]
+    fn a_tree_with_no_pages_has_no_cover() -> Result<()> {
+        assert!(process(&ComicTree::new(), None, &options(&["-f", "epub"])?)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_glyph_outside_the_basic_font_is_skipped() {
+        // The 8x8 font only covers ASCII; a non-basic glyph draws nothing but must not
+        // abort the string, so a supported glyph after it still draws.
+        let render = |text: &str| {
+            let mut pixels = CoverPixels::Luma(GrayImage::new(32, 32));
+            draw_text(&mut pixels, text, 1, 0, 0, [255, 255, 255]);
+            match pixels {
+                CoverPixels::Luma(buffer) => buffer,
+                CoverPixels::Rgb(buffer) => DynamicImage::ImageRgb8(buffer).to_luma8(),
+            }
+        };
+        assert!(
+            render("\u{20ac}").pixels().all(|pixel| pixel[0] == 0),
+            "the unsupported glyph draws nothing"
+        );
+        assert!(
+            render("\u{20ac}A").pixels().any(|pixel| pixel[0] != 0),
+            "the supported glyph after the skipped one still draws"
+        );
+    }
+
+    /// The mean luma of an image (`0..=255`).
+    fn mean_luma(image: &DynamicImage) -> f64 {
+        let gray = image.to_luma8();
+        let total: u64 = gray.pixels().map(|pixel| u64::from(pixel[0])).sum();
+        total as f64 / f64::from(gray.width() * gray.height())
+    }
+
+    #[test]
+    fn smart_cover_crop_bands_pick_the_expected_side() {
+        // A black-left / white-right spread. Every aspect-ratio band `crop_main_cover`
+        // matches keeps one side of centre, so the surviving half shows in the mean
+        // luma. The right-to-left bands mirror the left-to-right ones for every ratio
+        // except the narrowest, where the right-to-left crop already lies to the right.
+        let split = |width: u32| {
+            DynamicImage::ImageRgb8(RgbImage::from_fn(width, 1000, |x, _| {
+                if x < width / 2 {
+                    Rgb([0, 0, 0])
+                } else {
+                    Rgb([255, 255, 255])
+                }
+            }))
+        };
+        for (width, rtl_keeps_left) in [
+            (3000u32, true),
+            (1900, true),
+            (1750, true),
+            (1400, true),
+            (1100, false),
+        ] {
+            let mut rtl = split(width);
+            assert!(crop_main_cover(&mut rtl, true), "width {width} is cropped");
+            let mut ltr = split(width);
+            assert!(crop_main_cover(&mut ltr, false), "width {width} is cropped");
+            let (rtl_luma, ltr_luma) = (mean_luma(&rtl), mean_luma(&ltr));
+            if rtl_keeps_left {
+                assert!(
+                    rtl_luma < ltr_luma,
+                    "width {width}: -m keeps the dark left half"
+                );
+            } else {
+                assert!(
+                    rtl_luma > ltr_luma,
+                    "width {width}: -m keeps the bright right half"
+                );
+            }
+        }
+    }
 }

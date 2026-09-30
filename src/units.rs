@@ -318,7 +318,8 @@ mod tests {
     }
 
     #[test]
-    fn megabytes_use_the_binary_factor() {
+    fn megabytes_report_their_count_and_binary_bytes() {
+        assert_eq!(Megabytes::new(400).value(), 400);
         assert_eq!(Megabytes::new(1).to_bytes(), Bytes::new(1_048_576));
         assert_eq!(Megabytes::new(400).to_bytes().raw(), 419_430_400);
     }
@@ -344,6 +345,18 @@ mod tests {
         assert_eq!(bbox.width(), 10);
         assert_eq!(bbox.height(), 10);
         assert_eq!(bbox.area(), 100);
+    }
+
+    #[test]
+    fn float_bbox_reports_plain_differences() {
+        let bbox = BBox::new(1.0f64, 2.0, 5.0, 7.0);
+        assert_eq!(bbox.width(), 4.0);
+        assert_eq!(bbox.height(), 5.0);
+        // Unlike the integer impls, the `f64` extents are deliberately *not*
+        // saturating: a transposed box must report a negative extent, not zero.
+        let transposed = BBox::new(5.0f64, 7.0, 1.0, 2.0);
+        assert_eq!(transposed.width(), -4.0);
+        assert_eq!(transposed.height(), -5.0);
     }
 
     #[test]

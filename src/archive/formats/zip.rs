@@ -120,3 +120,28 @@ impl ZipArchiveWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::path::normalize_archive_path;
+
+    #[test]
+    fn a_duplicate_directory_entry_is_written_once() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("book.cbz");
+        let mut writer = ZipArchiveWriter::create(&path)?;
+        let name = normalize_archive_path("Chapter").context("a non-empty name normalizes")?;
+        // The first insert registers the directory; the second is a no-op (`seen_dirs`
+        // already holds it) rather than a duplicate zip entry.
+        writer.add_entry(&name, EntryContent::Directory)?;
+        writer.add_entry(&name, EntryContent::Directory)?;
+        writer.finish()?;
+
+        let file = File::open(&path)?;
+        let archive = ZipArchive::new(file)?;
+        let chapter_dirs = archive.file_names().filter(|n| *n == "Chapter/").count();
+        assert_eq!(chapter_dirs, 1);
+        Ok(())
+    }
+}

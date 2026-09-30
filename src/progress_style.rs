@@ -32,3 +32,38 @@ pub(crate) fn spinner(template: &str) -> ProgressStyle {
         Err(_) => ProgressStyle::default_spinner(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `ProgressStyle` exposes neither a template accessor nor `PartialEq`, so once the
+    // parser's verdict is pinned the helpers can only be observed as "does not panic".
+
+    #[test]
+    fn constant_templates_are_accepted() {
+        // Representative of the constant templates the CLI passes. Pinning that the
+        // parser accepts them shows the helpers take their `Ok` arm, so calling them
+        // is not merely a smoke test.
+        for template in ["", "{msg}", "{msg} {pos}/{len}"] {
+            assert!(ProgressStyle::default_bar().template(template).is_ok());
+            assert!(ProgressStyle::default_spinner().template(template).is_ok());
+        }
+        bar("{msg}");
+        bar_with_chars("{msg}", "#->");
+        spinner("{msg}");
+    }
+
+    #[test]
+    fn an_invalid_template_falls_back_without_panicking() {
+        // A lone `}` puts indicatif's parser into its double-close state; a following
+        // non-`}` character is rejected, so this exercises the `Err` fallback arms
+        // (unlike a bare `{`, which ends in the parser's `MaybeOpen` state and is Ok).
+        let template = "}x";
+        assert!(ProgressStyle::default_bar().template(template).is_err());
+        assert!(ProgressStyle::default_spinner().template(template).is_err());
+        bar(template);
+        bar_with_chars(template, "#->");
+        spinner(template);
+    }
+}

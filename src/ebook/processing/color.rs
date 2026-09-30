@@ -340,6 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn forced_colour_with_neutral_chroma_exhausts_the_cascade() -> Result<()> {
+        // With `--force-color` the biased-histogram shortcut never fires for a
+        // perfectly neutral page, and the later cascade steps trim the histogram
+        // ends before also deciding the page is gray.
+        let image = half_black(64, 64);
+        assert_eq!(
+            color_check(&image, &options(&["--force-color"])?),
+            Detected::Gray
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ycbcr_round_trips_within_a_level() {
         for &(r, g, b) in &[
             (0u8, 0u8, 0u8),

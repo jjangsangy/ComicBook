@@ -202,3 +202,102 @@ impl RarArchiveWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::kind::ArchiveKind;
+    use crate::archive::ops::{list_archive_entry_names, read_archive_entries};
+    use crate::archive::writer::ArchiveWriter;
+    use rars::{ArchiveVersion, EntrySource, FeatureSet, MemberCoding, WriterResources};
+
+    fn valid_cbr(dir: &Path) -> Result<PathBuf> {
+        let path = dir.join("book.cbr");
+        let mut writer = ArchiveWriter::new(ArchiveKind::Cbr, &path)?;
+        writer.add_entry("page.jpg", EntryContent::File(b"bytes"))?;
+        writer.finish()?;
+        Ok(path)
+    }
+
+    /// Write a RAR holding one entry, with the streaming writer's raw knobs.
+    fn write_streaming(path: &Path, name: &[u8], file_attr: u32, host_os: u8) -> Result<()> {
+        let mut out = BufWriter::new(File::create(path)?);
+        // A DOS host OS with the directory attribute bit (0x10) is what unrar reads
+        // back as a directory entry.
+        let entry = StreamingEntry::new(
+            name.to_vec(),
+            EntrySource::from_bytes(Arc::<[u8]>::from(Vec::new())),
+        )
+        .with_file_attr(file_attr)
+        .with_host_os(host_os);
+        write_streaming_archive_to(
+            &[entry],
+            WriterOptions::new(ArchiveVersion::Rar15, FeatureSet::store_only()),
+            MemberCoding::Stored,
+            None,
+            &WriterResources::default(),
+            None,
+            &mut out,
+        )
+        .map_err(|e| anyhow!("failed to write rar: {e:?}"))?;
+        out.flush()?;
+        Ok(())
+    }
+
+    #[test]
+    fn opening_a_non_rar_reports_an_error() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let bad = tmp.path().join("bad.cbr");
+        std::fs::write(&bad, b"this is not a rar archive")?;
+        // Both the streaming and the listing entry points report the open failure.
+        assert!(read_archive_entries(ArchiveKind::Cbr, &bad, |_, _| Ok(())).is_err());
+        assert!(list_archive_entry_names(ArchiveKind::Cbr, &bad).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn listing_a_rar_reports_its_entries() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let cbr = valid_cbr(tmp.path())?;
+        let entries = list_archive_entry_names(ArchiveKind::Cbr, &cbr)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name.as_str(), "page.jpg");
+        Ok(())
+    }
+
+    #[test]
+    fn a_rar_directory_entry_is_reported_as_a_directory() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("dirs.cbr");
+        write_streaming(&path, b"Chapter", 0x10, 0)?;
+
+        let entries = list_archive_entry_names(ArchiveKind::Cbr, &path)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, EntryKind::Directory);
+
+        // The streaming reader surfaces the same directory entry to its callback.
+        let mut seen: Vec<(String, bool)> = Vec::new();
+        read_archive_entries(ArchiveKind::Cbr, &path, |name, content| {
+            seen.push((
+                name.as_str().to_string(),
+                matches!(content, EntryContent::Directory),
+            ));
+            Ok(())
+        })?;
+        assert_eq!(seen, vec![("Chapter".to_string(), true)]);
+        Ok(())
+    }
+
+    #[test]
+    fn finishing_over_a_directory_reports_an_error() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let mut writer = ArchiveWriter::new(ArchiveKind::Cbr, tmp.path())?;
+        writer.add_entry("page.jpg", EntryContent::File(b"x"))?;
+        let err = writer
+            .finish()
+            .err()
+            .context("a directory cannot be the RAR destination")?;
+        assert!(err.to_string().contains("Failed to create RAR archive"));
+        Ok(())
+    }
+}

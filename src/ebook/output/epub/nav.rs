@@ -108,3 +108,42 @@ pub(crate) fn build_nav(
     };
     render_lf(&view)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ebook::model::{MediaType, OrderClass, PageFlags};
+    use crate::ebook::output::epub::{FileName, ImageDir};
+    use crate::units::Size;
+
+    fn page_ref(image_dir: &'static str, file: &'static str) -> PageRef<'static> {
+        PageRef {
+            image_dir: ImageDir::new(image_dir),
+            file: FileName::new(file),
+            size: Size::new(10, 10),
+            flags: PageFlags::default(),
+            order_class: OrderClass::Normal,
+            media_type: MediaType::Jpeg,
+            below: None,
+        }
+    }
+
+    #[test]
+    fn a_chapter_directory_uses_its_registered_title() {
+        let page = page_ref("Chapter 1", "cb-0001-cb-x.jpg");
+        let chapter_titles = HashMap::from([("Chapter 1".to_string(), "Chapter One".to_string())]);
+        let page_titles = HashMap::new();
+        assert_eq!(
+            entry_title(&page, "Book", &chapter_titles, &page_titles),
+            "Chapter One"
+        );
+    }
+
+    #[test]
+    fn nav_entries_skip_out_of_range_indices() {
+        let filelist = [page_ref("", "cb-0001-cb-x.jpg")];
+        let titles = HashMap::new();
+        let entries = nav_entries(&[0, 7], &filelist, "Book", &titles, &titles);
+        assert_eq!(entries.len(), 1);
+    }
+}

@@ -131,3 +131,51 @@ impl DirectoryArchiveWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_a_directory_reports_files_and_directories() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("Chapter"))?;
+        fs::write(tmp.path().join("Chapter/page.jpg"), b"page")?;
+        fs::write(tmp.path().join("cover.jpg"), b"cover")?;
+
+        let mut reader = DirectoryReader::open(tmp.path())?;
+        let entries = reader.list_entries()?;
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"cover.jpg"));
+        assert!(names.contains(&"Chapter"));
+        assert!(names.contains(&"Chapter/page.jpg"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_node_is_skipped_without_blocking() -> Result<()> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let tmp = tempfile::tempdir()?;
+        let fifo = tmp.path().join("pipe.jpg");
+        let c_path = CString::new(fifo.as_os_str().as_bytes())?;
+        // SAFETY: `c_path` is a valid NUL-terminated path and the mode is a plain
+        // permission bitmask; `mkfifo` only creates the node.
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) };
+        assert_eq!(rc, 0, "mkfifo failed");
+
+        let mut reader = DirectoryReader::open(tmp.path())?;
+        let mut scratch = Vec::new();
+        let mut count = 0usize;
+        // The FIFO is a non-file, non-symlink node; opening it would block, so it must
+        // be skipped rather than read.
+        reader.read_entries(&mut scratch, &mut |_, _| {
+            count += 1;
+            Ok(())
+        })?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+}

@@ -394,4 +394,178 @@ mod tests {
         };
         assert!(image_level(&book).1);
     }
+
+    /// Resolve options from a `comic-book ebook` command line.
+    fn options(args: &[&str]) -> Result<Options> {
+        use anyhow::bail;
+        use clap::Parser;
+        let mut full = vec!["comic-book", "ebook", "book.cbz"];
+        full.extend_from_slice(args);
+        let cli = crate::cli::Cli::try_parse_from(full)?;
+        match cli.command {
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
+        }
+    }
+
+    fn book(chapters: Vec<ProcessedChapter>) -> ProcessedBook {
+        let page_count = chapters.iter().map(|chapter| chapter.pages.len()).sum();
+        ProcessedBook {
+            chapters,
+            cover: None,
+            page_count,
+        }
+    }
+
+    #[test]
+    fn a_book_with_no_pages_is_kept_as_one_tome() -> Result<()> {
+        let tomes = split(
+            book(vec![chapter("Chapter", vec![])]),
+            &options(&["--target-size", "1"])?,
+        )?;
+        // The early return keeps the tree as-is; splitting it would have flattened the
+        // (already empty) chapter to a root chapter named "" instead.
+        assert_eq!(tomes.len(), 1);
+        assert_eq!(tomes[0].chapters.len(), 1);
+        assert!(!tomes[0].chapters[0].name.is_root());
+        Ok(())
+    }
+
+    #[test]
+    fn a_two_level_tree_splits_by_chapter_under_the_cap() -> Result<()> {
+        // Two 0.6 MB chapters under a 1 MB cap: neither exceeds on its own, so the
+        // tree splits as whole chapters, one per tome.
+        let tomes = split(
+            book(vec![
+                chapter("Chapter 1", vec![page("Chapter 1/a.jpg", 600_000)]),
+                chapter("Chapter 2", vec![page("Chapter 2/b.jpg", 600_000)]),
+            ]),
+            &options(&["--target-size", "1"])?,
+        )?;
+        assert_eq!(tomes.len(), 2);
+        assert_eq!(tomes[0].chapters.len(), 1);
+        assert_eq!(tomes[1].chapters.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn an_oversized_chapter_flattens_an_auto_split() -> Result<()> {
+        // Chapter 1 is 1.2 MB across three 0.4 MB pages: over the 1 MB cap as a whole,
+        // but each page fits. Auto splitting flattens and repacks the pages, so the cap
+        // is honoured (2 pages, then 2) instead of emitting the 1.2 MB chapter whole.
+        let tomes = split(
+            book(vec![
+                chapter(
+                    "Chapter 1",
+                    vec![
+                        page("Chapter 1/a.jpg", 400_000),
+                        page("Chapter 1/b.jpg", 400_000),
+                        page("Chapter 1/c.jpg", 400_000),
+                    ],
+                ),
+                chapter("Chapter 2", vec![page("Chapter 2/d.jpg", 600_000)]),
+            ]),
+            &options(&["--target-size", "1"])?,
+        )?;
+        assert_eq!(tomes.len(), 2);
+        assert_eq!(tomes[0].page_count, 2, "the oversized chapter is repacked");
+        assert_eq!(tomes[1].page_count, 2);
+        assert!(tomes.iter().all(|tome| tome.chapters.len() == 1));
+        Ok(())
+    }
+
+    #[test]
+    fn flattening_a_book_with_no_pages_empties_its_chapters() {
+        let mut book = book(vec![chapter("Chapter", vec![])]);
+        flatten(&mut book);
+        assert!(book.chapters.is_empty());
+    }
+
+    #[test]
+    fn webtoon_without_a_target_uses_the_webtoon_cap() -> Result<()> {
+        let webtoon = options(&["--webtoon"])?;
+        assert_eq!(target_size(&webtoon.main), WEBTOON_TARGET_SIZE);
+        let plain = options(&[])?.main;
+        assert_eq!(target_size(&plain), DEFAULT_TARGET_SIZE);
+        Ok(())
+    }
+
+    #[test]
+    fn chapter_size_sums_page_bytes_and_can_exceed_the_target() {
+        let book = book(vec![chapter("Chapter", vec![page("a.jpg", 20)])]);
+        assert_eq!(chapter_size(&book.chapters[0]), Bytes::new(20));
+        assert!(chapters_exceed_target(&book, Bytes::new(10)));
+        assert!(!chapters_exceed_target(&book, Bytes::new(30)));
+    }
+
+    #[test]
+    fn per_top_level_handles_a_root_chapter_and_an_empty_book() {
+        // A root-level chapter has no first path component.
+        let tomes = per_top_level(vec![chapter("", vec![page("a.jpg", 1)])]);
+        assert_eq!(tomes.len(), 1);
+        assert_eq!(tomes[0].len(), 1);
+
+        let empty = per_top_level(Vec::new());
+        assert_eq!(empty.len(), 1);
+        assert!(empty[0].is_empty());
+    }
+
+    #[test]
+    fn a_split_book_without_a_cover_has_no_labelled_cover() -> Result<()> {
+        let options = options(&[])?;
+        let tomes = assemble(
+            None,
+            vec![
+                vec![chapter("A", vec![page("A/a.jpg", 1)])],
+                vec![chapter("B", vec![page("B/b.jpg", 1)])],
+            ],
+            &options.processing,
+        )?;
+        assert_eq!(tomes.len(), 2);
+        assert!(tomes.iter().all(|tome| tome.cover.is_none()));
+        assert_eq!(tomes[0].page_count, 1);
+        assert_eq!(tomes[1].page_count, 1);
+        Ok(())
+    }
+
+    /// A cover whose page holds a valid (decodable) JPEG, as `cover::process` produces.
+    fn decodable_cover(options: &Options) -> Result<Cover> {
+        use image::{Rgb, RgbImage};
+        let image =
+            image::DynamicImage::ImageRgb8(RgbImage::from_pixel(200, 300, Rgb([255, 255, 255])));
+        let bytes =
+            crate::ebook::processing::page::encode_jpeg(&image, options.processing.jpeg_quality)?;
+        Ok(Cover {
+            page: EncodedPage {
+                name: PageName::new("cover.jpg"),
+                order_class: OrderClass::Normal,
+                media_type: MediaType::Jpeg,
+                bytes,
+                size: Size::new(200, 300),
+                flags: PageFlags::default(),
+            },
+            smart_cropped: false,
+        })
+    }
+
+    #[test]
+    fn every_tome_of_a_split_book_gets_its_own_cover_label() -> Result<()> {
+        let options = options(&[])?;
+        let tomes = assemble(
+            Some(decodable_cover(&options)?),
+            vec![
+                vec![chapter("A", vec![page("A/a.jpg", 1)])],
+                vec![chapter("B", vec![page("B/b.jpg", 1)])],
+            ],
+            &options.processing,
+        )?;
+        let bytes: Vec<Vec<u8>> = tomes
+            .iter()
+            .filter_map(|tome| tome.cover.as_ref().map(|cover| cover.page.bytes.clone()))
+            .collect();
+        assert_eq!(bytes.len(), 2, "every tome keeps a labelled cover");
+        assert!(!bytes[0].is_empty());
+        assert_ne!(bytes[0], bytes[1], "each tome gets its own N/M label");
+        Ok(())
+    }
 }

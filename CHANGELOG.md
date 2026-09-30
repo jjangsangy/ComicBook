@@ -23,6 +23,11 @@ release when a version tag is pushed.
 
 ### Changed
 
+- Expanded unit and integration test coverage across the `archive`, `ebook` input/processing/output
+  and CLI layers, exercising previously-untested branches (the profile table, shared progress-style
+  helpers and `cli::run` dispatch are now fully covered). No behaviour change; the new tests pin
+  existing observable behaviour, and the coverage floor in the `Coverage` workflow is unchanged.
+
 - Rebranded the `ebook` output from the old `kcc` identifiers to `cb`: when no `-a/--author` is
   given the author is now `cb`, and sanitized page files are named `cb-NNNN-cb-<order>` (e.g.
   `cb-0001-cb-x.xhtml`, `cb-0002-cb-d-above.jpg`) instead of `kcc-NNNN-kcc-<order>`. The page-name

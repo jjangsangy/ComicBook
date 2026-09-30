@@ -160,3 +160,23 @@ fn write_cbz(
     writer.finish()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{GrayImage, ImageBuffer, Luma, Rgb, RgbImage};
+
+    #[test]
+    fn grayscale_converts_colour_and_passes_other_types_through() {
+        let rgb = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([200, 30, 30])));
+        assert!(matches!(grayscale(rgb), DynamicImage::ImageLuma8(_)));
+
+        // A 16-bit source is neither of the two colour types, so it is left as-is.
+        let rgb16 = DynamicImage::ImageRgb16(ImageBuffer::from_pixel(2, 2, Rgb([1u16, 2, 3])));
+        assert!(matches!(grayscale(rgb16), DynamicImage::ImageRgb16(_)));
+
+        // An already-grayscale source passes through unchanged.
+        let gray = DynamicImage::ImageLuma8(GrayImage::from_pixel(2, 2, Luma([7])));
+        assert!(matches!(grayscale(gray), DynamicImage::ImageLuma8(_)));
+    }
+}

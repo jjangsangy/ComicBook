@@ -599,7 +599,7 @@ pub(crate) fn empty_columns(image: &GrayImage) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::Luma;
+    use image::{Luma, RgbImage};
 
     /// A scalar reference for the box blur, used to pin the SIMD path.
     fn blur_reference(image: &GrayImage) -> GrayImage {
@@ -673,6 +673,88 @@ mod tests {
         threshold_in_place(&mut above, 128, ThresholdKind::Above);
         assert_eq!(above[128], 0);
         assert_eq!(above[129], 255);
+    }
+
+    #[test]
+    fn threshold_applies_the_scalar_tail_for_both_polarities() {
+        // A length that is not a multiple of 16 leaves a scalar tail after the
+        // 16-lane body; index 0 is processed by the body, index 19 by the tail.
+        let mut above = vec![128u8; 20];
+        above[0] = 1;
+        above[19] = 200;
+        threshold_in_place(&mut above, 128, ThresholdKind::Above);
+        assert_eq!(above[0], 0);
+        assert_eq!(above[19], 255);
+
+        let mut below = vec![128u8; 20];
+        below[0] = 1;
+        below[19] = 200;
+        threshold_in_place(&mut below, 128, ThresholdKind::Below);
+        assert_eq!(below[0], 255);
+        assert_eq!(below[19], 0);
+    }
+
+    #[test]
+    fn luma_min_max_handles_pixel_only_and_alpha_sources() {
+        // An empty RGB buffer has no samples to reduce.
+        assert_eq!(
+            luma_min_max(&DynamicImage::ImageRgb8(RgbImage::new(0, 0))),
+            None
+        );
+        // A pixel type without a direct luma/RGB view is converted first; all four
+        // pixels of (10, 20, 30) reduce to the same Rec.601 luma.
+        let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([10, 20, 30, 255]),
+        ));
+        assert_eq!(luma_min_max(&rgba), Some(Range::new(18, 18)));
+    }
+
+    #[test]
+    fn a_degenerate_box_blur_is_a_no_op() {
+        // A zero-width row would panic in `blur_row` (it indexes the ends), so the guard
+        // is load-bearing there; a zero-height image (or an empty one) has nothing to blur.
+        for image in [
+            GrayImage::new(0, 5),
+            GrayImage::new(5, 0),
+            GrayImage::new(0, 0),
+        ] {
+            let mut blurred = image.clone();
+            box_blur_1_in_place(&mut blurred);
+            assert_eq!(blurred, image);
+        }
+    }
+
+    #[test]
+    fn an_empty_bounding_box_search_finds_nothing() {
+        // A defensive guard: with no pixels the scan would also find nothing.
+        assert_eq!(bbox_ge(&GrayImage::new(0, 0), 100), None);
+    }
+
+    #[test]
+    fn a_band_with_a_scalar_tail_reads_the_remaining_columns() {
+        let mut image = GrayImage::new(32, 8);
+        for x in 0..16 {
+            image.put_pixel(x, 0, Luma([255]));
+        }
+        // The band ends at x = 20, so the final four columns go through the scalar
+        // tail rather than the 16-lane body.
+        assert_eq!(
+            band_white_black(&image, 0, 0, 20, 1, 8),
+            Band {
+                has_white: true,
+                has_black: true,
+            }
+        );
+    }
+
+    #[test]
+    fn empty_columns_are_empty_for_a_zero_height_image() {
+        // A zero-height image would otherwise report every column as empty; the guard
+        // returns nothing instead.
+        assert!(empty_columns(&GrayImage::new(5, 0)).is_empty());
+        assert!(empty_columns(&GrayImage::new(0, 0)).is_empty());
     }
 
     #[test]

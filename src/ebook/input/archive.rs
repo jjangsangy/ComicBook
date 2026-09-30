@@ -296,3 +296,51 @@ fn compare_dir_paths(a: &RelativePath, b: &RelativePath) -> Ordering {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded(name: &str) -> LoadedPage {
+        LoadedPage {
+            name: SourceName::new(name),
+            data: PageData::Encoded(Source::new(Vec::new(), MediaType::Png)),
+            dimensions: Size::new(1, 1),
+        }
+    }
+
+    #[test]
+    fn directory_paths_order_by_walk_pre_order() {
+        let path = RelativePath::new;
+        assert_eq!(compare_dir_paths(path("A"), path("A")), Ordering::Equal);
+        assert_eq!(compare_dir_paths(path(""), path("A")), Ordering::Less);
+        assert_eq!(compare_dir_paths(path("A"), path("")), Ordering::Greater);
+        // A nested path sorts after its parent (the path is longer but shares a prefix).
+        assert_eq!(compare_dir_paths(path("A/B"), path("A")), Ordering::Greater);
+        assert_eq!(compare_dir_paths(path("A"), path("A/B")), Ordering::Less);
+        // Siblings order naturally and case-insensitively.
+        assert_eq!(compare_dir_paths(path("A"), path("b")), Ordering::Less);
+    }
+
+    #[test]
+    fn strip_common_root_leaves_a_non_normal_first_component_alone() {
+        // A `..`-rooted name has no `Normal` first component, so nothing is stripped.
+        let mut pages = vec![loaded("..")];
+        strip_common_root(&mut pages);
+        assert_eq!(pages[0].name.as_str(), "..");
+    }
+
+    #[test]
+    fn strip_common_root_drops_a_shared_wrapper_directory() {
+        // Every page shares `Chapter`, so the wrapper is dropped and `a.png` is kept.
+        let mut pages = vec![loaded("Chapter/a.png"), loaded("Chapter/b.png")];
+        strip_common_root(&mut pages);
+        assert_eq!(pages[0].name.as_str(), "a.png");
+        assert_eq!(pages[1].name.as_str(), "b.png");
+
+        // A flat page has no wrapper, so nothing changes.
+        let mut flat = vec![loaded("a.png")];
+        strip_common_root(&mut flat);
+        assert_eq!(flat[0].name.as_str(), "a.png");
+    }
+}

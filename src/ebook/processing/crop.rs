@@ -882,4 +882,97 @@ mod tests {
         assert_eq!(gray.get_pixel(0, 1)[0], 1);
         Ok(())
     }
+
+    #[test]
+    fn every_pixel_type_survives_crop_padded() -> Result<()> {
+        use image::{ImageBuffer, LumaA, Rgba};
+        // An offset, non-square box so the crop is not a trivial identity.
+        let bbox = BBox::new(1, 1, 5, 5);
+        // A single marked pixel at the crop origin, so a wrong offset is observable.
+        let marked = ImageBuffer::from_fn(8, 8, |x, y| {
+            if (x, y) == (1, 1) {
+                LumaA([200u8, 255])
+            } else {
+                LumaA([10u8, 255])
+            }
+        });
+        let cases = [
+            DynamicImage::ImageLumaA8(marked),
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(8, 8, Rgba([10u8, 20, 30, 255]))),
+            DynamicImage::ImageLuma16(ImageBuffer::from_pixel(8, 8, Luma([10u16]))),
+            DynamicImage::ImageLumaA16(ImageBuffer::from_pixel(8, 8, LumaA([10u16, 65535]))),
+            DynamicImage::ImageRgb16(ImageBuffer::from_pixel(8, 8, Rgb([10u16, 20, 30]))),
+            DynamicImage::ImageRgba16(ImageBuffer::from_pixel(8, 8, Rgba([10u16, 20, 30, 65535]))),
+        ];
+        for image in &cases {
+            let cropped = crop_padded(image, bbox);
+            assert_eq!(cropped.dimensions(), (4, 4));
+            assert_eq!(
+                std::mem::discriminant(&cropped),
+                std::mem::discriminant(image),
+                "the pixel type is preserved"
+            );
+        }
+
+        // The crop samples from the box origin, not the image origin.
+        match crop_padded(&cases[0], bbox) {
+            DynamicImage::ImageLumaA8(buffer) => assert_eq!(
+                buffer.get_pixel(0, 0),
+                &LumaA([200, 255]),
+                "the crop starts at (1, 1)"
+            ),
+            other => anyhow::bail!("expected the LumaA8 variant, got {other:?}"),
+        }
+
+        // The two 32-bit float variants fall through to the `other` arm and are
+        // normalised to RGB8.
+        for image in [
+            DynamicImage::ImageRgb32F(ImageBuffer::from_pixel(8, 8, Rgb([0.1f32, 0.2, 0.3]))),
+            DynamicImage::ImageRgba32F(ImageBuffer::from_pixel(
+                8,
+                8,
+                Rgba([0.1f32, 0.2, 0.3, 1.0]),
+            )),
+        ] {
+            let cropped = crop_padded(&image, bbox);
+            assert_eq!(cropped.dimensions(), (4, 4));
+            assert!(
+                matches!(cropped, DynamicImage::ImageRgb8(_)),
+                "a float buffer is normalised to RGB8"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_nearly_empty_inner_strip_clears_its_edge() {
+        // A 1000px page makes the 2 %/2.5 % strips differ. A single speck in the
+        // inner top strip (rate < 0.001) sets the inner box in, and the outer strip's
+        // speck is then cleared too.
+        let mut bw = GrayImage::new(1000, 1000);
+        bw.put_pixel(500, 22, Luma([255]));
+        bw.put_pixel(500, 5, Luma([255]));
+        ignore_pixels_near_edge(&mut bw);
+        assert_eq!(bw.get_pixel(500, 22)[0], 0, "the inner strip is cleared");
+        assert_eq!(bw.get_pixel(500, 5)[0], 0, "the edge strip is cleared too");
+    }
+
+    #[test]
+    fn a_page_too_short_for_the_search_window_has_no_number() {
+        // The page-number window is a fraction of the height, so a 20px page rounds
+        // it to zero rows and the search bails out.
+        let page = DynamicImage::ImageRgb8(RgbImage::from_pixel(800, 20, Rgb([0, 0, 0])));
+        assert_eq!(page_number_bbox(&page, 1.0, Background::White), None);
+    }
+
+    #[test]
+    fn a_page_without_a_number_returns_the_margin_box() {
+        // The ink stops well above the bottom, so no page number is detected; the
+        // full-height path returns the ordinary ink bounding box.
+        let page = framed(200, 300, BBox::new(20, 30, 180, 270));
+        assert_eq!(
+            page_number_bbox(&page, 1.0, Background::White),
+            Some(BBox::new(19, 29, 181, 271))
+        );
+    }
 }

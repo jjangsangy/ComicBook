@@ -264,3 +264,71 @@ pub fn detect_suboptimal_processing(tree: &ComicTree, options: &Options) -> Vec<
 
     warnings
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ebook::model::{Background, MediaType, PageData, RelPath, SourceName};
+    use anyhow::bail;
+    use clap::Parser;
+    use image::{GenericImageView, GrayImage, Luma, Rgb, RgbImage};
+
+    /// Resolve options from a `comic-book ebook` command line.
+    fn options(args: &[&str]) -> Result<Options> {
+        let mut full = vec!["comic-book", "ebook", "book.cbz"];
+        full.extend_from_slice(args);
+        let cli = crate::cli::Cli::try_parse_from(full)?;
+        match cli.command {
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => bail!("expected the ebook subcommand"),
+        }
+    }
+
+    fn page(width: u32, height: u32, image: DynamicImage) -> Page {
+        Page {
+            source_name: SourceName::new("cb-0001.png"),
+            rel_path: RelPath::new("cb-0001.png"),
+            data: PageData::Pixels(MediaType::Png, image),
+            dimensions: Size::new(width, height),
+            background: Background::White,
+        }
+    }
+
+    #[test]
+    fn a_grayscale_first_page_is_never_colour() -> Result<()> {
+        let gray = DynamicImage::ImageLuma8(GrayImage::from_pixel(16, 16, Luma([120])));
+        assert!(!is_colour_page(&gray, &options(&[])?));
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_tree_has_no_suboptimal_warnings() -> Result<()> {
+        // An empty tree yields no warnings. The `!any_page` guard is an early return; the
+        // counters would also stay zero, so this pins the contract rather than the branch.
+        assert!(detect_suboptimal_processing(&ComicTree::new(), &options(&[])?).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_horizontal_inter_panel_crop_collapses_the_gutter() -> Result<()> {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(200, 300, |x, y| {
+            let panel =
+                (20..180).contains(&x) && (20..280).contains(&y) && !(140..160).contains(&y);
+            if panel {
+                Rgb([0, 0, 0])
+            } else {
+                Rgb([255, 255, 255])
+            }
+        }));
+        let mut page = page(200, 300, image);
+        // Margin cropping is disabled so only the horizontal inter-panel pass runs.
+        prepare_page(
+            &mut page,
+            &options(&["--cropping", "0", "--inter-panel-crop", "horizontal"])?,
+            false,
+        )?;
+        let image = page.take_image().context("the page is still decoded")?;
+        assert_eq!(image.dimensions(), (200, 285));
+        Ok(())
+    }
+}

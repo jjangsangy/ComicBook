@@ -219,6 +219,8 @@ fn find_in_range(haystack: &[u8], needle: &[u8], from: usize, end: usize) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{DynamicImage, ImageFormat, RgbImage};
+    use std::io::Cursor;
 
     #[test]
     fn zoom_fits_height_unless_pdf_width_portrait() {
@@ -268,5 +270,113 @@ mod tests {
         assert_eq!(find(data, b"stream", 4), None);
         assert_eq!(find_in_range(data, b"XYZ", 3, 13), Some(9));
         assert_eq!(find_in_range(data, b"XYZ", 3, 5), None);
+    }
+
+    #[test]
+    fn find_in_range_rejects_an_inverted_range() {
+        let data = b"aaastreamXYZ";
+        // `from` past `end` (and an empty needle) matches nothing.
+        assert_eq!(find_in_range(data, b"XYZ", 5, 3), None);
+        assert_eq!(find_in_range(data, b"", 0, 13), None);
+    }
+
+    #[test]
+    fn render_zoom_falls_back_to_one_for_a_degenerate_page() {
+        // Neither guard can divide: both dimensions are zero, so the zoom is a no-op.
+        assert_eq!(
+            render_zoom(FitPreference::Height, 1000.0, 1500.0, 0.0, 0.0),
+            1.0
+        );
+    }
+
+    /// Resolve options from a `comic-book ebook` command line.
+    fn options(args: &[&str]) -> Result<Options> {
+        use clap::Parser;
+        let mut full = vec!["comic-book", "ebook", "book.cbz"];
+        full.extend_from_slice(args);
+        let cli = crate::cli::Cli::try_parse_from(full)?;
+        match cli.command {
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => anyhow::bail!("expected the ebook subcommand"),
+        }
+    }
+
+    #[test]
+    fn render_target_widens_by_crop_mode() -> Result<()> {
+        let base = options(&["-c", "off"])?;
+        let width = base.device.data.width as f32;
+        let height = base.device.data.height as f32;
+        assert_eq!(render_target(&base), (width, height));
+
+        let margins = options(&["-c", "margins"])?;
+        assert_eq!(render_target(&margins), (width * 1.2, height * 1.2));
+
+        let pages = options(&[])?;
+        assert_eq!(render_target(&pages), (width * 1.25, height * 1.25));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_extract_reports_missing_stream_terminators() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+
+        // A JPEG start inside a `stream` with no `endstream` terminator.
+        let no_endstream = tmp.path().join("a.pdf");
+        let mut data = b"stream".to_vec();
+        data.extend_from_slice(b"\xff\xd8");
+        data.extend_from_slice(&[0u8; 40]);
+        std::fs::write(&no_endstream, &data)?;
+        let error = legacy_extract(&no_endstream)
+            .err()
+            .context("a stream without an endstream should fail")?;
+        assert!(error.to_string().contains("Didn't find end of stream"));
+
+        // `endstream` present but no JPEG end mark.
+        let no_end_jpg = tmp.path().join("b.pdf");
+        let mut data = b"stream".to_vec();
+        data.extend_from_slice(b"\xff\xd8");
+        data.extend_from_slice(&[0u8; 10]);
+        data.extend_from_slice(b"endstream");
+        std::fs::write(&no_end_jpg, &data)?;
+        let error = legacy_extract(&no_end_jpg)
+            .err()
+            .context("a stream without a JPEG end mark should fail")?;
+        assert!(error.to_string().contains("Didn't find end of JPG"));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_extract_skips_a_stray_short_image() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pdf = tmp.path().join("stray.pdf");
+
+        // A real, decodable JPEG whose stream clears the stray-length threshold.
+        let mut jpeg = Vec::new();
+        DynamicImage::ImageRgb8(RgbImage::new(16, 16))
+            .write_to(&mut Cursor::new(&mut jpeg), ImageFormat::Jpeg)?;
+        assert!(jpeg.len() >= 300, "the kept image must clear the threshold");
+        assert_eq!(&jpeg[..2], b"\xff\xd8");
+        assert_eq!(&jpeg[jpeg.len() - 2..], b"\xff\xd9");
+
+        let mut data = Vec::new();
+        // The first stream is under the stray threshold and is not decodable; the guard
+        // must drop it rather than feed it to the loader.
+        data.extend_from_slice(b"stream");
+        data.extend_from_slice(b"\xff\xd8");
+        data.extend_from_slice(&[0u8; 10]);
+        data.extend_from_slice(b"endstream");
+        data.extend_from_slice(&[0u8; 5]);
+        data.extend_from_slice(b"\xff\xd9");
+        // The second stream is a well-formed JPEG and is kept.
+        data.extend_from_slice(b"stream");
+        data.extend_from_slice(&jpeg);
+        data.extend_from_slice(b"endstream");
+        std::fs::write(&pdf, &data)?;
+
+        // Exactly the second stream survives: without the guard the stray would be
+        // decoded (and fail), so this also pins the skip rather than only its coverage.
+        let tree = legacy_extract(&pdf)?;
+        assert_eq!(tree.page_count(), 1);
+        Ok(())
     }
 }

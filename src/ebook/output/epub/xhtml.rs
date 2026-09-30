@@ -234,6 +234,20 @@ fn panel_offset(device: u32, size: u32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ebook::model::{EncodedPage, MediaType, OrderClass, PageFlags, PageName};
+    use crate::ebook::output::epub::{FileName, ImageDir};
+    use clap::Parser;
+
+    /// Resolve options from a `comic-book ebook` command line.
+    fn options(args: &[&str]) -> Result<Options> {
+        let mut full = vec!["comic-book", "ebook", "book.cbz"];
+        full.extend_from_slice(args);
+        let cli = crate::cli::Cli::try_parse_from(full)?;
+        match cli.command {
+            crate::cli::Commands::Ebook(args) => Options::resolve(&args),
+            _ => anyhow::bail!("expected the ebook subcommand"),
+        }
+    }
 
     #[test]
     fn panel_offset_centres_the_panel() {
@@ -249,5 +263,109 @@ mod tests {
         assert_eq!(PanelGrid::classify(false, false), PanelGrid::Quadrants);
         assert_eq!(PanelGrid::classify(true, false), PanelGrid::Stacked);
         assert_eq!(PanelGrid::classify(false, true), PanelGrid::SideBySide);
+    }
+
+    #[test]
+    fn panel_grids_map_to_their_regions() {
+        assert!(PanelGrid::None.regions().is_empty());
+        assert_eq!(PanelGrid::Quadrants.regions(), &PANELS_2X2);
+        assert_eq!(PanelGrid::Stacked.regions(), &PANELS_STACKED);
+        assert_eq!(PanelGrid::SideBySide.regions(), &PANELS_SIDE_BY_SIDE);
+    }
+
+    #[test]
+    fn panel_orders_key_off_orientation_and_reading_direction() {
+        assert!(PanelGrid::None
+            .order(Orientation::Upright, false)
+            .is_empty());
+
+        assert_eq!(
+            PanelGrid::Quadrants.order(Orientation::Rotated, true),
+            &[1u32, 3, 2, 4]
+        );
+        assert_eq!(
+            PanelGrid::Quadrants.order(Orientation::Rotated, false),
+            &[2u32, 4, 1, 3]
+        );
+        assert_eq!(
+            PanelGrid::Quadrants.order(Orientation::Upright, true),
+            &[2u32, 1, 4, 3]
+        );
+        assert_eq!(
+            PanelGrid::Quadrants.order(Orientation::Upright, false),
+            &[1u32, 2, 3, 4]
+        );
+
+        assert_eq!(
+            PanelGrid::Stacked.order(Orientation::Rotated, true),
+            &[1u32, 2]
+        );
+        assert_eq!(
+            PanelGrid::Stacked.order(Orientation::Rotated, false),
+            &[2u32, 1]
+        );
+        assert_eq!(
+            PanelGrid::Stacked.order(Orientation::Upright, true),
+            &[1u32, 2]
+        );
+
+        assert_eq!(
+            PanelGrid::SideBySide.order(Orientation::Rotated, false),
+            &[1u32, 2]
+        );
+        assert_eq!(
+            PanelGrid::SideBySide.order(Orientation::Upright, true),
+            &[2u32, 1]
+        );
+        assert_eq!(
+            PanelGrid::SideBySide.order(Orientation::Upright, false),
+            &[1u32, 2]
+        );
+    }
+
+    #[test]
+    fn two_panel_scales_the_page_to_the_device_width() -> Result<()> {
+        // A tall page under `--two-panel`: the grid scales it to the device width and
+        // emits the stacked (top/bottom) regions.
+        let options = options(&["-p", "KV", "-2"])?;
+        let (boxes, scaled) = panel_layout(Size::new(400, 600), PageFlags::default(), &options);
+        assert_eq!(scaled.width, options.device_size().width);
+        assert_eq!(
+            boxes.iter().map(|panel| panel.id).collect::<Vec<_>>(),
+            PANELS_STACKED
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_scribe_below_image_is_referenced_from_the_above_page() -> Result<()> {
+        // The `-above` page carries its `-below` companion as a second stacked image;
+        // the viewport spans both while each `<img>` keeps its own size.
+        let below = EncodedPage {
+            name: PageName::new("cb-0001-cb-x-below.jpg"),
+            order_class: OrderClass::Normal,
+            media_type: MediaType::Jpeg,
+            bytes: Vec::new(),
+            size: Size::new(1653, 560),
+            flags: PageFlags::default(),
+        };
+        let page = PageRef {
+            image_dir: ImageDir::new(""),
+            file: FileName::new("cb-0001-cb-x-above.jpg"),
+            size: Size::new(1653, 1920),
+            flags: PageFlags::default(),
+            order_class: OrderClass::Normal,
+            media_type: MediaType::Jpeg,
+            below: Some(&below),
+        };
+        let xhtml = String::from_utf8(build_xhtml(&page, &options(&["-p", "KS"])?)?)?;
+        assert!(
+            xhtml.contains("src=\"../Images/cb-0001-cb-x-below.jpg\""),
+            "{xhtml}"
+        );
+        assert!(xhtml.contains("top: 1920px"), "{xhtml}");
+        // The viewport spans the stacked pair (1920 + 560).
+        assert!(xhtml.contains("height=2480"), "{xhtml}");
+        Ok(())
     }
 }

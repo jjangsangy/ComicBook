@@ -92,3 +92,47 @@ impl ArchiveWriter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Context;
+
+    #[test]
+    fn adding_a_name_that_normalizes_to_nothing_is_a_no_op() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("book.cbz");
+        let mut writer = ArchiveWriter::new(ArchiveKind::Cbz, &path)?;
+        // The empty and traversal-only names normalize to nothing and are dropped.
+        writer.add_entry("", EntryContent::File(b"ignored"))?;
+        writer.add_entry("./..", EntryContent::Directory)?;
+        writer.add_entry("page.jpg", EntryContent::File(b"kept"))?;
+        writer.finish()?;
+
+        let entries = crate::archive::ops::list_archive_entry_names(ArchiveKind::Cbz, &path)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name.as_str(), "page.jpg");
+        Ok(())
+    }
+
+    #[test]
+    fn a_zip_destination_that_is_a_directory_is_rejected() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        // `File::create` cannot replace an existing directory, so the zip writer fails.
+        let error = ArchiveWriter::new(ArchiveKind::Cbz, tmp.path())
+            .err()
+            .context("a directory destination is rejected")?;
+        assert!(error.to_string().contains("Failed to create"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_directory_target_under_a_file_is_rejected() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let file = tmp.path().join("blocker");
+        fs::write(&file, b"x")?;
+        // `create_dir_all` cannot create a child of a regular file.
+        assert!(ArchiveWriter::new(ArchiveKind::Directory, file.join("child")).is_err());
+        Ok(())
+    }
+}
