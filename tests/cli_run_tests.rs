@@ -157,7 +157,10 @@ fn run_completions_selects_from_the_positional_flag_or_env() -> Result<()> {
 
 #[test]
 fn run_completions_without_a_detectable_shell_errors() -> Result<()> {
-    std::env::remove_var("SHELL");
+    // `SHELL` must be set to a value clap cannot map to a shell rather than unset: on
+    // Windows an unset `SHELL` still resolves to PowerShell (`Shell::from_env` falls back
+    // to it), so only an unrecognised value is undetectable on every platform.
+    std::env::set_var("SHELL", "not-a-shell");
     let error = run_completions(None, None)
         .err()
         .context("an undetectable shell should error")?;
