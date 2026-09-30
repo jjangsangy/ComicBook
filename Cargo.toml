@@ -108,6 +108,11 @@ pdfboss-render = "2.11"
 pdfboss-core = "2.11"
 
 [dev-dependencies]
+# Snapshot testing for the generated EPUB documents (docs/development.md). The
+# `filters` feature supplies the regex normalisation of the two volatile fields
+# (the `dc:identifier` UUID and the `dcterms:modified` timestamp); `insta`
+# normalises line endings to LF itself. Apache-2.0, dev-only, never ships.
+insta = { version = "1.48", features = ["filters"] }
 libc = "0.2"
 # Reading the EPUB container back in the structural tests; already a runtime
 # dependency, re-declared here because integration tests cannot name it directly.

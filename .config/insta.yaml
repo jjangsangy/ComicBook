@@ -1,0 +1,6 @@
+# insta configuration (<https://insta.rs/docs/settings/#tool-config-file>).
+#
+# The snapshot tests run through cargo-nextest like the rest of the suite
+# (docs/development.md), so `cargo insta test` runs them with nextest too.
+test:
+  runner: nextest

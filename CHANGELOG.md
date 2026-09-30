@@ -29,6 +29,22 @@ release when a version tag is pushed.
 
 ### Changed
 
+- Replaced the bespoke `UPDATE_GOLDEN` EPUB reference harness with
+  [`insta`](https://insta.rs/) snapshots. `tests/ebook_golden_tests.rs` now pins the generated
+  OPF/NCX/NAV/XHTML/CSS documents in `tests/snapshots/` (one snapshot per scenario and document,
+  30 in all), normalising the volatile `dc:identifier`/`dcterms:modified` fields with `insta`
+  filters. The committed snapshots hold the same document bytes the removed
+  `tests/fixtures/epub_golden/` references did. Because `insta` folds CRLF→LF and drops a trailing
+  newline before comparing, `snapshot_payload` asserts the LF-only contract and records each
+  document's exact tail, so the LF-only and no-final-newline guarantees stay pinned; regenerate
+  with `INSTA_UPDATE=always cargo nextest run --test ebook_golden_tests`, or review interactively
+  with `cargo insta review`. Added `insta` (Apache-2.0) as a dev-dependency, `.config/insta.yaml`
+  (so `cargo insta` runs the suite through nextest), and `*.snap.new` to `.gitignore`.
+
+- Added `.gitattributes` (`* text=auto eol=lf`) so every tracked file is normalised to and checked
+  out with LF, matching the LF-pinned generated documents (docs/output.md). `text=auto` still
+  detects binary fixtures (`tests/fixtures/**/*.png`) and leaves them untouched.
+
 - Expanded unit and integration test coverage across the crate to exercise previously-untested
   branches, raising line coverage to ~97.6% (lcov `DA` records — llvm-cov's own summary reads ~96.6%
   and its region coverage ~93.9%) from ~90.6% before this pass. The suite now passes 526 tests

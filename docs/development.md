@@ -37,12 +37,20 @@ undocumented.
   OPF/NCX/NAV output.
 - **Fixture/golden tests:** commit small `CBZ`/`CBR`/`CB7`/`CBT` inputs and assert structure by
   parsing the output back (mimetype first + stored; OPF spine; XHTML image refs; image
-  dimensions). `tests/ebook_golden_tests.rs` compares generated EPUB documents byte-for-byte
-  against committed references (the UUID and `dcterms:modified` are normalised, and the references'
-  line endings are normalised to LF so a CRLF checkout does not matter — the generated documents
-  themselves are pinned to LF, see [output.md](output.md)); regenerate with
-  `UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests` only for an intentional format
-  change.
+  dimensions). `tests/ebook_golden_tests.rs` pins the generated EPUB documents (OPF/NCX/NAV/XHTML/
+  CSS) with [`insta`](https://insta.rs/) snapshots in `tests/snapshots/`, one per scenario and
+  document. Two `insta` filters normalise the only volatile fields — the `dc:identifier`/`dtb:uid`
+  the `dcterms:modified` timestamp — so the snapshots are stable, and `insta` normalises
+  the snapshot files' line endings to LF itself (the whole tree is LF-pinned, see
+  [Cross-platform & packaging notes](#cross-platform--packaging-notes)), so a CRLF checkout does
+  not matter. Because
+  `insta` folds CRLF→LF *and* trims one trailing newline before comparing, `snapshot_payload`
+  asserts the LF-only contract and appends an `<EOF: newline>`/`<EOF: no newline>` marker recording
+  each document's exact tail; without that the LF-only and no-final-newline properties
+  (see [output.md](output.md)) would go unchecked. Regenerate only for an intentional format change
+  with `INSTA_UPDATE=always cargo nextest run --test ebook_golden_tests`, or review pending changes
+  interactively with `cargo insta review` / `cargo insta test` (installed with
+  `cargo install cargo-insta`; `.config/insta.yaml` makes it run the suite through nextest).
 - **Reference values from KCC.** Some fixtures (`tests/fixtures/crop/`, the webtoon virtual-page
   sizes) pin values produced by KCC itself; the inputs and returned values are committed, so the
   tests assert exact equality instead of a tolerance.
@@ -213,6 +221,9 @@ last released version.
 
 - All behaviour must compile on Linux, macOS and Windows. Prefer pure-Rust crates; `unrar` and
   `webp` vendor/compile their C sources (acceptable — no external program).
+- Line endings are LF everywhere: `.gitattributes` sets `* text=auto eol=lf`, so git normalises
+  text files to LF on commit and checks them out as LF, matching the LF-pinned generated documents
+  ([output.md](output.md)). `text=auto` still detects binary fixtures and leaves them untouched.
 - Keep paths OS-agnostic with `std::path`. Archive entries authored on Windows load identically
   everywhere; hostile entries (`..`, absolute, drive-lettered, backslashes) are normalised to
   interior, forward-slashed paths.

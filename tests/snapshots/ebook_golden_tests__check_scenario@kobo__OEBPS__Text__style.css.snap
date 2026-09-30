@@ -1,0 +1,13 @@
+---
+source: tests/ebook_golden_tests.rs
+expression: payload
+---
+@page {
+margin: 0;
+}
+body {
+display: block;
+margin: 0;
+padding: 0;
+}
+<EOF: newline>

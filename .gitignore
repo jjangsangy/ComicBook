@@ -32,4 +32,7 @@ Thumbs.db
 *.tmp
 tmp/
 
+# insta pending snapshots (reviewed and accepted via `cargo insta`)
+*.snap.new
+
 kcc/

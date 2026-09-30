@@ -63,8 +63,9 @@ operations replace hand-rolled separator ladders; `std::path::Path` remains the 
 type. Only its `alloc`/`std` features are enabled (explicitly — this crate's `std` does not imply
 `alloc`); see [porting.md](porting.md).
 
-**Dev-dependency:** `lopdf` (PDF readback in tests; never ships in the binary). `zip` is also
-declared as a dev-dependency so tests can read the EPUB container back.
+**Dev-dependencies:** `lopdf` (PDF readback in tests) and `insta` (EPUB document snapshots,
+Apache-2.0); neither ships in the binary. `zip` is also declared as a dev-dependency so tests can
+read the EPUB container back.
 
 **Deliberately avoided:** `boko` (GPL-3.0-or-later — incompatible with this MIT project) and
 `mobi-sys` (FFI to a C library we do not need).

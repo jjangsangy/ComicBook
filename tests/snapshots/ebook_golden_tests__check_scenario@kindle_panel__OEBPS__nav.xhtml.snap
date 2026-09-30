@@ -1,0 +1,28 @@
+---
+source: tests/ebook_golden_tests.rs
+expression: payload
+---
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+<title>book</title>
+<meta charset="utf-8"/>
+</head>
+<body>
+<nav xmlns:epub="http://www.idpf.org/2007/ops" epub:type="toc" id="toc">
+<ol>
+<li><a href="Text/cb-0001-cb-x.xhtml">book</a></li>
+<li><a href="Text/chapter-1/cb-0003-cb-x.xhtml">Chapter 1</a></li>
+<li><a href="Text/chapter-2/cb-0005-cb-x.xhtml">Chapter 2</a></li>
+</ol>
+</nav>
+<nav epub:type="page-list">
+<ol>
+<li><a href="Text/cb-0001-cb-x.xhtml">book</a></li>
+<li><a href="Text/chapter-1/cb-0003-cb-x.xhtml">Chapter 1</a></li>
+<li><a href="Text/chapter-2/cb-0005-cb-x.xhtml">Chapter 2</a></li>
+</ol>
+</nav>
+</body>
+</html><EOF: no newline>

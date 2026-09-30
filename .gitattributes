@@ -1,0 +1,7 @@
+# Normalise every tracked file to LF in the repository and on checkout.
+#
+# The generated documents this project emits are LF-pinned (docs/output.md) and
+# the insta snapshots that hold them are LF too (docs/development.md), so a
+# Windows working tree must not rewrite any file to CRLF. `text=auto` still
+# detects and leaves binary files (e.g. tests/fixtures/**/*.png) untouched.
+* text=auto eol=lf

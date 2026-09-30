@@ -1,0 +1,19 @@
+---
+source: tests/ebook_golden_tests.rs
+expression: payload
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+<title>cb-0001-cb-x</title>
+<link href="style.css" type="text/css" rel="stylesheet"/>
+<meta name="viewport" content="width=800, height=1200"/>
+</head>
+<body style="background-color:#000000;">
+<div style="text-align:center;">
+<img width="800" height="1200" src="../Images/cb-0001-cb-x.jpg"/>
+</div>
+</body>
+</html>
+<EOF: newline>

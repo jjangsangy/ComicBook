@@ -302,7 +302,7 @@ format/preset → `OutputEncoding` resolution table, Phase 6 the memory-ceiling 
 
 ### 7.7 Regression guardrails
 
-- **Golden references are frozen** — never `UPDATE_GOLDEN=1` to make a refactor pass.
+- **Golden references are frozen** — never regenerate the EPUB snapshots to make a refactor pass.
 - **Memory ceilings are frozen** — `ebook_robustness_tests` asserts peak RSS is linear in the encoded
   book.
 - **Performance is measured, not assumed** — `scripts/bench.sh`, `examples/alloc_count` and

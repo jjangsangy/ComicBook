@@ -1,27 +1,33 @@
-//! Byte-level golden tests for the generated EPUB documents (see docs/architecture.md).
+//! Snapshot tests for the generated EPUB documents (see docs/architecture.md and
+//! docs/development.md).
 //!
-//! The OPF/NCX/NAV/XHTML layout is device-sensitive and must be reproduced exactly.
-//! These tests pin the current output byte-for-byte against reference copies in
-//! `tests/fixtures/epub_golden/`, so the templating refactor can be proven
-//! behaviour-preserving.
+//! The OPF/NCX/NAV/XHTML layout is device-sensitive and must be reproduced
+//! exactly, so the documents are pinned with [`insta`]. The only volatile fields
+//! are the `dc:identifier`/`dtb:uid` UUID and the `dcterms:modified` timestamp;
+//! `insta` filters replace both, so the committed snapshots are stable.
 //!
-//! The only volatile fields are the `dc:identifier`/`dtb:uid` UUID and the
-//! `dcterms:modified` timestamp; both are normalised before comparison. The
-//! committed references' line endings are normalised too, because git rewrites
-//! them to CRLF on Windows; the generated documents themselves are pinned to LF
-//! (see `output/epub/templates.rs::render_lf`), so a CRLF regression in the
-//! output still fails.
+//! `insta` folds CRLF to LF and trims one trailing newline before comparing
+//! (<https://insta.rs/docs/snapshot-files/>), so a raw document would silently
+//! stop catching two properties this suite pins (docs/output.md): the generated
+//! documents are LF-only, and `nav.xhtml` ends without a newline. [`snapshot_payload`]
+//! asserts the LF-only contract and records the exact tail, keeping both visible
+//! as ordinary snapshot diffs.
 //!
-//! Regenerate the references (only when an intentional format change is made):
+//! Regenerate the snapshots (only for an intentional format change):
 //!
 //! ```text
-//! UPDATE_GOLDEN=1 cargo nextest run --test ebook_golden_tests
+//! INSTA_UPDATE=always cargo nextest run --test ebook_golden_tests
 //! ```
+//!
+//! `cargo insta review` (from `cargo install cargo-insta`) walks pending changes
+//! interactively; `cargo insta test` runs the suite (through nextest, per
+//! `.config/insta.yaml`) and collects them, and `cargo insta test --review` chains
+//! the two.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
@@ -30,6 +36,25 @@ use comic_book::ebook::options::Options;
 use comic_book::ebook::{convert_source, progress};
 use image::{DynamicImage, Rgb, RgbImage};
 use tempfile::tempdir;
+
+/// `insta` filters replace the two volatile fields in every `content.opf`/`toc.ncx`
+/// so the committed snapshots are byte-stable.
+///
+/// The UUID filter matches `urn:uuid:<uuid>` up to the first non-UUID character,
+/// mirroring the previous hand-rolled replacement. The timestamp filter rewrites
+/// the text content of the `dcterms:modified` meta element (non-greedy, and
+/// `.`-matches-newline so it survives any wrapping).
+const FILTERS: &[(&str, &str)] = &[
+    (r"urn:uuid:[0-9A-Fa-f-]+", "urn:uuid:UUID"),
+    (
+        r#"(?s)<meta property="dcterms:modified">.*?</meta>"#,
+        r#"<meta property="dcterms:modified">TIMESTAMP</meta>"#,
+    ),
+];
+
+/// Markers that record whether a document ended with a newline; see [`snapshot_payload`].
+const EOF_NEWLINE: &str = "<EOF: newline>";
+const EOF_NO_NEWLINE: &str = "<EOF: no newline>";
 
 /// Resolve options from a `comic-book ebook` command line.
 fn options(args: &[&str]) -> Result<Options> {
@@ -119,61 +144,29 @@ fn read_entries(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(entries)
 }
 
-/// Replace the volatile UUID and timestamp so a document is comparable.
-fn normalize(name: &str, text: String) -> String {
-    if !(name.ends_with("content.opf") || name.ends_with("toc.ncx")) {
-        return text;
-    }
-    let text = replace_uuid(&text);
-    replace_timestamp(&text)
-}
-
-/// Replace every `urn:uuid:<uuid>` with a placeholder.
-fn replace_uuid(text: &str) -> String {
-    const MARKER: &str = "urn:uuid:";
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(pos) = rest.find(MARKER) {
-        out.push_str(&rest[..pos + MARKER.len()]);
-        let after = &rest[pos + MARKER.len()..];
-        let end = after
-            .find(|c: char| !(c.is_ascii_hexdigit() || c == '-'))
-            .unwrap_or(after.len());
-        out.push_str("UUID");
-        rest = &after[end..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Replace the text content of the `dcterms:modified` meta element.
-fn replace_timestamp(text: &str) -> String {
-    const OPEN: &str = "<meta property=\"dcterms:modified\">";
-    let Some(start) = text.find(OPEN) else {
-        return text.to_string();
-    };
-    let content = start + OPEN.len();
-    let Some(rel) = text[content..].find("</meta>") else {
-        return text.to_string();
-    };
-    let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..content]);
-    out.push_str("TIMESTAMP");
-    out.push_str(&text[content + rel..]);
-    out
-}
-
-/// Sanitize a document name into a golden filename.
-fn golden_file(dir: &Path, name: &str) -> PathBuf {
-    dir.join(name.replace('/', "__"))
+/// The snapshot payload for one generated document.
+///
+/// `insta` normalises both the line endings and one trailing newline, so a raw
+/// document would hide the two properties this suite pins. This asserts the
+/// LF-only contract directly and appends a marker recording the exact tail, so a
+/// CR or a missing/added final newline stays an ordinary, visible diff.
+fn snapshot_payload(name: &str, text: &str) -> String {
+    assert!(!text.contains('\r'), "{name} is not LF-only");
+    assert!(
+        !text.contains("<EOF:"),
+        "{name} collides with the EOF marker"
+    );
+    let mut payload = text.to_string();
+    payload.push_str(if text.ends_with('\n') {
+        EOF_NEWLINE
+    } else {
+        EOF_NO_NEWLINE
+    });
+    payload
 }
 
 fn check_scenario(scenario: &Scenario) -> Result<()> {
     let entries = run(scenario)?;
-    let golden_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/epub_golden")
-        .join(scenario.name);
-    let update = std::env::var_os("UPDATE_GOLDEN").is_some();
 
     // The fixed documents plus every generated page XHTML, in archive order.
     let mut docs: Vec<String> = FIXED_DOCS.iter().map(|s| s.to_string()).collect();
@@ -184,43 +177,37 @@ fn check_scenario(scenario: &Scenario) -> Result<()> {
             .cloned(),
     );
 
+    // Resolve every document to its snapshot payload before asserting: the
+    // `with_settings!` block is a closure, so `?` cannot be used inside it.
+    let mut snapshots: Vec<(String, String)> = Vec::new();
     for name in &docs {
         let bytes = entries
             .get(name)
             .with_context(|| format!("missing generated document {name}"))?;
         let text =
             String::from_utf8(bytes.clone()).with_context(|| format!("{name} is not UTF-8"))?;
-        let normalized = normalize(name, text);
-        let path = golden_file(&golden_dir, name);
-
-        if update {
-            fs::create_dir_all(&golden_dir)?;
-            fs::write(&path, normalized.as_bytes())?;
-            continue;
-        }
-
-        let expected = fs::read_to_string(&path)
-            .with_context(|| {
-                format!(
-                    "missing golden {} — run UPDATE_GOLDEN=1 to capture it",
-                    path.display()
-                )
-            })?
-            // A CRLF checkout on Windows must not fail the comparison; the
-            // generated side stays verbatim so it is still required to be LF.
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
-        assert_eq!(
-            normalized, expected,
-            "generated {name} differs from the golden reference"
-        );
+        // The suffix selects the snapshot file: the scenario name (the snapshot
+        // name itself defaults to the enclosing `check_scenario` function, so
+        // without it the scenarios would collide) plus the archive path, with
+        // `/` flattened because it is not filename-safe.
+        let suffix = format!("{}__{}", scenario.name, name.replace('/', "__"));
+        snapshots.push((suffix, snapshot_payload(name, &text)));
     }
+
+    insta::with_settings!({ filters => FILTERS.to_vec() }, {
+        for (suffix, payload) in snapshots {
+            insta::with_settings!({ snapshot_suffix => suffix }, {
+                insta::assert_snapshot!(payload);
+            });
+        }
+    });
+
     Ok(())
 }
 
 /// `--hq` viewport halving, Kindle fixed-layout metas and bookmark navigation.
 #[test]
-fn kindle_hq_documents_match_golden() -> Result<()> {
+fn kindle_hq_documents_match_snapshot() -> Result<()> {
     check_scenario(&Scenario {
         name: "kindle_hq",
         args: &["-f", "epub", "-p", "K57", "--hq", "-a", "Jane Doe"],
@@ -232,7 +219,7 @@ fn kindle_hq_documents_match_golden() -> Result<()> {
 /// (`--legacy-panel-view` enables Panel View without `--hq`, so the grid is not
 /// suppressed).
 #[test]
-fn kindle_panel_documents_match_golden() -> Result<()> {
+fn kindle_panel_documents_match_snapshot() -> Result<()> {
     check_scenario(&Scenario {
         name: "kindle_panel",
         args: &[
@@ -250,10 +237,19 @@ fn kindle_panel_documents_match_golden() -> Result<()> {
 
 /// KePub spread properties (`rendition:page-spread-*`) and right-to-left reading.
 #[test]
-fn kobo_documents_match_golden() -> Result<()> {
+fn kobo_documents_match_snapshot() -> Result<()> {
     check_scenario(&Scenario {
         name: "kobo",
         args: &["-f", "epub", "-p", "KoE", "--no-kepub", "-m"],
         comicinfo: false,
     })
+}
+
+/// `insta` folds CRLF to LF before comparing, so [`snapshot_payload`]'s refusal
+/// to accept a `\r` is the only thing that keeps a CRLF regression catchable
+/// (docs/output.md). Pin that guard so it is not silently dropped.
+#[test]
+#[should_panic(expected = "is not LF-only")]
+fn snapshot_payload_rejects_carriage_returns() {
+    let _ = snapshot_payload("content.opf", "a\r\nb\n");
 }
